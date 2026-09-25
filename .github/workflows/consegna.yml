@@ -1,0 +1,40 @@
+# Consegna della porta su Cloudflare. Repository pubblico: i minuti di
+# Actions qui non si pagano.
+#
+# Secrets di QUESTO repository, da mettere una volta:
+#   CLOUDFLARE_API_TOKEN  lo stesso di Ardito-Hermes
+#   VOCI_TOKEN            token a grana fine: SOLO JJA-VIS-Voci, Contents in scrittura
+# Il secondo finisce su Cloudflare come GH_TOKEN a ogni consegna.
+name: consegna porta
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  consegna:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -o pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::manca CLOUDFLARE_API_TOKEN nei Secrets del repository"; exit 1; fi
+          if npx --yes wrangler@4 deploy 2>&1 | tee consegna.log; then
+            echo "::notice::$(tail -c 500 consegna.log | tr '\n' '|')"
+          else
+            echo "::error::$(tail -c 900 consegna.log | tr '\n' '|')"
+            exit 1
+          fi
+
+      - name: il token dell'archivio
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          VOCI_TOKEN: ${{ secrets.VOCI_TOKEN }}
+        run: |
+          if [ -z "$VOCI_TOKEN" ]; then echo "::error::manca VOCI_TOKEN: la porta e' accesa ma non puo' salvare"; exit 1; fi
+          printf '%s' "$VOCI_TOKEN" | npx --yes wrangler@4 secret put GH_TOKEN 2>&1 | tail -3

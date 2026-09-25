@@ -1,0 +1,9 @@
+# La porta di JJA-VIS: riceve le risposte della pagina pubblica.
+# Stesso account di Hermes: il numero si legge nell'indirizzo della
+# dashboard, non e' una password.
+account_id = "a7b689d44126744a37ccb1215746ee8b"
+name = "jjavis-porta"
+main = "worker.js"
+compatibility_date = "2026-09-25"
+workers_dev = true
+preview_urls = false
