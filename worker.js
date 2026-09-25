@@ -133,6 +133,8 @@ export default {
     if (req.method === "POST" && url.pathname === "/parla") return parla(req, env, ctx, origine);
     if (req.method === "GET" && url.pathname === "/risposte") return rispostePerPagina(req, env, origine);
     if (req.method === "GET" && url.pathname === "/video") return videoPerPagina(env, origine);
+    if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
+    if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
 
@@ -453,6 +455,12 @@ async function telegram(req, env) {
     if (m.text && /^https?:\/\//.test(m.text.trim()) && (riconosciVideo(m.text.trim().split(/\s+/)[0]) || /^https?:\/\/(vm|vt)\.tiktok\.com\//.test(m.text.trim()))) {
       m.text = "/video " + m.text.trim();
     }
+    if (m.text && /^\/novita\b/.test(m.text)) {
+      let esito;
+      try { esito = await comandoNovita(env, m.text); } catch (e) { esito = `Novità non salvata — ${e.message || e}`; }
+      await tg(env, "sendMessage", { ...qui, text: esito });
+      return new Response("ok");
+    }
     if (m.text && /^\/(video|togli)\b/.test(m.text)) {
       let esito;
       try { esito = await comandoVideo(env, m.text); } catch (e) { esito = `Video non salvato — ${e.message || e}`; }
@@ -463,7 +471,8 @@ async function telegram(req, env) {
       let raccolti = null;
       try { raccolti = await raccogli(env); } catch {}
       const aJarvis = raccolti ? await mandaAJarvis(env, raccolti) : "numeri non letti";
-      await tg(env, "sendMessage", { ...qui, text: (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}` });
+      const vetrina = await aggiornaVetrina(env);
+      await tg(env, "sendMessage", { ...qui, text: (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}\n→ vetrina della pagina: ${vetrina}` });
       return new Response("ok");
     }
     const sopra = m.reply_to_message && (m.reply_to_message.text || "");
@@ -738,7 +747,8 @@ async function contoDellaSera(env) {
   let raccolti = null;
   try { raccolti = await raccogli(env); } catch {}
   const aJarvis = raccolti ? await mandaAJarvis(env, raccolti) : "numeri non letti";
-  const testo = (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}`;
+  const vetrina = await aggiornaVetrina(env);
+  const testo = (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}\n→ vetrina della pagina: ${vetrina}`;
   if (env.TG_GRUPPO) {
     try { return await tg(env, "sendMessage", { chat_id: env.TG_GRUPPO, message_thread_id: await argomentoNumeri(env), text: testo }); }
     catch (e) { return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `⚠️ argomento Numeri non raggiungibile (${e.message || e})\n\n${testo}` }); }
@@ -870,4 +880,62 @@ async function mandaAJarvis(env, { letti }) {
     const t = (await r.text()).slice(0, 120);
     return r.ok ? "consegnati" : `NON consegnati (${r.status}: ${t})`;
   } catch (e) { return `NON consegnati (${e.message || e})`; }
+}
+
+
+// ══ LA VETRINA E LE NOVITA' — 26 settembre 2026 ══
+// JJ: «la pagina e' nata cosi', ma in funzione di quello che torna va
+// adattata, e anche i dati: le canzoni che ha imparato sono di piu'». E: «se
+// costruiamo qualcosa di nuovo, un pannello novita'… ma che sia una vera
+// novita'». I conteggi arrivano da JARVIS (Space → Hermes → qui) col conto
+// della sera e con /numeri. Le novita' le decide JJ, una per volta, dal bot:
+//   /novita Titolo | due righe su cosa fa        aggiunge
+//   /novita                                      elenca
+//   /novita togli 2                              toglie
+async function aggiornaVetrina(env) {
+  if (!env.HERMES || !env.JJAVIS_SEGRETO) return "manca il collegamento con Hermes";
+  try {
+    const r = await env.HERMES.fetch(new Request("https://hermes/jjavis/vetrina", { headers: { "X-JJAVIS-Segreto": env.JJAVIS_SEGRETO } }));
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) return `NON aggiornata (${r.status})`;
+    const v = { quando: d.quando || new Date().toISOString() };
+    if (Number.isInteger(d.canzoni)) v.canzoni = d.canzoni;
+    if (Number.isInteger(d.attrezzi)) v.attrezzi = d.attrezzi;
+    let sha;
+    try { sha = (await gh(env, "GET", "vetrina.json")).sha; } catch {}
+    await gh(env, "PUT", "vetrina.json", { message: "vetrina", content: b64(v), ...(sha ? { sha } : {}) });
+    return `aggiornata (${v.canzoni ?? "?"} canzoni, ${v.attrezzi ?? "?"} attrezzi)`;
+  } catch (e) { return `NON aggiornata (${e.message || e})`; }
+}
+
+async function comandoNovita(env, testo) {
+  const resto = testo.replace(/^\/novita(@\S+)?/, "").trim();
+  let elenco = [], sha;
+  try { const d = await gh(env, "GET", "novita.json"); elenco = deb64(d.content); sha = d.sha; } catch {}
+  const salva = (nuovo, msg) => gh(env, "PUT", "novita.json", { message: msg, content: b64(nuovo), ...(sha ? { sha } : {}) });
+  const riga = (n, i) => `${i + 1}. ${n.titolo} (${String(n.quando).slice(0, 10)})`;
+  const togli = resto.match(/^togli\s+(\d+)$/i);
+  if (togli) {
+    const i = parseInt(togli[1], 10) - 1;
+    if (i < 0 || i >= elenco.length) return `Quale? ${elenco.map(riga).join(" · ") || "(nessuna novità)"}`;
+    const [via] = elenco.splice(i, 1);
+    await salva(elenco, `novita tolta: ${via.titolo}`);
+    return `Tolta: ${via.titolo}.`;
+  }
+  if (!resto) return elenco.length ? `✨ Novità sulla pagina:\n${elenco.map(riga).join("\n")}\n\n/novita togli <numero> per toglierne una.`
+                                    : "Nessuna novità. Scrivi: /novita Titolo | due righe su cosa fa";
+  const [titolo, ...desc] = resto.split("|");
+  const nuova = { titolo: titolo.trim().slice(0, 80), testo: desc.join("|").trim().slice(0, 400), quando: new Date().toISOString() };
+  if (!nuova.titolo) return "Manca il titolo: /novita Titolo | due righe su cosa fa";
+  const nuovo = [nuova, ...elenco].slice(0, 10);
+  await salva(nuovo, `novita: ${nuova.titolo}`);
+  return `✨ Sulla pagina entro un minuto: «${nuova.titolo}»${nuova.testo ? "" : " (senza descrizione: aggiungila dopo una | se vuoi)"}.`;
+}
+
+async function pubblica(env, file, origine, vuoto) {
+  let dati = vuoto;
+  try { dati = deb64((await gh(env, "GET", file)).content); } catch {}
+  const r = risposta(dati, 200, origine);
+  r.headers.set("Cache-Control", "public, max-age=60");
+  return r;
 }
