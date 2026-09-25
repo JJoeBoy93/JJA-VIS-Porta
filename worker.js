@@ -71,7 +71,11 @@ async function scrivi(env, r) {
     },
     body: JSON.stringify({ message: `risposta ${r.mestiere || "senza mestiere"}`, content: contenuto }),
   });
-  if (!res.ok) throw new Error(`GitHub ha risposto ${res.status}`);
+  if (!res.ok) {
+    let perche = "";
+    try { perche = (await res.json()).message || ""; } catch {}
+    throw new Error(`GitHub ha risposto ${res.status}${perche ? ": " + perche : ""}`);
+  }
 }
 
 export default {
@@ -79,8 +83,24 @@ export default {
     const url = new URL(req.url);
     const origine = req.headers.get("Origin") || "";
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origine) });
+    // ══ LA PORTA SI CONTROLLA DA UN BROWSER ══
+    // 25 settembre: la pagina diceva solo «502» e non si sapeva perche'.
+    // Qui si chiede davvero a GitHub se il token vede l'archivio e puo'
+    // scriverci, senza scrivere niente. Si apre dal telefono e si legge.
     if (req.method === "GET" && url.pathname === "/") {
-      return risposta({ porta: "accesa", archivio: env.GH_TOKEN ? "collegato" : "manca GH_TOKEN" }, 200, origine);
+      if (!env.GH_TOKEN) return risposta({ porta: "accesa", archivio: "manca GH_TOKEN" }, 200, origine);
+      const r = await fetch(`https://api.github.com/repos/${ARCHIVIO}`, {
+        headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "jjavis-porta" },
+      });
+      let d = {};
+      try { d = await r.json(); } catch {}
+      return risposta({
+        porta: "accesa",
+        github_risponde: r.status,
+        messaggio: d.message || "",
+        vede_l_archivio: r.ok,
+        puo_scrivere: r.ok ? Boolean(d.permissions && d.permissions.push) : false,
+      }, 200, origine);
     }
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);

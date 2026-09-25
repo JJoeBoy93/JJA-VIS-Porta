@@ -37,4 +37,5 @@ jobs:
           VOCI_TOKEN: ${{ secrets.VOCI_TOKEN }}
         run: |
           if [ -z "$VOCI_TOKEN" ]; then echo "::error::manca VOCI_TOKEN: la porta e' accesa ma non puo' salvare"; exit 1; fi
+          set -o pipefail
           printf '%s' "$VOCI_TOKEN" | npx --yes wrangler@4 secret put GH_TOKEN 2>&1 | tail -3
