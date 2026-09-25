@@ -655,8 +655,13 @@ async function numeri(env) {
     `Aspetti: ${conta(letti.map((u) => u.tema))}`,
     `Mestieri: ${conta(letti.map((u) => u.mestiere))}`,
     `Tempo perso: ${conta(letti.map((u) => u.tempo))}`,
-    `Voti: ${conta(letti.flatMap((u) => u.voti || []))}`,
   ];
+  // Da quando le domande cambiano col mestiere, i voti si leggono per mestiere:
+  // un corriere e una farmacista non votano la stessa lista.
+  const perMestiere = {};
+  for (const u of letti) if ((u.voti || []).length) (perMestiere[u.mestiere || "senza mestiere"] ||= []).push(...u.voti);
+  const righeVoti = Object.entries(perMestiere).map(([m, v]) => `· ${m}: ${conta(v)}`);
+  righe.push(righeVoti.length ? `Voti per mestiere:\n${righeVoti.join("\n")}` : "Voti: —");
   return righe.join("\n");
 }
 
