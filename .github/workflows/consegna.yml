@@ -1,10 +1,16 @@
 # Consegna della porta su Cloudflare. Repository pubblico: i minuti di
 # Actions qui non si pagano.
 #
-# Secrets di QUESTO repository, da mettere una volta:
-#   CLOUDFLARE_API_TOKEN  lo stesso di Ardito-Hermes
-#   VOCI_TOKEN            token a grana fine: SOLO JJA-VIS-Voci, Contents in scrittura
-# Il secondo finisce su Cloudflare come GH_TOKEN a ogni consegna.
+# Secrets di QUESTO repository (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN  lo stesso di Ardito-Hermes                 obbligatorio
+#   VOCI_TOKEN            token a grana fine, solo JJA-VIS-Voci,     obbligatorio
+#                         Contents in scrittura → su Cloudflare come GH_TOKEN
+#   TG_BOT_TOKEN          il bot di JJA-VIS (non quello di JARVIS)   per le risposte
+#   TG_CHAT               il numero che il bot ti dice al primo messaggio
+#   ANTHROPIC_API_KEY     una chiave SOLO per JJA-VIS                per le bozze
+#   BREVO_API_KEY         la chiave API di Brevo (non quella SMTP)   per mandare
+#   MITTENTE              la mail di JJA-VIS verificata su Brevo
+# Quelli che mancano non si inventano: la porta li elenca su GET /.
 name: consegna porta
 
 on:
@@ -31,11 +37,38 @@ jobs:
             exit 1
           fi
 
-      - name: il token dell'archivio
+      - name: i segreti della porta
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          VOCI_TOKEN: ${{ secrets.VOCI_TOKEN }}
+          GH_TOKEN_V: ${{ secrets.VOCI_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_CHAT }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          MITTENTE: ${{ secrets.MITTENTE }}
         run: |
-          if [ -z "$VOCI_TOKEN" ]; then echo "::error::manca VOCI_TOKEN: la porta e' accesa ma non puo' salvare"; exit 1; fi
           set -o pipefail
-          printf '%s' "$VOCI_TOKEN" | npx --yes wrangler@4 secret put GH_TOKEN 2>&1 | tail -3
+          if [ -z "$GH_TOKEN_V" ]; then echo "::error::manca VOCI_TOKEN: la porta e' accesa ma non puo' salvare"; exit 1; fi
+          python3 - <<'PY'
+          import json, os
+          nomi = {"GH_TOKEN": "GH_TOKEN_V", "TG_BOT_TOKEN": "TG_BOT_TOKEN", "TG_CHAT": "TG_CHAT",
+                  "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY", "BREVO_API_KEY": "BREVO_API_KEY", "MITTENTE": "MITTENTE"}
+          d = {k: os.environ[v].strip() for k, v in nomi.items() if os.environ.get(v, "").strip()}
+          mancano = [k for k in nomi if k not in d]
+          json.dump(d, open("/tmp/segreti.json", "w"))
+          print("::notice::segreti messi: " + ", ".join(d) + (" — mancano: " + ", ".join(mancano) if mancano else ""))
+          PY
+          npx --yes wrangler@4 secret bulk /tmp/segreti.json 2>&1 | tail -5
+          rm -f /tmp/segreti.json
+
+      - name: il bot punta alla porta
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        run: |
+          if [ -z "$TG_BOT_TOKEN" ]; then echo "::notice::niente bot ancora: le risposte restano solo nell'archivio"; exit 0; fi
+          SEG=$(printf '%s' "$TG_BOT_TOKEN" | sha256sum | cut -c1-32)
+          R=$(curl -s "https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook" \
+                --data-urlencode "url=https://jjavis-porta.19-jjardito93.workers.dev/telegram" \
+                --data-urlencode "secret_token=${SEG}" \
+                --data-urlencode 'allowed_updates=["message","callback_query"]')
+          echo "$R" | grep -q '"ok":true' && echo "::notice::webhook del bot a posto" || { echo "::error::setWebhook: $R"; exit 1; }
