@@ -10,6 +10,7 @@
 #   ANTHROPIC_API_KEY     una chiave SOLO per JJA-VIS                per le bozze
 #   BREVO_API_KEY         la chiave API di Brevo (non quella SMTP)   per mandare
 #   MITTENTE              la mail di JJA-VIS verificata su Brevo
+#   TG_GRUPPO             il supergruppo con gli Argomenti: una persona per argomento
 # Quelli che mancano non si inventano: la porta li elenca su GET /.
 name: consegna porta
 
@@ -46,13 +47,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           MITTENTE: ${{ secrets.MITTENTE }}
+          TG_GRUPPO: ${{ secrets.TG_GRUPPO }}
         run: |
           set -o pipefail
           if [ -z "$GH_TOKEN_V" ]; then echo "::error::manca VOCI_TOKEN: la porta e' accesa ma non puo' salvare"; exit 1; fi
           python3 - <<'PY'
           import json, os
           nomi = {"GH_TOKEN": "GH_TOKEN_V", "TG_BOT_TOKEN": "TG_BOT_TOKEN", "TG_CHAT": "TG_CHAT",
-                  "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY", "BREVO_API_KEY": "BREVO_API_KEY", "MITTENTE": "MITTENTE"}
+                  "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY", "BREVO_API_KEY": "BREVO_API_KEY", "MITTENTE": "MITTENTE", "TG_GRUPPO": "TG_GRUPPO"}
           d = {k: os.environ[v].strip() for k, v in nomi.items() if os.environ.get(v, "").strip()}
           mancano = [k for k in nomi if k not in d]
           json.dump(d, open("/tmp/segreti.json", "w"))

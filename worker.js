@@ -84,6 +84,7 @@ async function scrivi(env, r) {
 }
 
 export default {
+  async scheduled(evento, env, ctx) { ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e))); },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const origine = req.headers.get("Origin") || "";
@@ -267,14 +268,14 @@ async function segretoTelegram(env) {
 // Arriva su Telegram con due tasti: «✍️ Bozza» (Claude la scrive, costa
 // ~0,3 centesimi) e «🗑 Ignora» (gratis). Oppure JJ risponde al messaggio
 // col suo testo: parte quello, gratis.
-async function nuovaDomanda(env, rec) {
+async function nuovaDomanda(env, rec, u) {
   await salvaBozza(env, rec.id, rec);
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;
   const chi = [rec.nome_assistente, rec.nome].filter(Boolean).join(" · ") || "Qualcuno";
   const dove = [rec.a && "✉️ mail", rec.chi && "💬 pagina"].filter(Boolean).join(" + ");
   const corpo = `💬 ${chi} ha scritto  #${rec.id}\n${rec.contesto || ""}${rec.contesto ? "\n" : ""}` +
     `«${rec.domanda}»\n\nRisposta via: ${dove}\n✍️ Bozza = la scrive Claude (~0,3 cent). Oppure rispondi a questo messaggio col tuo testo: parte gratis.`;
-  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: corpo.slice(0, 4000), reply_markup: { inline_keyboard: [[
+  await manda(env, u, { text: corpo.slice(0, 4000), reply_markup: { inline_keyboard: [[
     { text: "✍️ Bozza", callback_data: `bozza:${rec.id}` }, { text: "📋 Per un'altra IA", callback_data: `copia:${rec.id}` },
     { text: "🗑 Ignora", callback_data: `scarta:${rec.id}` }]] } });
 }
@@ -283,16 +284,18 @@ function nuovoId() { return crypto.randomUUID().replace(/-/g, "").slice(0, 8); }
 
 // ─── una risposta del sondaggio: JJ lo sa subito ───
 async function avvisa(env, r, percorso) {
+  const u = await aggiornaUtente(env, r.chi, { nome_assistente: r.nome_assistente, tema: r.tema, tuo: r.nome, mestiere: r.mestiere,
+    tempo: r.tempo, prezzo_al_mese: r.prezzo_al_mese, voti: r.voti, proposta: r.proposta, ha_risposto: true }, "sondaggi");
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;          // senza bot si resta all'archivio
   const riga = (r.nome_assistente ? `Mi ha chiamato ${r.nome_assistente}${r.tema ? " · aspetto " + r.tema : ""}\n` : "") +
                `${r.mestiere || "?"} · ${r.tempo || "?"} · ${r.prezzo_al_mese} €/mese` +
                (r.voti.length ? `\nVoti: ${r.voti.join("; ")}` : "") + (r.proposta ? `\nProposta: ${r.proposta}` : "");
-  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `📥 Nuova risposta dalla pagina\n${riga}` });
+  await manda(env, u, { text: `📥 Nuova risposta dalla pagina\n${riga}` });
   // Una domanda con la mail diventa una domanda da decidere, come quelle della chat.
   if (r.messaggio && r.mail) {
     await nuovaDomanda(env, { id: nuovoId(), risposta: percorso, a: r.mail, nome: r.nome || "", chi: r.chi || "",
       nome_assistente: r.nome_assistente || "", mestiere: r.mestiere || "", domanda: r.messaggio,
-      contesto: r.mestiere || "", stato: "arrivata", creata: new Date().toISOString() });
+      contesto: r.mestiere || "", stato: "arrivata", creata: new Date().toISOString() }, u);
   }
 }
 
@@ -302,20 +305,20 @@ async function avvisa(env, r, percorso) {
 // promette cose false. Quindi il testo da incollare porta con sé le stesse
 // istruzioni della bozza — senza il nome e senza la mail di chi ha scritto.
 function escHtml(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
-async function copiaPerAltraIA(env, id) {
+async function copiaPerAltraIA(env, id, dove) {
   const { dati } = await leggiBozza(env, id);
   const istruzioni = CHI_SONO.replace("rispondi per mail a chi ti ha scritto dalla tua pagina pubblica",
                                       "rispondi a chi ti ha scritto dalla tua pagina pubblica")
     .replace("- Al massimo 120 parole. Firma come ti dice il messaggio qui sotto.",
              `- Al massimo 100 parole, niente firma.${dati.nome_assistente ? ` Per questa persona ti chiami ${dati.nome_assistente}.` : ""}`);
   const testo = `${istruzioni}\n\n${dati.mestiere ? `Il suo mestiere: ${dati.mestiere}.\n` : ""}Il suo messaggio:\n-----\n${dati.domanda}\n-----\nScrivi solo la risposta.`;
-  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, parse_mode: "HTML",
+  await tg(env, "sendMessage", { ...dove, parse_mode: "HTML",
     text: `📋 #${id} — tocca il testo per copiarlo, incollalo in ChatGPT o Gemini, poi rispondi al messaggio della domanda con quello che ti dà (correggilo se serve).\n\n<code>${escHtml(testo).slice(0, 3600)}</code>` });
   return "copia pronta";
 }
 
 // ─── la bozza, solo col tocco di JJ ───
-async function faiBozza(env, id) {
+async function faiBozza(env, id, dove) {
   const { dati, sha } = await leggiBozza(env, id);
   if (dati.stato === "inviata" || dati.stato === "scartata") return `già ${dati.stato}`;
   let testo;
@@ -323,7 +326,7 @@ async function faiBozza(env, id) {
   catch (e) { return `bozza non riuscita — ${e.message || e}. Puoi rispondere col tuo testo.`; }
   await salvaBozza(env, id, { ...dati, bozza: testo, stato: "bozza", quando_bozza: new Date().toISOString() }, sha);
   const saltare = testo.startsWith("NESSUNA RISPOSTA");
-  await tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+  await tg(env, "sendMessage", { ...dove,
     text: `✍️ Bozza  #${id}\n\n${testo}\n\nPer cambiarla, rispondi a questo messaggio col testo giusto: parte quello.`.slice(0, 4000),
     reply_markup: { inline_keyboard: [[{ text: saltare ? "✅ Invia comunque" : "✅ Invia", callback_data: `invia:${id}` },
                                        { text: "🗑 Scarta", callback_data: `scarta:${id}` }]] } });
@@ -389,17 +392,18 @@ async function telegram(req, env) {
         return new Response("ok");
       }
       const [azione, id] = String(q.data || "").split(":");
+      const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
       await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: azione === "bozza" ? "la scrivo…" : "fatto" }).catch(() => {});
       let esito;
       try {
-        esito = azione === "invia" ? await invia(env, id) : azione === "bozza" ? await faiBozza(env, id)
-              : azione === "copia" ? await copiaPerAltraIA(env, id) : await scarta(env, id);
+        esito = azione === "invia" ? await invia(env, id) : azione === "bozza" ? await faiBozza(env, id, qui)
+              : azione === "copia" ? await copiaPerAltraIA(env, id, qui) : await scarta(env, id);
       } catch (e) { esito = `NON inviata — ${e.message || e}`; }
       if (esito !== "bozza pronta" && esito !== "copia pronta") {
-        await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `#${id}: ${esito}`, reply_to_message_id: q.message.message_id });
+        await tg(env, "sendMessage", { ...qui, text: `#${id}: ${esito}`, reply_to_message_id: q.message.message_id });
       }
       if (/^(inviata|scartata|bozza pronta)/.test(esito)) {
-        await tg(env, "editMessageReplyMarkup", { chat_id: env.TG_CHAT, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+        await tg(env, "editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
       }
       return new Response("ok");
     }
@@ -410,15 +414,27 @@ async function telegram(req, env) {
       await tg(env, "sendMessage", { chat_id: m.chat.id, text: `Il tuo numero è ${m.chat.id}: mettilo nel secret TG_CHAT di JJA-VIS-Porta e rilancia la consegna.` });
       return new Response("ok");
     }
-    if (String(m.chat.id) !== String(env.TG_CHAT)) return new Response("ok");
+    const nelGruppo = m.chat.type === "group" || m.chat.type === "supergroup";
+    const qui = { chat_id: m.chat.id, ...(m.message_thread_id ? { message_thread_id: m.message_thread_id } : {}) };
+    if (String(m.from && m.from.id) !== String(env.TG_CHAT)) return new Response("ok");   // solo JJ
+    if (nelGruppo && String(m.chat.id) !== String(env.TG_GRUPPO || "")) {
+      // Il primo messaggio di JJ in un gruppo nuovo dice il numero da mettere nei secret.
+      await tg(env, "sendMessage", { ...qui, text: `Il numero di questo gruppo è ${m.chat.id}: mettilo nel secret TG_GRUPPO di JJA-VIS-Porta e rilancia la consegna.` });
+      return new Response("ok");
+    }
+    if (!nelGruppo && String(m.chat.id) !== String(env.TG_CHAT)) return new Response("ok");
+    if (m.text && /^\/numeri/.test(m.text)) {
+      await tg(env, "sendMessage", { ...qui, text: await numeri(env) });
+      return new Response("ok");
+    }
     const sopra = m.reply_to_message && (m.reply_to_message.text || "");
     const trovato = sopra && sopra.match(/#([0-9a-f]{8})/);
     if (trovato && m.text) {
       let esito;
       try { esito = await invia(env, trovato[1], m.text); } catch (e) { esito = `NON inviata — ${e.message || e}`; }
-      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `#${trovato[1]}: ${esito}${esito.startsWith("inviata") ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
-    } else {
-      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina." });
+      await tg(env, "sendMessage", { ...qui, text: `#${trovato[1]}: ${esito}${esito.startsWith("inviata") ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
+    } else if (!nelGruppo) {
+      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina. /numeri per il conto." });
     }
   } catch (e) {
     console.log("telegram", e);
@@ -455,10 +471,10 @@ async function conoscenza(req, env, ctx, origine) {
   } catch (e) {
     return risposta({ errore: String(e.message || e) }, 502, origine);
   }
-  if (env.TG_BOT_TOKEN && env.TG_CHAT) {
-    ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
-      text: `🧠 ${r.nome_assistente || "JJA-VIS"} impara (${(r.chi || "?").slice(0, 6)})\n${r.domanda}\n→ ${r.risposta}` }).catch(() => {}));
-  }
+  ctx.waitUntil((async () => {
+    const u = await aggiornaUtente(env, r.chi, { nome_assistente: r.nome_assistente, tema: r.tema, conosciute: { [r.chiave]: r.risposta } }, "conoscenze");
+    await manda(env, u, { text: `🧠 ${r.nome_assistente || "JJA-VIS"} impara (${(r.chi || "?").slice(0, 6)})\n${r.domanda}\n→ ${r.risposta}` });
+  })().catch(() => {}));
   return risposta({ ok: true }, 201, origine);
 }
 
@@ -507,7 +523,9 @@ async function parla(req, env, ctx, origine) {
     da_dove: testo(d.da_dove, 20), mestiere: profilo.mestiere, profilo, domanda,
     contesto: [profilo.mestiere, d.da_dove === "sondaggio" ? "dal sondaggio" : "dalla chat"].filter(Boolean).join(" · "),
     stato: "arrivata", creata: new Date().toISOString() };
-  try { await nuovaDomanda(env, rec); }
+  const u = await aggiornaUtente(env, chi, { nome_assistente: rec.nome_assistente, tema: rec.tema, tuo: rec.nome,
+    mestiere: profilo.mestiere, tempo: profilo.tempo, conosciute: profilo.conosciute }, "messaggi");
+  try { await nuovaDomanda(env, rec, u); }
   catch (e) { return risposta({ errore: String(e.message || e) }, 502, origine); }
   return risposta({ ok: true, id }, 201, origine);
 }
@@ -530,4 +548,119 @@ async function rispostePerPagina(req, env, origine) {
   }
   risposte.sort((x, y) => String(x.quando).localeCompare(String(y.quando)));
   return risposta({ risposte }, 200, origine);
+}
+
+// ══ IL GRUPPO ══ — 25 settembre 2026
+// JJ: «su Telegram se creo un gruppo dove poi vedo i vari utenti divisi?
+// Così vedo quanti stanno usando effettivamente e le preferenze».
+// Un supergruppo con gli Argomenti (Topics): un argomento per persona, che
+// nasce al suo primo segno di vita, e un argomento «📊 Numeri» con il conto
+// della sera. Se TG_GRUPPO non c'e', tutto va nella chat privata come prima.
+//
+// Ogni persona ha un file utenti/<codice>.json: nome dato all'assistente,
+// aspetto, nome suo, mestiere, risposte, voti, quante volte e' passata, e il
+// numero del suo argomento. E' da li' che escono i numeri.
+
+// Il conto della sera legge un file per persona. Cloudflare gratis concede 50
+// richieste esterne a giro: oltre 40 persone il conto diventa parziale, e lo dice.
+const TETTO_LETTURE = 40;
+
+function titoloArgomento(u) {
+  return [u.nome_assistente || "?", u.tuo || "anonimo", (u.chi || "").slice(0, 6)].join(" · ").slice(0, 120);
+}
+
+async function aggiornaUtente(env, chi, patch, contatore) {
+  if (!chi || !env.GH_TOKEN) return null;
+  const percorso = `utenti/${chi}.json`;
+  let u = { chi, primo: new Date().toISOString(), conti: {} }, sha;
+  try { const d = await gh(env, "GET", percorso); u = deb64(d.content); sha = d.sha; }
+  catch (e) { if (!String(e.message).includes("404")) { console.log("utente non letto", e); return null; } }
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (k === "conosciute" && v && typeof v === "object") u.conosciute = { ...(u.conosciute || {}), ...v };
+    else if (Array.isArray(v) ? v.length : v !== "" && v !== undefined && v !== null) u[k] = v;
+  }
+  u.conti = u.conti || {};
+  if (contatore) u.conti[contatore] = (u.conti[contatore] || 0) + 1;
+  u.ultimo = new Date().toISOString();
+  if (env.TG_GRUPPO && env.TG_BOT_TOKEN) {
+    const titolo = titoloArgomento(u);
+    try {
+      if (!u.thread) {
+        const t = await tg(env, "createForumTopic", { chat_id: env.TG_GRUPPO, name: titolo });
+        u.thread = t.message_thread_id; u.titolo = titolo;
+      } else if (u.titolo !== titolo) {
+        await tg(env, "editForumTopic", { chat_id: env.TG_GRUPPO, message_thread_id: u.thread, name: titolo });
+        u.titolo = titolo;
+      }
+    } catch (e) { u.errore_argomento = String(e.message || e); }
+  }
+  try { await gh(env, "PUT", percorso, { message: `utente ${chi.slice(0, 6)}`, content: b64(u), ...(sha ? { sha } : {}) }); }
+  catch (e) { console.log("utente non salvato", e); }
+  return u;
+}
+
+// Dove si scrive di una persona: il suo argomento nel gruppo, se c'e';
+// altrimenti la chat privata di JJ, con l'avviso del perche'.
+function doveUtente(env, u) {
+  if (env.TG_GRUPPO && u && u.thread) return { chat_id: env.TG_GRUPPO, message_thread_id: u.thread };
+  return { chat_id: env.TG_CHAT };
+}
+async function manda(env, u, corpo) {
+  if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;
+  const dove = doveUtente(env, u);
+  const avviso = env.TG_GRUPPO && u && u.errore_argomento ? `⚠️ argomento non creato (${u.errore_argomento}) — scrivo qui\n` : "";
+  if (avviso && corpo.text && !corpo.parse_mode) corpo = { ...corpo, text: avviso + corpo.text };
+  return tg(env, "sendMessage", { ...dove, ...corpo });
+}
+
+// ─── i numeri ───
+async function numeri(env) {
+  const res = await fetch(`https://api.github.com/repos/${ARCHIVIO}/contents/utenti`, {
+    headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "jjavis-porta" } });
+  if (res.status === 404) return "📊 Ancora nessuno: l'archivio delle persone è vuoto.";
+  if (!res.ok) return `📊 Numeri non letti: GitHub ${res.status}`;
+  const file = (await res.json()).filter((f) => f.name.endsWith(".json"));
+  const letti = [];
+  for (const f of file.slice(0, TETTO_LETTURE)) {
+    try { letti.push(deb64((await gh(env, "GET", `utenti/${f.name}`)).content)); } catch {}
+  }
+  const oggi = new Date().toISOString().slice(0, 10);
+  const conta = (arr) => Object.entries(arr.reduce((m, x) => (x ? (m[x] = (m[x] || 0) + 1, m) : m), {}))
+    .sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(", ") || "—";
+  const prezzi = letti.filter((u) => u.ha_risposto && typeof u.prezzo_al_mese === "number").map((u) => u.prezzo_al_mese).sort((a, b) => a - b);
+  const media = prezzi.length ? (prezzi.reduce((a, b) => a + b, 0) / prezzi.length).toFixed(1) : "—";
+  const meta = Math.floor(prezzi.length / 2);
+  const mediana = !prezzi.length ? "—" : prezzi.length % 2 ? prezzi[meta] : ((prezzi[meta - 1] + prezzi[meta]) / 2).toFixed(1);
+  const righe = [
+    `📊 Numeri — ${oggi}`,
+    `Persone: ${file.length}${file.length > letti.length ? ` (lette ${letti.length}: conto parziale)` : ""} · attive oggi ${letti.filter((u) => String(u.ultimo).startsWith(oggi)).length} · nuove oggi ${letti.filter((u) => String(u.primo).startsWith(oggi)).length}`,
+    `Hanno fatto il sondaggio: ${letti.filter((u) => u.ha_risposto).length} · hanno scritto: ${letti.filter((u) => (u.conti || {}).messaggi).length} (${letti.reduce((t, u) => t + ((u.conti || {}).messaggi || 0), 0)} messaggi) · tornati a rispondere: ${letti.filter((u) => (u.conti || {}).conoscenze).length}`,
+    `Quanto varrebbe al mese: media ${media} €, mediana ${mediana} € (su ${prezzi.length})`,
+    `Nomi: ${conta(letti.map((u) => u.nome_assistente))}`,
+    `Aspetti: ${conta(letti.map((u) => u.tema))}`,
+    `Mestieri: ${conta(letti.map((u) => u.mestiere))}`,
+    `Tempo perso: ${conta(letti.map((u) => u.tempo))}`,
+    `Voti: ${conta(letti.flatMap((u) => u.voti || []))}`,
+  ];
+  return righe.join("\n");
+}
+
+async function argomentoNumeri(env) {
+  let g = {}, sha;
+  try { const d = await gh(env, "GET", "gruppo.json"); g = deb64(d.content); sha = d.sha; } catch {}
+  if (g.gruppo === String(env.TG_GRUPPO) && g.numeri) return g.numeri;
+  const t = await tg(env, "createForumTopic", { chat_id: env.TG_GRUPPO, name: "📊 Numeri" });
+  await gh(env, "PUT", "gruppo.json", { message: "argomento dei numeri", content: b64({ gruppo: String(env.TG_GRUPPO), numeri: t.message_thread_id }), ...(sha ? { sha } : {}) });
+  return t.message_thread_id;
+}
+
+// Il conto della sera: ogni giorno alle 18 UTC (le 20 d'estate in Italia, le 19 d'inverno).
+async function contoDellaSera(env) {
+  if (!env.TG_BOT_TOKEN || !env.GH_TOKEN) return;
+  const testo = await numeri(env);
+  if (env.TG_GRUPPO) {
+    try { return await tg(env, "sendMessage", { chat_id: env.TG_GRUPPO, message_thread_id: await argomentoNumeri(env), text: testo }); }
+    catch (e) { return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `⚠️ argomento Numeri non raggiungibile (${e.message || e})\n\n${testo}` }); }
+  }
+  if (env.TG_CHAT) return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: testo });
 }

@@ -24,3 +24,7 @@ namespace_id = "7302"
 [ratelimits.simple]
 limit = 40
 period = 60
+
+# Il conto della sera nell'argomento «📊 Numeri»: ogni giorno alle 18 UTC.
+[triggers]
+crons = ["0 18 * * *"]
