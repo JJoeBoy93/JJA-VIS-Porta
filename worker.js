@@ -44,6 +44,7 @@ function pulisci(d) {
     proposta: testo(d.proposta, 200),
     // la prima conversazione: come ha chiamato il suo JJA-VIS e come lo vuole vedere
     nome_assistente: testo(d.nome_assistente, 20),
+    chi: /^[0-9a-f]{8,32}$/.test(d.chi || "") ? d.chi : "",
     tema: ["tech", "calmo", "deciso", "naturale"].includes(d.tema) ? d.tema : "",
     messaggio: "",
   };
@@ -113,6 +114,7 @@ export default {
       }, 200, origine);
     }
     if (req.method === "POST" && url.pathname === "/telegram") return telegram(req, env);
+    if (req.method === "POST" && url.pathname === "/conoscenza") return conoscenza(req, env, ctx, origine);
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
 
@@ -349,4 +351,40 @@ async function telegram(req, env) {
     console.log("telegram", e);
   }
   return new Response("ok");
+}
+
+
+// ══ CONOSCERTI ══ — 25 settembre 2026
+// Chi torna sulla pagina riceve una domanda nuova per volta (a che ora
+// comincia, dove tiene il telefono, come vuole che gli si parli...). Ogni
+// risposta e' un file in conoscenza/, legato solo al codice a caso nato nel
+// suo telefono: niente nome, niente mail.
+async function conoscenza(req, env, ctx, origine) {
+  if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
+  const grezzo = await req.text();
+  if (grezzo.length > 2000) return risposta({ errore: "troppo lungo" }, 413, origine);
+  let d;
+  try { d = JSON.parse(grezzo); } catch { return risposta({ errore: "non e' JSON" }, 400, origine); }
+  if (!env.GH_TOKEN) return risposta({ errore: "archivio non collegato" }, 503, origine);
+  const r = {
+    quando: new Date().toISOString(),
+    chi: /^[0-9a-f]{8,32}$/.test(d.chi || "") ? d.chi : "",
+    chiave: testo(d.chiave, 30),
+    domanda: testo(d.domanda, 120),
+    risposta: testo(d.risposta, 200),
+    nome_assistente: testo(d.nome_assistente, 20),
+    tema: ["tech", "calmo", "deciso", "naturale"].includes(d.tema) ? d.tema : "",
+  };
+  if (!r.chiave || !r.risposta) return risposta({ errore: "manca la risposta" }, 400, origine);
+  const percorso = `conoscenza/${r.quando.slice(0, 10)}/${r.quando.replace(/[:.]/g, "-")}-${(r.chi || "anonimo").slice(0, 8)}.json`;
+  try {
+    await gh(env, "PUT", percorso, { message: `conoscenza ${r.chiave}`, content: b64(r) });
+  } catch (e) {
+    return risposta({ errore: String(e.message || e) }, 502, origine);
+  }
+  if (env.TG_BOT_TOKEN && env.TG_CHAT) {
+    ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+      text: `🧠 ${r.nome_assistente || "JJA-VIS"} impara (${(r.chi || "?").slice(0, 6)})\n${r.domanda}\n→ ${r.risposta}` }).catch(() => {}));
+  }
+  return risposta({ ok: true }, 201, origine);
 }
