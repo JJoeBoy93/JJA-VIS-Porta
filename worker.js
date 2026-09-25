@@ -147,7 +147,11 @@ export default {
     try {
       const r = pulisci(d);
       const percorso = await scrivi(env, r);
-      ctx.waitUntil(avvisa(env, r, percorso).catch((e) => console.log("avviso fallito", e)));
+      // La persona si aggiorna PRIMA di rispondere alla pagina: subito dopo,
+      // la pagina manda la stessa persona a /parla, e due aggiornamenti in
+      // parallelo creavano due topic (JJ, 25 settembre: «si creano i topic doppi»).
+      const u = await aggiornaUtente(env, r.chi, datiUtenteDaRisposta(r), "sondaggi").catch(() => null);
+      ctx.waitUntil(avvisa(env, r, percorso, u).catch((e) => console.log("avviso fallito", e)));
       return risposta({ ok: true }, 201, origine);
     } catch (e) {
       return risposta({ errore: String(e.message || e) }, 502, origine);
@@ -298,9 +302,12 @@ async function nuovaDomanda(env, rec, u) {
 function nuovoId() { return crypto.randomUUID().replace(/-/g, "").slice(0, 8); }
 
 // ─── una risposta del sondaggio: JJ lo sa subito ───
-async function avvisa(env, r, percorso) {
-  const u = await aggiornaUtente(env, r.chi, { nome_assistente: r.nome_assistente, tema: r.tema, tuo: r.nome, mestiere: r.mestiere,
-    tempo: r.tempo, prezzo_al_mese: r.prezzo_al_mese, voti: r.voti, proposta: r.proposta, ha_risposto: true }, "sondaggi");
+function datiUtenteDaRisposta(r) {
+  return { nome_assistente: r.nome_assistente, tema: r.tema, tuo: r.nome, mestiere: r.mestiere,
+    tempo: r.tempo, prezzo_al_mese: r.prezzo_al_mese, voti: r.voti, proposta: r.proposta, ha_risposto: true };
+}
+
+async function avvisa(env, r, percorso, u) {
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;          // senza bot si resta all'archivio
   const riga = (r.nome_assistente ? `Mi ha chiamato ${r.nome_assistente}${r.tema ? " · aspetto " + r.tema : ""}\n` : "") +
                `${r.mestiere || "?"} · ${r.tempo || "?"} · ${r.prezzo_al_mese} €/mese` +
@@ -598,30 +605,57 @@ function titoloArgomento(u) {
 async function aggiornaUtente(env, chi, patch, contatore) {
   if (!chi || !env.GH_TOKEN) return null;
   const percorso = `utenti/${chi}.json`;
-  let u = { chi, primo: new Date().toISOString(), conti: {} }, sha;
-  try { const d = await gh(env, "GET", percorso); u = deb64(d.content); sha = d.sha; }
-  catch (e) { if (!String(e.message).includes("404")) { console.log("utente non letto", e); return null; } }
-  for (const [k, v] of Object.entries(patch || {})) {
-    if (k === "conosciute" && v && typeof v === "object") u.conosciute = { ...(u.conosciute || {}), ...v };
-    else if (Array.isArray(v) ? v.length : v !== "" && v !== undefined && v !== null) u[k] = v;
-  }
-  u.conti = u.conti || {};
-  if (contatore) u.conti[contatore] = (u.conti[contatore] || 0) + 1;
-  u.ultimo = new Date().toISOString();
+  const leggi = async () => {
+    try { const d = await gh(env, "GET", percorso); return { u: deb64(d.content), sha: d.sha }; }
+    catch (e) { if (String(e.message).includes("404")) return { u: null, sha: undefined }; throw e; }
+  };
+  const applica = (u) => {
+    u = u || { chi, primo: new Date().toISOString(), conti: {} };
+    for (const [k, v] of Object.entries(patch || {})) {
+      if (k === "conosciute" && v && typeof v === "object") u.conosciute = { ...(u.conosciute || {}), ...v };
+      else if (Array.isArray(v) ? v.length : v !== "" && v !== undefined && v !== null) u[k] = v;
+    }
+    u.conti = u.conti || {};
+    if (contatore) u.conti[contatore] = (u.conti[contatore] || 0) + 1;
+    u.ultimo = new Date().toISOString();
+    return u;
+  };
+  let letto;
+  try { letto = await leggi(); } catch (e) { console.log("utente non letto", e); return null; }
+  let u = applica(letto.u), sha = letto.sha, creato = null;
   if (env.TG_GRUPPO && env.TG_BOT_TOKEN) {
     const titolo = titoloArgomento(u);
     try {
       if (!u.thread) {
         const t = await tg(env, "createForumTopic", { chat_id: env.TG_GRUPPO, name: titolo });
-        u.thread = t.message_thread_id; u.titolo = titolo;
+        u.thread = creato = t.message_thread_id; u.titolo = titolo;
       } else if (u.titolo !== titolo) {
         await tg(env, "editForumTopic", { chat_id: env.TG_GRUPPO, message_thread_id: u.thread, name: titolo });
         u.titolo = titolo;
       }
     } catch (e) { u.errore_argomento = String(e.message || e); }
   }
-  try { await gh(env, "PUT", percorso, { message: `utente ${chi.slice(0, 6)}`, content: b64(u), ...(sha ? { sha } : {}) }); }
-  catch (e) { console.log("utente non salvato", e); }
+  // Due aggiornamenti della stessa persona insieme: il secondo trova il file
+  // cambiato (409/422). Si rilegge, si rifonde, e se l'altro aveva gia' un
+  // topic si cancella quello appena creato: un topic per persona, sempre.
+  for (let giro = 0; giro < 3; giro++) {
+    try {
+      await gh(env, "PUT", percorso, { message: `utente ${chi.slice(0, 6)}`, content: b64(u), ...(sha ? { sha } : {}) });
+      return u;
+    } catch (e) {
+      if (!/GitHub (409|422)/.test(String(e.message))) { console.log("utente non salvato", e); return u; }
+      let ora;
+      try { ora = await leggi(); } catch { return u; }
+      const loro = ora.u && ora.u.thread;
+      if (creato && loro && loro !== creato) {
+        await tg(env, "deleteForumTopic", { chat_id: env.TG_GRUPPO, message_thread_id: creato }).catch(() => {});
+        creato = null;
+      }
+      const mio = u.thread;
+      u = applica(ora.u); sha = ora.sha;
+      if (!u.thread && mio) { u.thread = mio; u.titolo = titoloArgomento(u); }
+    }
+  }
   return u;
 }
 
