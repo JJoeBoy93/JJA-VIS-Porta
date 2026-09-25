@@ -18,7 +18,7 @@ function cors(origine) {
   const ok = ORIGINI.includes(origine);
   return {
     "Access-Control-Allow-Origin": ok ? origine : ORIGINI[0],
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin",
   };
@@ -116,6 +116,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/telegram") return telegram(req, env);
     if (req.method === "POST" && url.pathname === "/conoscenza") return conoscenza(req, env, ctx, origine);
     if (req.method === "POST" && url.pathname === "/parla") return parla(req, env, ctx, origine);
+    if (req.method === "GET" && url.pathname === "/risposte") return rispostePerPagina(req, env, origine);
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
 
@@ -198,20 +199,28 @@ async function claude(env, corpo) {
   return (d.content || []).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
 }
 
-async function bozza(env, r) {
+// La bozza la scrive Claude SOLO quando JJ tocca «✍️ Bozza»: e' l'unico
+// punto in cui una domanda costa. JJ, 25 settembre: «se mi scrivono a caso
+// non devo pagare: pago se do io l'ok perche' la domanda vale».
+async function bozza(env, rec) {
   if (!env.ANTHROPIC_API_KEY) throw new Error("manca ANTHROPIC_API_KEY");
+  const p = rec.profilo || {};
+  const conosciute = p.conosciute ? Object.entries(p.conosciute).map(([k, v]) => `${k}: ${v}`).join("; ") : "";
+  const sa = [rec.nome && `si chiama ${rec.nome}`, (rec.mestiere || p.mestiere) && `mestiere: ${rec.mestiere || p.mestiere}`,
+              p.tempo && `gli fa perdere tempo: ${p.tempo}`, conosciute && `ti ha detto: ${conosciute}`].filter(Boolean).join(". ");
+  const dove = rec.a ? "La risposta gli arriva per mail." : "La risposta la leggera' sulla tua pagina, nella chat: tienila corta, al massimo 80 parole, niente firma.";
   return claude(env, {
     max_tokens: 600,
-    system: CHI_SONO,
+    system: CHI_SONO.replace("rispondi per mail a chi ti ha scritto dalla tua pagina pubblica",
+                             "rispondi a chi ti ha scritto dalla tua pagina pubblica"),
     messages: [{ role: "user", content:
-      `Ti ha scritto ${r.nome || "una persona"} (${r.mestiere || "mestiere non detto"}).\n` +
-      (r.nome_assistente ? `Ti ha dato un nome suo: per questa persona ti chiami ${r.nome_assistente}. Firma «${r.nome_assistente}, il tuo JJA-VIS».\n`
-                         : "Firma «JJA-VIS».\n") +
-      `Il suo messaggio, tra le righe di trattini:\n-----\n${r.messaggio}\n-----\nScrivi la mail di risposta.` }],
+      (sa ? `Quello che sai di questa persona: ${sa}.\n` : "") + dove + "\n" +
+      (rec.nome_assistente ? `Per questa persona ti chiami ${rec.nome_assistente}.` + (rec.a ? ` Firma «${rec.nome_assistente}, il tuo JJA-VIS».` : "") + "\n"
+                           : (rec.a ? "Firma «JJA-VIS».\n" : "")) +
+      `Il suo messaggio, tra le righe di trattini:\n-----\n${rec.domanda}\n-----\nScrivi la risposta.` }],
   });
 }
 
-// ─── l'archivio: lettura e scrittura di un file JSON ───
 async function gh(env, metodo, percorso, corpo) {
   const res = await fetch(`https://api.github.com/repos/${ARCHIVIO}/contents/${percorso}`, {
     method: metodo,
@@ -249,61 +258,95 @@ async function segretoTelegram(env) {
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 
-// ─── una risposta nuova: JJ lo sa subito ───
+// ─── una domanda nuova: JJ la vede, e decide lui se vale ───
+// Arriva su Telegram con due tasti: «✍️ Bozza» (Claude la scrive, costa
+// ~0,3 centesimi) e «🗑 Ignora» (gratis). Oppure JJ risponde al messaggio
+// col suo testo: parte quello, gratis.
+async function nuovaDomanda(env, rec) {
+  await salvaBozza(env, rec.id, rec);
+  if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;
+  const chi = [rec.nome_assistente, rec.nome].filter(Boolean).join(" · ") || "Qualcuno";
+  const dove = [rec.a && "✉️ mail", rec.chi && "💬 pagina"].filter(Boolean).join(" + ");
+  const corpo = `💬 ${chi} ha scritto  #${rec.id}\n${rec.contesto || ""}${rec.contesto ? "\n" : ""}` +
+    `«${rec.domanda}»\n\nRisposta via: ${dove}\n✍️ Bozza = la scrive Claude (~0,3 cent). Oppure rispondi a questo messaggio col tuo testo: parte gratis.`;
+  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: corpo.slice(0, 4000), reply_markup: { inline_keyboard: [[
+    { text: "✍️ Bozza", callback_data: `bozza:${rec.id}` }, { text: "🗑 Ignora", callback_data: `scarta:${rec.id}` }]] } });
+}
+
+function nuovoId() { return crypto.randomUUID().replace(/-/g, "").slice(0, 8); }
+
+// ─── una risposta del sondaggio: JJ lo sa subito ───
 async function avvisa(env, r, percorso) {
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;          // senza bot si resta all'archivio
   const riga = (r.nome_assistente ? `Mi ha chiamato ${r.nome_assistente}${r.tema ? " · aspetto " + r.tema : ""}\n` : "") +
                `${r.mestiere || "?"} · ${r.tempo || "?"} · ${r.prezzo_al_mese} €/mese` +
                (r.voti.length ? `\nVoti: ${r.voti.join("; ")}` : "") + (r.proposta ? `\nProposta: ${r.proposta}` : "");
-  if (!(r.messaggio && r.mail)) {
-    await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `📥 Nuova risposta dalla pagina\n${riga}` });
-    return;
+  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `📥 Nuova risposta dalla pagina\n${riga}` });
+  // Una domanda con la mail diventa una domanda da decidere, come quelle della chat.
+  if (r.messaggio && r.mail) {
+    await nuovaDomanda(env, { id: nuovoId(), risposta: percorso, a: r.mail, nome: r.nome || "", chi: r.chi || "",
+      nome_assistente: r.nome_assistente || "", mestiere: r.mestiere || "", domanda: r.messaggio,
+      contesto: r.mestiere || "", stato: "arrivata", creata: new Date().toISOString() });
   }
-  const id = percorso.split("/").pop().replace(".json", "").slice(-8);
-  let testo = "", errore = "";
-  try { testo = await bozza(env, r); } catch (e) { errore = String(e.message || e); }
-  const saltare = testo.startsWith("NESSUNA RISPOSTA");
-  await salvaBozza(env, id, { id, risposta: percorso, a: r.mail, nome: r.nome || "", domanda: r.messaggio,
-                              nome_assistente: r.nome_assistente || "",
-                              bozza: testo, errore, stato: "in attesa", creata: new Date().toISOString() });
-  const corpo = `✉️ ${r.nome || "Qualcuno"} ha scritto  #${id}\n${riga}\n\n«${r.messaggio}»\n\n` +
-    (errore ? `⚠️ Bozza non riuscita: ${errore}\nRispondi a questo messaggio col testo da mandare.`
-            : `Bozza di JJA-VIS:\n${testo}\n\nPer cambiarla, rispondi a questo messaggio col testo giusto: parte quello.`);
-  const tasti = errore ? [[{ text: "🗑 Scarta", callback_data: `scarta:${id}` }]]
-    : [[{ text: saltare ? "✅ Invia comunque" : "✅ Invia", callback_data: `invia:${id}` },
-        { text: "🗑 Scarta", callback_data: `scarta:${id}` }]];
-  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: corpo.slice(0, 4000), reply_markup: { inline_keyboard: tasti } });
 }
 
-// ─── la mail parte: solo da qui, solo col tocco di JJ ───
+// ─── la bozza, solo col tocco di JJ ───
+async function faiBozza(env, id) {
+  const { dati, sha } = await leggiBozza(env, id);
+  if (dati.stato === "inviata" || dati.stato === "scartata") return `già ${dati.stato}`;
+  let testo;
+  try { testo = await bozza(env, dati); }
+  catch (e) { return `bozza non riuscita — ${e.message || e}. Puoi rispondere col tuo testo.`; }
+  await salvaBozza(env, id, { ...dati, bozza: testo, stato: "bozza", quando_bozza: new Date().toISOString() }, sha);
+  const saltare = testo.startsWith("NESSUNA RISPOSTA");
+  await tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+    text: `✍️ Bozza  #${id}\n\n${testo}\n\nPer cambiarla, rispondi a questo messaggio col testo giusto: parte quello.`.slice(0, 4000),
+    reply_markup: { inline_keyboard: [[{ text: saltare ? "✅ Invia comunque" : "✅ Invia", callback_data: `invia:${id}` },
+                                       { text: "🗑 Scarta", callback_data: `scarta:${id}` }]] } });
+  return "bozza pronta";
+}
+
+// ─── la risposta parte: solo da qui, solo col tocco di JJ ───
+// Va dove la persona puo' leggerla: la mail se l'ha lasciata, la pagina se
+// ha il codice del telefono. Tutte e due, se ci sono tutte e due.
 async function invia(env, id, testoDiJJ) {
   const { dati, sha } = await leggiBozza(env, id);
-  if (dati.stato !== "in attesa") return `già ${dati.stato}`;
+  if (dati.stato === "inviata" || dati.stato === "scartata") return `già ${dati.stato}`;
   const testo = (testoDiJJ || dati.bozza || "").trim();
-  if (!testo || testo.startsWith("NESSUNA RISPOSTA")) return "niente da mandare: scrivi tu il testo rispondendo al messaggio";
-  if (!env.BREVO_API_KEY || !env.MITTENTE) throw new Error("mancano BREVO_API_KEY o MITTENTE");
-  const piede = "\n\n—\nHai scritto a JJA-VIS dalla sua pagina. Per non ricevere altre mail, rispondi con «cancellami».";
-  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
-    method: "POST",
-    headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({
-      sender: { name: dati.nome_assistente ? `${dati.nome_assistente} · JJA-VIS` : "JJA-VIS", email: env.MITTENTE },
-      replyTo: { email: env.MITTENTE, name: "JJA-VIS" },
-      to: [{ email: dati.a, ...(dati.nome ? { name: dati.nome } : {}) }],
-      subject: dati.nome_assistente ? `${dati.nome_assistente} ti risponde` : "La tua domanda a JJA-VIS",
-      textContent: testo + piede,
-    }),
-  });
-  const d = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Brevo ${res.status}: ${d.message || d.code || ""}`);
-  await salvaBozza(env, id, { ...dati, stato: "inviata", inviato: testo, di_jj: Boolean(testoDiJJ),
-                              quando_inviata: new Date().toISOString(), brevo: d.messageId || "" }, sha);
-  return "inviata";
+  if (!testo || testo.startsWith("NESSUNA RISPOSTA")) return "niente da mandare: tocca ✍️ Bozza, o rispondi col tuo testo";
+  const fatto = [];
+  if (dati.a) {
+    if (!env.BREVO_API_KEY || !env.MITTENTE) throw new Error("mancano BREVO_API_KEY o MITTENTE");
+    const piede = "\n\n—\nHai scritto a JJA-VIS dalla sua pagina. Per non ricevere altre mail, rispondi con «cancellami».";
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        sender: { name: dati.nome_assistente ? `${dati.nome_assistente} · JJA-VIS` : "JJA-VIS", email: env.MITTENTE },
+        replyTo: { email: env.MITTENTE, name: "JJA-VIS" },
+        to: [{ email: dati.a, ...(dati.nome ? { name: dati.nome } : {}) }],
+        subject: dati.nome_assistente ? `${dati.nome_assistente} ti risponde` : "La tua domanda a JJA-VIS",
+        textContent: testo + piede,
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`Brevo ${res.status}: ${d.message || d.code || ""}`);
+    fatto.push("mail");
+  }
+  if (dati.chi) {
+    await gh(env, "PUT", `per-pagina/${dati.chi}/${id}.json`, { message: `risposta per la pagina ${id}`,
+      content: b64({ id, domanda: dati.domanda, risposta: testo, quando: new Date().toISOString() }) });
+    fatto.push("pagina");
+  }
+  if (!fatto.length) return "niente da mandare: non ha lasciato né mail né pagina";
+  await salvaBozza(env, id, { ...dati, stato: "inviata", inviato: testo, di_jj: Boolean(testoDiJJ), via: fatto,
+                              quando_inviata: new Date().toISOString() }, sha);
+  return `inviata (${fatto.join(" + ")})`;
 }
 
 async function scarta(env, id) {
   const { dati, sha } = await leggiBozza(env, id);
-  if (dati.stato !== "in attesa") return `già ${dati.stato}`;
+  if (dati.stato === "inviata" || dati.stato === "scartata") return `già ${dati.stato}`;
   await salvaBozza(env, id, { ...dati, stato: "scartata", quando_scartata: new Date().toISOString() }, sha);
   return "scartata";
 }
@@ -322,13 +365,16 @@ async function telegram(req, env) {
         return new Response("ok");
       }
       const [azione, id] = String(q.data || "").split(":");
+      await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: azione === "bozza" ? "la scrivo…" : "fatto" }).catch(() => {});
       let esito;
-      try { esito = azione === "invia" ? await invia(env, id) : await scarta(env, id); }
-      catch (e) { esito = `NON inviata — ${e.message || e}`; }
-      await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: esito.slice(0, 190) });
-      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `#${id}: ${esito}`, reply_to_message_id: q.message.message_id });
-      if (esito === "inviata" || esito === "scartata") {
-        await tg(env, "editMessageReplyMarkup", { chat_id: env.TG_CHAT, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } });
+      try {
+        esito = azione === "invia" ? await invia(env, id) : azione === "bozza" ? await faiBozza(env, id) : await scarta(env, id);
+      } catch (e) { esito = `NON inviata — ${e.message || e}`; }
+      if (esito !== "bozza pronta") {
+        await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `#${id}: ${esito}`, reply_to_message_id: q.message.message_id });
+      }
+      if (/^(inviata|scartata|bozza pronta)/.test(esito)) {
+        await tg(env, "editMessageReplyMarkup", { chat_id: env.TG_CHAT, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
       }
       return new Response("ok");
     }
@@ -345,7 +391,7 @@ async function telegram(req, env) {
     if (trovato && m.text) {
       let esito;
       try { esito = await invia(env, trovato[1], m.text); } catch (e) { esito = `NON inviata — ${e.message || e}`; }
-      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `#${trovato[1]}: ${esito}${esito === "inviata" ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
+      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `#${trovato[1]}: ${esito}${esito.startsWith("inviata") ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
     } else {
       await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina." });
     }
@@ -393,78 +439,70 @@ async function conoscenza(req, env, ctx, origine) {
 
 
 // ══ PARLAMI ══ — 25 settembre 2026
-// JJ: «non recepisce se scrivi quello che vuoi costruire, e poi non risponde
-// a domande generiche». Una cassiera ha scritto nella proposta «in cosa
-// potresti aiutarmi» e nessuno le ha risposto: senza mail, la catena delle
-// mail non parte. Qui risponde SUBITO, sulla pagina.
+// La chat sulla pagina NON risponde in diretta. JJ: «in live non deve
+// rispondere alle stronzate di chi vuole solo giocarci… se mi scrivono a
+// caso non devo pagare: pago se do io l'ok perche' la domanda vale».
 //
-// Chi risponde: Claude Haiku SENZA vault, con in mano solo quello che dice
-// la pagina e quello che la persona gli ha detto (mestiere, risposte). Non
-// passa da JJ — non puo', e' in diretta — ma JJ vede ogni scambio su Telegram
-// e in chiacchiere/ nell'archivio.
+// Chi scrive nella chat (o mette una proposta nel sondaggio) crea una
+// domanda: arriva a JJ su Telegram, gratis. JJ decide: «✍️ Bozza» (Claude,
+// ~0,3 centesimi), il suo testo (gratis), o «🗑 Ignora» (gratis). La
+// risposta approvata va in per-pagina/<codice>/ e la pagina la mostra
+// quando la persona torna — e per mail, se l'ha lasciata.
 //
-// Freni: 6 messaggi al minuto per persona, 40 al minuto per tutti
-// (binding di rate limiting di Cloudflare), 800 caratteri a messaggio,
-// 6 turni di storia, 350 token di risposta.
+// Freni: 6 messaggi al minuto per persona, 40 per tutti (Cloudflare).
+// Qui non si spende niente, ma Telegram e l'archivio non vanno inondati.
+async function frenato(env, chiave) {
+  for (const [freno, k] of [[env.FRENO_PERSONA, `p:${chiave}`], [env.FRENO_TUTTI, "tutti"]]) {
+    if (freno && !(await freno.limit({ key: k })).success) return true;
+  }
+  return false;
+}
+
 async function parla(req, env, ctx, origine) {
   if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
-  if (!env.ANTHROPIC_API_KEY) return risposta({ errore: "non posso parlare adesso" }, 503, origine);
+  if (!env.GH_TOKEN) return risposta({ errore: "archivio non collegato" }, 503, origine);
   const grezzo = await req.text();
-  if (grezzo.length > 8000) return risposta({ errore: "troppo lungo" }, 413, origine);
+  if (grezzo.length > 4000) return risposta({ errore: "troppo lungo" }, 413, origine);
   let d;
   try { d = JSON.parse(grezzo); } catch { return risposta({ errore: "non e' JSON" }, 400, origine); }
   const chi = /^[0-9a-f]{8,32}$/.test(d.chi || "") ? d.chi : "";
-  const ip = req.headers.get("CF-Connecting-IP") || "?";
-  for (const [freno, chiave] of [[env.FRENO_PERSONA, `p:${chi || ip}`], [env.FRENO_TUTTI, "tutti"]]) {
-    if (freno && !(await freno.limit({ key: chiave })).success) {
-      return risposta({ errore: "Mi stai scrivendo più in fretta di quanto riesca a pensare: aspetta un minuto." }, 429, origine);
-    }
+  if (!chi) return risposta({ errore: "senza il codice del telefono non saprei dove risponderti" }, 400, origine);
+  if (await frenato(env, chi || req.headers.get("CF-Connecting-IP") || "?")) {
+    return risposta({ errore: "Mi stai scrivendo più in fretta di quanto riesca a leggere: aspetta un minuto." }, 429, origine);
   }
-  const messaggio = testo(d.testo, 800);
-  if (!messaggio) return risposta({ errore: "scrivimi qualcosa" }, 400, origine);
-  const nome = testo(d.nome_assistente, 20) || "JJA-VIS";
-  const tu = testo(d.tuo, 40);
+  const domanda = testo(d.testo, 800);
+  if (!domanda) return risposta({ errore: "scrivimi qualcosa" }, 400, origine);
   const p = d.profilo && typeof d.profilo === "object" ? d.profilo : {};
-  const conosciute = p.conosciute && typeof p.conosciute === "object"
-    ? Object.entries(p.conosciute).slice(0, 12).map(([k, v]) => `${testo(k, 20)}: ${testo(v, 60)}`).join("; ") : "";
-  const cosa_so = [
-    tu && `si chiama ${tu}`,
-    testo(p.mestiere, 60) && `mestiere: ${testo(p.mestiere, 60)}`,
-    testo(p.tempo, 60) && `gli fa perdere tempo: ${testo(p.tempo, 60)}`,
-    conosciute && `ti ha detto: ${conosciute}`,
-  ].filter(Boolean).join(". ");
-  const storia = (Array.isArray(d.storia) ? d.storia : []).slice(-6)
-    .map((m) => ({ role: m.ruolo === "io" ? "assistant" : "user", content: testo(m.testo, 800) }))
-    .filter((m) => m.content);
-  while (storia.length && storia[0].role !== "user") storia.shift();
-  const messaggi = [...storia, { role: "user", content: messaggio }];
-  // Due messaggi dello stesso ruolo di fila non si mandano: si fondono.
-  const puliti = [];
-  for (const m of messaggi) {
-    if (puliti.length && puliti[puliti.length - 1].role === m.role) puliti[puliti.length - 1].content += "\n" + m.content;
-    else puliti.push({ ...m });
+  const profilo = { mestiere: testo(p.mestiere, 60), tempo: testo(p.tempo, 60), conosciute: {} };
+  if (p.conosciute && typeof p.conosciute === "object") {
+    for (const [k, v] of Object.entries(p.conosciute).slice(0, 12)) profilo.conosciute[testo(k, 20)] = testo(v, 60);
   }
-  const sistema = CHI_SONO.replace("rispondi per mail a chi ti ha scritto dalla tua pagina pubblica",
-      "stai parlando in diretta, sulla tua pagina pubblica, con una persona che ti ha appena scritto")
-    .replace("- Al massimo 120 parole. Firma come ti dice il messaggio qui sotto.",
-      `- Per questa persona ti chiami ${nome}. Parli in prima persona, senza firma.\n- Al massimo 80 parole: e' una chat sul telefono.\n- Chiudi quasi sempre con UNA domanda breve per conoscerla meglio (il suo lavoro, la sua giornata), a meno che non ti abbia chiesto di smettere.\n- Se chiede una risposta lunga o personale, dille che puo' lasciarti la mail qui sotto e ti scrive con calma chi ti costruisce.`)
-    + (cosa_so ? `\n\nQuello che sai di questa persona: ${cosa_so}.` : "");
-  let testoRisposta;
-  try {
-    testoRisposta = await claude(env, { max_tokens: 350, system: sistema, messages: puliti });
-  } catch (e) {
-    return risposta({ errore: "Adesso non riesco a pensare. Riprova tra poco." , dettaglio: String(e.message || e) }, 502, origine);
+  const id = nuovoId();
+  const rec = { id, chi, nome: testo(d.tuo, 40), nome_assistente: testo(d.nome_assistente, 20), tema: testo(d.tema, 10),
+    da_dove: testo(d.da_dove, 20), mestiere: profilo.mestiere, profilo, domanda,
+    contesto: [profilo.mestiere, d.da_dove === "sondaggio" ? "dal sondaggio" : "dalla chat"].filter(Boolean).join(" · "),
+    stato: "arrivata", creata: new Date().toISOString() };
+  try { await nuovaDomanda(env, rec); }
+  catch (e) { return risposta({ errore: String(e.message || e) }, 502, origine); }
+  return risposta({ ok: true, id }, 201, origine);
+}
+
+// ─── la pagina chiede se ci sono risposte per lei ───
+// Chi conosce il codice (16 caratteri a caso, nati nel telefono) legge le
+// sue risposte, e basta.
+async function rispostePerPagina(req, env, origine) {
+  const chi = new URL(req.url).searchParams.get("chi") || "";
+  if (!/^[0-9a-f]{8,32}$/.test(chi)) return risposta({ errore: "codice non valido" }, 400, origine);
+  if (await frenato(env, `leggi:${chi}`)) return risposta({ risposte: [] }, 200, origine);
+  const res = await fetch(`https://api.github.com/repos/${ARCHIVIO}/contents/per-pagina/${chi}`, {
+    headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "jjavis-porta" } });
+  if (res.status === 404) return risposta({ risposte: [] }, 200, origine);
+  if (!res.ok) return risposta({ errore: `GitHub ${res.status}` }, 502, origine);
+  const elenco = (await res.json()).filter((f) => f.name.endsWith(".json")).slice(-20);
+  const risposte = [];
+  for (const f of elenco) {
+    try { const d = await gh(env, "GET", `per-pagina/${chi}/${f.name}`); risposte.push(deb64(d.content)); } catch {}
   }
-  if (testoRisposta.startsWith("NESSUNA RISPOSTA")) testoRisposta = "Su questo preferisco non rispondere. Raccontami piuttosto del tuo lavoro: cosa ti porta via più tempo?";
-  const quando = new Date().toISOString();
-  const traccia = { quando, chi, nome_assistente: nome, tema: testo(d.tema, 10), da_dove: testo(d.da_dove, 20), messaggio, risposta: testoRisposta };
-  ctx.waitUntil((async () => {
-    try { await gh(env, "PUT", `chiacchiere/${quando.slice(0, 10)}/${quando.replace(/[:.]/g, "-")}-${(chi || "anonimo").slice(0, 8)}.json`,
-                   { message: `chiacchiera ${nome}`, content: b64(traccia) }); } catch (e) { console.log("chiacchiera non salvata", e); }
-    if (env.TG_BOT_TOKEN && env.TG_CHAT) {
-      await tg(env, "sendMessage", { chat_id: env.TG_CHAT,
-        text: `🗨️ ${nome} parla (${(chi || "?").slice(0, 6)})\n» ${messaggio}\n\n${testoRisposta}`.slice(0, 4000) }).catch(() => {});
-    }
-  })());
-  return risposta({ risposta: testoRisposta }, 200, origine);
+  risposte.sort((x, y) => String(x.quando).localeCompare(String(y.quando)));
+  return risposta({ risposte }, 200, origine);
 }
