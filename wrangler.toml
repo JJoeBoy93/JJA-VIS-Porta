@@ -7,3 +7,20 @@ main = "worker.js"
 compatibility_date = "2026-09-25"
 workers_dev = true
 preview_urls = false
+
+# I freni della chat sulla pagina (/parla): per persona e per tutti.
+# Contatori approssimati, per sede di Cloudflare: servono contro l'abuso,
+# non sono un conto esatto.
+[[ratelimits]]
+name = "FRENO_PERSONA"
+namespace_id = "7301"
+[ratelimits.simple]
+limit = 6
+period = 60
+
+[[ratelimits]]
+name = "FRENO_TUTTI"
+namespace_id = "7302"
+[ratelimits.simple]
+limit = 40
+period = 60
