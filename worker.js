@@ -275,7 +275,8 @@ async function nuovaDomanda(env, rec) {
   const corpo = `💬 ${chi} ha scritto  #${rec.id}\n${rec.contesto || ""}${rec.contesto ? "\n" : ""}` +
     `«${rec.domanda}»\n\nRisposta via: ${dove}\n✍️ Bozza = la scrive Claude (~0,3 cent). Oppure rispondi a questo messaggio col tuo testo: parte gratis.`;
   await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: corpo.slice(0, 4000), reply_markup: { inline_keyboard: [[
-    { text: "✍️ Bozza", callback_data: `bozza:${rec.id}` }, { text: "🗑 Ignora", callback_data: `scarta:${rec.id}` }]] } });
+    { text: "✍️ Bozza", callback_data: `bozza:${rec.id}` }, { text: "📋 Per un'altra IA", callback_data: `copia:${rec.id}` },
+    { text: "🗑 Ignora", callback_data: `scarta:${rec.id}` }]] } });
 }
 
 function nuovoId() { return crypto.randomUUID().replace(/-/g, "").slice(0, 8); }
@@ -293,6 +294,24 @@ async function avvisa(env, r, percorso) {
       nome_assistente: r.nome_assistente || "", mestiere: r.mestiere || "", domanda: r.messaggio,
       contesto: r.mestiere || "", stato: "arrivata", creata: new Date().toISOString() });
   }
+}
+
+// ─── 📋 la domanda pronta da incollare in un'altra IA, gratis ───
+// JJ, 25 settembre: «se rispondo io è gratis… rigiro la domanda su ChatGPT
+// o Google, che è gratis». Il rischio: quell'IA non sa chi è JJA-VIS e
+// promette cose false. Quindi il testo da incollare porta con sé le stesse
+// istruzioni della bozza — senza il nome e senza la mail di chi ha scritto.
+function escHtml(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+async function copiaPerAltraIA(env, id) {
+  const { dati } = await leggiBozza(env, id);
+  const istruzioni = CHI_SONO.replace("rispondi per mail a chi ti ha scritto dalla tua pagina pubblica",
+                                      "rispondi a chi ti ha scritto dalla tua pagina pubblica")
+    .replace("- Al massimo 120 parole. Firma come ti dice il messaggio qui sotto.",
+             `- Al massimo 100 parole, niente firma.${dati.nome_assistente ? ` Per questa persona ti chiami ${dati.nome_assistente}.` : ""}`);
+  const testo = `${istruzioni}\n\n${dati.mestiere ? `Il suo mestiere: ${dati.mestiere}.\n` : ""}Il suo messaggio:\n-----\n${dati.domanda}\n-----\nScrivi solo la risposta.`;
+  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, parse_mode: "HTML",
+    text: `📋 #${id} — tocca il testo per copiarlo, incollalo in ChatGPT o Gemini, poi rispondi al messaggio della domanda con quello che ti dà (correggilo se serve).\n\n<code>${escHtml(testo).slice(0, 3600)}</code>` });
+  return "copia pronta";
 }
 
 // ─── la bozza, solo col tocco di JJ ───
@@ -373,9 +392,10 @@ async function telegram(req, env) {
       await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: azione === "bozza" ? "la scrivo…" : "fatto" }).catch(() => {});
       let esito;
       try {
-        esito = azione === "invia" ? await invia(env, id) : azione === "bozza" ? await faiBozza(env, id) : await scarta(env, id);
+        esito = azione === "invia" ? await invia(env, id) : azione === "bozza" ? await faiBozza(env, id)
+              : azione === "copia" ? await copiaPerAltraIA(env, id) : await scarta(env, id);
       } catch (e) { esito = `NON inviata — ${e.message || e}`; }
-      if (esito !== "bozza pronta") {
+      if (esito !== "bozza pronta" && esito !== "copia pronta") {
         await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `#${id}: ${esito}`, reply_to_message_id: q.message.message_id });
       }
       if (/^(inviata|scartata|bozza pronta)/.test(esito)) {
