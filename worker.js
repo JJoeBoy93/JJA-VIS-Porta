@@ -83,9 +83,22 @@ async function scrivi(env, r) {
   }
 }
 
+// ══ IL NUMERO DEL GRUPPO, COMUNQUE SIA SCRITTO ══ — 25 settembre: JJ mette
+// il numero giusto in TG_GRUPPO e il bot continua a rispondere «il numero di
+// questo gruppo è…». Il valore si confrontava lettera per lettera: basta un
+// meno che manca, uno spazio, o il -100 dimenticato. Adesso si tengono solo
+// le cifre e si rimette davanti il -100 dei supergruppi.
+function normalizzaGruppo(v) {
+  const cifre = String(v || "").replace(/\D/g, "");
+  if (!cifre) return "";
+  return cifre.startsWith("100") && cifre.length >= 13 ? `-${cifre}` : `-100${cifre}`;
+}
+function conGruppo(env) { return env.TG_GRUPPO ? { ...env, TG_GRUPPO: normalizzaGruppo(env.TG_GRUPPO) } : env; }
+
 export default {
-  async scheduled(evento, env, ctx) { ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e))); },
+  async scheduled(evento, env, ctx) { env = conGruppo(env); ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e))); },
   async fetch(req, env, ctx) {
+    env = conGruppo(env);
     const url = new URL(req.url);
     const origine = req.headers.get("Origin") || "";
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origine) });
@@ -112,6 +125,7 @@ export default {
         bozze_claude: Boolean(env.ANTHROPIC_API_KEY),
         mail_brevo: Boolean(env.BREVO_API_KEY),
         mittente: env.MITTENTE || "manca",
+        gruppo_finisce_con: env.TG_GRUPPO ? env.TG_GRUPPO.slice(-4) : "manca",
       }, 200, origine);
     }
     if (req.method === "POST" && url.pathname === "/telegram") return telegram(req, env);
@@ -419,7 +433,8 @@ async function telegram(req, env) {
     if (String(m.from && m.from.id) !== String(env.TG_CHAT)) return new Response("ok");   // solo JJ
     if (nelGruppo && String(m.chat.id) !== String(env.TG_GRUPPO || "")) {
       // Il primo messaggio di JJ in un gruppo nuovo dice il numero da mettere nei secret.
-      await tg(env, "sendMessage", { ...qui, text: `Il numero di questo gruppo è ${m.chat.id}: mettilo nel secret TG_GRUPPO di JJA-VIS-Porta e rilancia la consegna.` });
+      await tg(env, "sendMessage", { ...qui, text: `Il numero di questo gruppo è ${m.chat.id}: mettilo nel secret TG_GRUPPO di JJA-VIS-Porta e rilancia la consegna.` +
+        (env.TG_GRUPPO ? `\n(Adesso ho un numero che finisce con ${env.TG_GRUPPO.slice(-4)}: è un altro gruppo, o un numero vecchio.)` : "") });
       return new Response("ok");
     }
     if (!nelGruppo && String(m.chat.id) !== String(env.TG_CHAT)) return new Response("ok");
