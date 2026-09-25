@@ -132,6 +132,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/conoscenza") return conoscenza(req, env, ctx, origine);
     if (req.method === "POST" && url.pathname === "/parla") return parla(req, env, ctx, origine);
     if (req.method === "GET" && url.pathname === "/risposte") return rispostePerPagina(req, env, origine);
+    if (req.method === "GET" && url.pathname === "/video") return videoPerPagina(env, origine);
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
 
@@ -438,6 +439,16 @@ async function telegram(req, env) {
       return new Response("ok");
     }
     if (!nelGruppo && String(m.chat.id) !== String(env.TG_CHAT)) return new Response("ok");
+    // Un link di un video incollato da solo vale come /video: copia e incolla.
+    if (m.text && /^https?:\/\//.test(m.text.trim()) && (riconosciVideo(m.text.trim().split(/\s+/)[0]) || /^https?:\/\/(vm|vt)\.tiktok\.com\//.test(m.text.trim()))) {
+      m.text = "/video " + m.text.trim();
+    }
+    if (m.text && /^\/(video|togli)\b/.test(m.text)) {
+      let esito;
+      try { esito = await comandoVideo(env, m.text); } catch (e) { esito = `Video non salvato — ${e.message || e}`; }
+      await tg(env, "sendMessage", { ...qui, text: esito, disable_web_page_preview: true });
+      return new Response("ok");
+    }
     if (m.text && /^\/numeri/.test(m.text)) {
       await tg(env, "sendMessage", { ...qui, text: await numeri(env) });
       return new Response("ok");
@@ -683,4 +694,72 @@ async function contoDellaSera(env) {
     catch (e) { return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `⚠️ argomento Numeri non raggiungibile (${e.message || e})\n\n${testo}` }); }
   }
   if (env.TG_CHAT) return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: testo });
+}
+
+// ══ I VIDEO DAI SOCIAL ══ — 25 settembre 2026
+// JJ: «vorrei caricare i video da link dei video che già posto sui social:
+// copio e incollo il link». Da Telegram, al bot di JJA-VIS:
+//   /video <link> <titolo>   aggiunge (Instagram, YouTube, TikTok)
+//   /video                   elenca, coi numeri
+//   /togli <numero>          toglie
+// L'elenco sta in video.json nell'archivio; la pagina lo chiede a GET /video.
+// Sulla pagina il video non si carica da solo: prima c'e' un riquadro, e
+// solo toccandolo arriva il lettore della piattaforma coi suoi cookie. Cosi'
+// la pagina resta senza cookie finche' la persona non sceglie di guardare.
+function riconosciVideo(link) {
+  let u;
+  try { u = new URL(link); } catch { return null; }
+  const h = u.hostname.replace(/^www\.|^m\./, "");
+  let m;
+  if (h === "instagram.com" && (m = u.pathname.match(/^\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/)))
+    return { piattaforma: "instagram", codice: m[1], verticale: true };
+  if (h === "youtu.be" && (m = u.pathname.match(/^\/([A-Za-z0-9_-]{6,})/)))
+    return { piattaforma: "youtube", codice: m[1], verticale: false };
+  if (h.endsWith("youtube.com")) {
+    if ((m = u.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{6,})/))) return { piattaforma: "youtube", codice: m[1], verticale: true };
+    if (u.searchParams.get("v")) return { piattaforma: "youtube", codice: u.searchParams.get("v"), verticale: false };
+  }
+  if (h.endsWith("tiktok.com") && (m = u.pathname.match(/\/video\/(\d+)/)))
+    return { piattaforma: "tiktok", codice: m[1], verticale: true };
+  return null;
+}
+
+async function leggiVideo(env) {
+  try { const d = await gh(env, "GET", "video.json"); return { elenco: deb64(d.content), sha: d.sha }; }
+  catch { return { elenco: [], sha: undefined }; }
+}
+
+async function comandoVideo(env, testo) {
+  const parti = testo.trim().split(/\s+/);
+  const comando = parti.shift().replace(/@.*$/, "").toLowerCase();
+  const { elenco, sha } = await leggiVideo(env);
+  const salva = (nuovo, msg) => gh(env, "PUT", "video.json", { message: msg, content: b64(nuovo), ...(sha ? { sha } : {}) });
+  const riga = (v, i) => `${i + 1}. ${v.titolo || "(senza titolo)"} — ${v.piattaforma}`;
+  if (comando === "/togli") {
+    const n = parseInt(parti[0], 10);
+    if (!n || n < 1 || n > elenco.length) return `Quale? Scrivi /togli e il numero.\n${elenco.map(riga).join("\n") || "(nessun video)"}`;
+    const [via] = elenco.splice(n - 1, 1);
+    await salva(elenco, `video tolto: ${via.titolo}`);
+    return `Tolto: ${via.titolo}. Sulla pagina sparisce entro un minuto.`;
+  }
+  if (!parti.length) return elenco.length ? `🎬 Video sulla pagina:\n${elenco.map(riga).join("\n")}\n\n/togli <numero> per toglierne uno.`
+                                         : "Nessun video. Mandami: /video <link> <titolo>";
+  let link = parti.shift();
+  // I link corti di TikTok (vm.tiktok.com) portano altrove: si segue il giro.
+  if (/^https?:\/\/(vm|vt)\.tiktok\.com\//.test(link)) {
+    try { link = (await fetch(link, { redirect: "follow" })).url; } catch {}
+  }
+  const v = riconosciVideo(link);
+  if (!v) return "Questo link non lo riconosco. Vanno bene Instagram (reel o post), YouTube (anche Shorts) e TikTok.";
+  if (elenco.some((x) => x.piattaforma === v.piattaforma && x.codice === v.codice)) return "Questo video è già sulla pagina.";
+  const nuovo = [...elenco, { ...v, url: link, titolo: parti.join(" ").slice(0, 80), quando: new Date().toISOString() }];
+  await salva(nuovo, `video: ${v.piattaforma} ${v.codice}`);
+  return `🎬 Aggiunto (${v.piattaforma}${parti.length ? `: «${parti.join(" ")}»` : ", senza titolo"}). È il numero ${nuovo.length}: sulla pagina compare entro un minuto.`;
+}
+
+async function videoPerPagina(env, origine) {
+  const { elenco } = await leggiVideo(env);
+  const r = risposta({ video: elenco.map(({ piattaforma, codice, verticale, url, titolo }) => ({ piattaforma, codice, verticale, url, titolo })) }, 200, origine);
+  r.headers.set("Cache-Control", "public, max-age=60");
+  return r;
 }
