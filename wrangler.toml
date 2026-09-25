@@ -28,3 +28,9 @@ period = 60
 # Il conto della sera nell'argomento «📊 Numeri»: ogni giorno alle 18 UTC.
 [triggers]
 crons = ["0 18 * * *"]
+
+# Hermes, raggiunto direttamente dentro Cloudflare: e' la strada dei numeri
+# verso il briefing di JARVIS (lo Space non puo' uscire verso Cloudflare).
+[[services]]
+binding = "HERMES"
+service = "hermes"

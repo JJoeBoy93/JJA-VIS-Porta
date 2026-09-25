@@ -289,6 +289,7 @@ async function segretoTelegram(env) {
 // col suo testo: parte quello, gratis.
 async function nuovaDomanda(env, rec, u) {
   await salvaBozza(env, rec.id, rec);
+  await segnaAttesa(env, rec.id, true).catch((e) => console.log("attesa", e));
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;
   const chi = [rec.nome_assistente, rec.nome].filter(Boolean).join(" · ") || "Qualcuno";
   const dove = [rec.a && "✉️ mail", rec.chi && "💬 pagina"].filter(Boolean).join(" + ");
@@ -390,6 +391,7 @@ async function invia(env, id, testoDiJJ) {
   if (!fatto.length) return "niente da mandare: non ha lasciato né mail né pagina";
   await salvaBozza(env, id, { ...dati, stato: "inviata", inviato: testo, di_jj: Boolean(testoDiJJ), via: fatto,
                               quando_inviata: new Date().toISOString() }, sha);
+  await segnaAttesa(env, id, false).catch((e) => console.log("attesa", e));
   return `inviata (${fatto.join(" + ")})`;
 }
 
@@ -397,6 +399,7 @@ async function scarta(env, id) {
   const { dati, sha } = await leggiBozza(env, id);
   if (dati.stato === "inviata" || dati.stato === "scartata") return `già ${dati.stato}`;
   await salvaBozza(env, id, { ...dati, stato: "scartata", quando_scartata: new Date().toISOString() }, sha);
+  await segnaAttesa(env, id, false).catch((e) => console.log("attesa", e));
   return "scartata";
 }
 
@@ -457,7 +460,10 @@ async function telegram(req, env) {
       return new Response("ok");
     }
     if (m.text && /^\/numeri/.test(m.text)) {
-      await tg(env, "sendMessage", { ...qui, text: await numeri(env) });
+      let raccolti = null;
+      try { raccolti = await raccogli(env); } catch {}
+      const aJarvis = raccolti ? await mandaAJarvis(env, raccolti) : "numeri non letti";
+      await tg(env, "sendMessage", { ...qui, text: (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}` });
       return new Response("ok");
     }
     const sopra = m.reply_to_message && (m.reply_to_message.text || "");
@@ -674,16 +680,23 @@ async function manda(env, u, corpo) {
 }
 
 // ─── i numeri ───
-async function numeri(env) {
+async function raccogli(env) {
   const res = await fetch(`https://api.github.com/repos/${ARCHIVIO}/contents/utenti`, {
     headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json", "User-Agent": "jjavis-porta" } });
-  if (res.status === 404) return "📊 Ancora nessuno: l'archivio delle persone è vuoto.";
-  if (!res.ok) return `📊 Numeri non letti: GitHub ${res.status}`;
+  if (res.status === 404) return { file: [], letti: [] };
+  if (!res.ok) throw new Error(`GitHub ${res.status}`);
   const file = (await res.json()).filter((f) => f.name.endsWith(".json"));
   const letti = [];
   for (const f of file.slice(0, TETTO_LETTURE)) {
     try { letti.push(deb64((await gh(env, "GET", `utenti/${f.name}`)).content)); } catch {}
   }
+  return { file, letti };
+}
+
+async function numeri(env, raccolti) {
+  let file, letti;
+  try { ({ file, letti } = raccolti || await raccogli(env)); } catch (e) { return `📊 Numeri non letti: ${e.message || e}`; }
+  if (!file.length) return "📊 Ancora nessuno: l'archivio delle persone è vuoto.";
   const oggi = new Date().toISOString().slice(0, 10);
   const conta = (arr) => Object.entries(arr.reduce((m, x) => (x ? (m[x] = (m[x] || 0) + 1, m) : m), {}))
     .sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(", ") || "—";
@@ -722,7 +735,10 @@ async function argomentoNumeri(env) {
 // Il conto della sera: ogni giorno alle 18 UTC (le 20 d'estate in Italia, le 19 d'inverno).
 async function contoDellaSera(env) {
   if (!env.TG_BOT_TOKEN || !env.GH_TOKEN) return;
-  const testo = await numeri(env);
+  let raccolti = null;
+  try { raccolti = await raccogli(env); } catch {}
+  const aJarvis = raccolti ? await mandaAJarvis(env, raccolti) : "numeri non letti";
+  const testo = (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}`;
   if (env.TG_GRUPPO) {
     try { return await tg(env, "sendMessage", { chat_id: env.TG_GRUPPO, message_thread_id: await argomentoNumeri(env), text: testo }); }
     catch (e) { return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `⚠️ argomento Numeri non raggiungibile (${e.message || e})\n\n${testo}` }); }
@@ -796,4 +812,62 @@ async function videoPerPagina(env, origine) {
   const r = risposta({ video: elenco.map(({ piattaforma, codice, verticale, url, titolo }) => ({ piattaforma, codice, verticale, url, titolo })) }, 200, origine);
   r.headers.set("Cache-Control", "public, max-age=60");
   return r;
+}
+
+
+// ══ I NUMERI NEL BRIEFING DI JARVIS — 26 settembre 2026 ══
+// JJ: «ha senso mettere nel briefing di Jarvis JJA-VIS». A JARVIS passano
+// SOLO numeri ed etichette fisse della pagina (mestieri, progetti): niente
+// testo di sconosciuti, nemmeno i nomi dati all'assistente. La strada:
+// porta → Hermes (service binding, col segreto JJAVIS_SEGRETO) → Space (col
+// segreto del webhook). Lo Space non puo' uscire verso Cloudflare, e il
+// token di JARVIS non deve poter leggere l'archivio con i messaggi.
+async function segnaAttesa(env, id, dentro) {
+  for (let giro = 0; giro < 3; giro++) {
+    let ids = [], sha;
+    try { const d = await gh(env, "GET", "attesa.json"); ids = deb64(d.content).ids || []; sha = d.sha; } catch {}
+    const nuovi = dentro ? [...new Set([...ids, id])] : ids.filter((x) => x !== id);
+    if (nuovi.length === ids.length && (dentro ? ids.includes(id) : !ids.includes(id))) return;
+    try {
+      await gh(env, "PUT", "attesa.json", { message: `attesa ${dentro ? "+" : "-"}${id}`, content: b64({ ids: nuovi }), ...(sha ? { sha } : {}) });
+      return;
+    } catch (e) { if (!/GitHub (409|422)/.test(String(e.message))) throw e; }
+  }
+}
+
+function numeriPerJarvis(letti, inAttesa) {
+  const oggi = new Date().toISOString().slice(0, 10);
+  const prezzi = letti.filter((u) => u.ha_risposto && typeof u.prezzo_al_mese === "number").map((u) => u.prezzo_al_mese).sort((a, b) => a - b);
+  const conteggio = (arr) => Object.entries(arr.reduce((m, x) => (x ? (m[x] = (m[x] || 0) + 1, m) : m), {})).sort((a, b) => b[1] - a[1]);
+  const mestieri = conteggio(letti.map((u) => u.mestiere));
+  const mestiereTop = mestieri.length ? mestieri[0][0] : "";
+  const votiTop = conteggio(letti.filter((u) => u.mestiere === mestiereTop).flatMap((u) => u.voti || []));
+  return {
+    giorno: oggi,
+    persone: letti.length,
+    nuove: letti.filter((u) => String(u.primo).startsWith(oggi)).length,
+    attive: letti.filter((u) => String(u.ultimo).startsWith(oggi)).length,
+    sondaggi: letti.filter((u) => u.ha_risposto).length,
+    domande_in_attesa: inAttesa,
+    media_eur: prezzi.length ? Math.round(prezzi.reduce((a, b) => a + b, 0) / prezzi.length) : null,
+    su_quanti: prezzi.length,
+    mestiere_top: mestiereTop,
+    voto_top: votiTop.length ? votiTop[0][0] : "",
+  };
+}
+
+async function mandaAJarvis(env, { letti }) {
+  if (!env.HERMES) return "manca il collegamento con Hermes";
+  if (!env.JJAVIS_SEGRETO) return "manca JJAVIS_SEGRETO";
+  let inAttesa = 0;
+  try { inAttesa = (deb64((await gh(env, "GET", "attesa.json")).content).ids || []).length; } catch {}
+  try {
+    const r = await env.HERMES.fetch(new Request("https://hermes/jjavis/numeri", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-JJAVIS-Segreto": env.JJAVIS_SEGRETO },
+      body: JSON.stringify(numeriPerJarvis(letti, inAttesa)),
+    }));
+    const t = (await r.text()).slice(0, 120);
+    return r.ok ? "consegnati" : `NON consegnati (${r.status}: ${t})`;
+  } catch (e) { return `NON consegnati (${e.message || e})`; }
 }
