@@ -1,8 +1,8 @@
 // Collaudo della porta con GitHub, Telegram, Anthropic e Brevo finti: niente rete.
 //   node collaudo/porta.mjs            (prova worker.js accanto)
 //   node collaudo/porta.mjs altro.js   (prova un'altra versione)
-// Nato il 26 settembre 2026 (Athena): commissioni, contatto a parte, e il 📋
-// che tagliava la domanda. Verde sulla porta 3017cb6, rosso su c30c240.
+// Nato il 26 settembre 2026 (Athena): commissioni, contatto a parte, il 📋
+// che tagliava la domanda, Clio per le guide.
 import { copyFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
@@ -77,6 +77,24 @@ const m2 = tgInviati.find(([m, b]) => m === "sendMessage" && (b.text || "").incl
 ok(m2 && m2[1].text.includes("💼 INVESTITORE"), "Telegram: 💼 INVESTITORE");
 await tocco("bozza:" + d2.id);
 ok(JSON.stringify(claudeVisti.at(-1)).includes("riservatezza") && !JSON.stringify(claudeVisti.at(-1)).includes("anna@"), "bozza investitori: NDA, senza mail");
+
+console.log("── 📋 a pezzi interi");
+const pezzi = tgInviati.filter(([m, b]) => m === "sendMessage" && /📋 #/.test(b.text || "") && b.text.includes(d.id)).map(([, b]) => b.text);
+const unito = pezzi.join("\n");
+ok(pezzi.length >= 1 && pezzi.every((t) => t.length <= 4096), `${pezzi.length} pezzi, tutti sotto i 4.096 caratteri di Telegram`);
+ok(unito.includes("pizzeria") && unito.includes("NESSUNA RISPOSTA") && unito.includes("istruzioni per te"), "dentro ci sono la domanda E le regole in fondo");
+
+console.log("── una guida chiede Clio");
+r = await post("/parla", { chi: "a1b2c3d4e5f60718", da_dove: "clio", testo: "🏛 Clio — lingue: italiano, inglese" });
+ok(r.status === 400, "senza contatto: rifiutata");
+r = await post("/parla", { chi: "a1b2c3d4e5f60718", da_dove: "clio", testo: "🏛 Clio — lingue: italiano, inglese · dove: Roma",
+  contatto: { nome: "Giulia Verdi", mail: "giulia@guide.it", consenso: true } });
+const d4 = await r.json(); ok(r.status === 201, "con contatto: arrivata");
+const m4 = tgInviati.find(([m, b]) => m === "sendMessage" && (b.text || "").includes(d4.id));
+ok(m4 && m4[1].text.includes("🏛 CLIO") && m4[1].text.includes("giulia@guide.it"), "Telegram: 🏛 CLIO col contatto");
+await tocco("bozza:" + d4.id);
+const v4 = JSON.stringify(claudeVisti.at(-1));
+ok(v4.includes("invito personale") && v4.includes("Clio") && !v4.includes("giulia@") && !v4.includes("Verdi"), "la bozza sa di Clio e dell'invito, non vede nome né mail");
 
 console.log("── la chat di sempre non cambia");
 r = await post("/parla", { chi: "a1b2c3d4e5f60718", testo: "in cosa mi aiuteresti?", tuo: "Marco", profilo: { mestiere: "Ufficio" } });
