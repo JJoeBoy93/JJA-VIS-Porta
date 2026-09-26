@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const sorgente = resolve(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), "..", "worker.js"));
 const copia = join(mkdtempSync(join(tmpdir(), "porta-")), "worker.mjs");   // worker.js e' ESM ma si chiama .js
 copyFileSync(sorgente, copia);
+const W = (await import(copia)).default;
 const repo = new Map(), tgInviati = [], claudeVisti = [], brevo = [];
 let conta = 0;
 globalThis.fetch = async (url, o = {}) => {
