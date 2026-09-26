@@ -50,7 +50,7 @@ const rec = deb(repo.get(`bozze/${d.id}.json`));
 ok(rec.a === "luca@pizzeria.it" && rec.da_dove === "commissione", "la bozza salvata ha la mail per la risposta");
 ok(!rec.domanda.includes("luca@") && !rec.domanda.includes("Bianchi"), "la domanda non contiene nome né mail");
 const msg = tgInviati.find(([m, b]) => m === "sendMessage" && (b.text || "").includes(d.id));
-ok(msg && msg[1].text.includes("🛠 COMMISSIONE") && msg[1].text.includes("luca@pizzeria.it") && msg[1].text.includes("✉️ mail"), "Telegram: 🛠 COMMISSIONE, il contatto e «via mail»");
+ok(msg && msg[1].text.includes("🛠 COMMISSIONE") && msg[1].text.includes("luca@pizzeria.it") && msg[1].text.includes("✉️ anche mail, se la scegli"), "Telegram: 🛠 COMMISSIONE, il contatto, e che la mail si sceglie");
 console.log("     " + (msg ? msg[1].text.split("\n").slice(0, 4).join(" | ") : "—"));
 
 console.log("── JJ tocca ✍️ Bozza");
@@ -63,8 +63,11 @@ const visto = JSON.stringify(claudeVisti.at(-1) || {});
 ok(claudeVisti.length === 1, "Claude chiamato una volta");
 ok(!visto.includes("luca@") && !visto.includes("Bianchi") && !visto.includes("Luca"), "Claude non vede nome né mail");
 ok(visto.includes("COMMISSIONE") && visto.includes("preventivo"), "Claude sa che è una commissione e che si prende");
-await tocco("invia:" + d.id);
-ok(brevo.length === 1 && brevo[0].to[0].email === "luca@pizzeria.it", "Invia: la mail parte a Luca");
+const tastiB = (tgInviati.filter(([m, b]) => m === "sendMessage" && (b.text || "").startsWith("✍️ Bozza  #" + d.id)).at(-1) || [])[1];
+const etichette = tastiB ? tastiB.reply_markup.inline_keyboard.flat().map((t) => t.text) : [];
+ok(etichette.includes("💬 Solo chat") && etichette.includes("✉️ Chat + mail"), "con pagina e mail, la bozza chiede dove: " + etichette.join(" | "));
+await tocco("inviam:" + d.id);
+ok(brevo.length === 1 && brevo[0].to[0].email === "luca@pizzeria.it" && repo.has(`per-pagina/a1b2c3d4e5f60718/${d.id}.json`), "✉️ Chat + mail: parte la mail a Luca, e la pagina");
 
 console.log("── 📋 per un'altra IA");
 await tocco("copia:" + d.id);
@@ -132,5 +135,26 @@ r = await post("/parla", { chi: "a1b2c3d4e5f60718", testo: "ciao", da_dove: "boh
 ok(r.status === 201, "un da_dove sconosciuto diventa chat");
 await tocco("bozza:" + d3.id);
 ok(!JSON.stringify(claudeVisti.at(-1)).includes("Marco"), "neanche il nome della chat arriva a Claude");
+console.log("── la mail solo se la scegli");
+const conMail = async (t) => (await (await post("/parla", { chi: "e1b2c3d4e5f60718", testo: t, contatto: { nome: "Sara", mail: "sara@esempio.it", consenso: true } })).json()).id;
+const risponde = (id, testo) => W.fetch(new Request("https://porta/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": segreto, "content-type": "application/json" },
+  body: JSON.stringify({ message: { message_id: 99, from: { id: 42 }, chat: { id: 42, type: "private" }, text: testo, reply_to_message: { text: `💬 ha scritto  #${id}` } } }) }), env, ctx);
+const q1 = await conMail("domanda da chat");
+const primaB = brevo.length;
+await tocco("bozza:" + q1); await tocco("invia:" + q1);
+ok(brevo.length === primaB && repo.has(`per-pagina/e1b2c3d4e5f60718/${q1}.json`), "💬 Solo chat: nessuna mail, solo la pagina");
+ok(deb(repo.get(`bozze/${q1}.json`)).via.join() === "pagina", "e nella bozza resta scritto «via: pagina»");
+const q2 = await conMail("un'altra domanda");
+await risponde(q2, "Ciao Sara, si può fare.");
+ok(!repo.has(`per-pagina/e1b2c3d4e5f60718/${q2}.json`) && brevo.length === primaB, "il testo di JJ, con pagina e mail: non parte da solo");
+const chiede = tgInviati.filter(([m, b]) => m === "sendMessage" && (b.text || "").startsWith("✍️ Il tuo testo  #" + q2)).at(-1);
+ok(chiede && chiede[1].reply_markup.inline_keyboard.flat().some((t) => t.text === "✉️ Chat + mail"), "chiede dove mandarlo");
+await tocco("inviam:" + q2);
+ok(brevo.length === primaB + 1 && brevo.at(-1).textContent.startsWith("Ciao Sara, si può fare.") && repo.has(`per-pagina/e1b2c3d4e5f60718/${q2}.json`), "✉️ Chat + mail: parte il testo di JJ, per mail e in pagina");
+ok(deb(repo.get(`bozze/${q2}.json`)).di_jj === true, "e resta segnato che era il testo di JJ");
+const q3 = (await (await post("/parla", { chi: "e1b2c3d4e5f60718", testo: "solo chat, senza mail" })).json()).id;
+await risponde(q3, "Risposta veloce.");
+ok(repo.has(`per-pagina/e1b2c3d4e5f60718/${q3}.json`), "senza mail, il testo di JJ parte subito come prima");
+
 console.log(err ? `\nROSSO: ${err}` : "\nVERDE");
 process.exit(err ? 1 : 0);

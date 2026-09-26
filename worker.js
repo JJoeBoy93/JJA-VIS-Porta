@@ -338,7 +338,7 @@ async function nuovaDomanda(env, rec, u) {
   await segnaAttesa(env, rec.id, true).catch((e) => console.log("attesa", e));
   if (!env.TG_BOT_TOKEN || !env.TG_CHAT) return;
   const chi = [rec.nome_assistente, rec.nome].filter(Boolean).join(" · ") || "Qualcuno";
-  const dove = [rec.a && "✉️ mail", rec.chi && "💬 pagina"].filter(Boolean).join(" + ");
+  const dove = rec.a && rec.chi ? "💬 pagina (✉️ anche mail, se la scegli prima di mandare)" : [rec.a && "✉️ mail", rec.chi && "💬 pagina"].filter(Boolean).join(" + ");
   const persona = (rec.contatto ? `👤 ${[rec.contatto.nome, rec.contatto.societa, rec.contatto.mail].filter(Boolean).join(" · ")}\n` : "") +
                   (rec.link ? `🔗 ${rec.link}\n` : "");
   const corpo = `💬 ${chi} ha scritto  #${rec.id}\n${rec.contesto || ""}${rec.contesto ? "\n" : ""}${persona}` +
@@ -413,25 +413,36 @@ async function faiBozza(env, id, dove) {
                                       : `⚠️ pagina NON letta: ${pagina.perche}. La bozza lo dice: guardala tu prima di mandare.\n\n`) : "";
   try { testo = await bozza(env, dati, pagina); }
   catch (e) { return `bozza non riuscita — ${e.message || e}. Puoi rispondere col tuo testo.`; }
-  await salvaBozza(env, id, { ...dati, bozza: testo, stato: "bozza", quando_bozza: new Date().toISOString() }, sha);
+  await salvaBozza(env, id, { ...dati, bozza: testo, di_jj: false, stato: "bozza", quando_bozza: new Date().toISOString() }, sha);
   const saltare = testo.startsWith("NESSUNA RISPOSTA");
   await tg(env, "sendMessage", { ...dove,
     text: `✍️ Bozza  #${id}\n${nota ? "" : "\n"}${nota}${testo}\n\nPer cambiarla, rispondi a questo messaggio col testo giusto: parte quello.`.slice(0, 4000),
-    reply_markup: { inline_keyboard: [[{ text: saltare ? "✅ Invia comunque" : "✅ Invia", callback_data: `invia:${id}` },
-                                       { text: "🗑 Scarta", callback_data: `scarta:${id}` }]] } });
+    reply_markup: tastiInvio(dati, id, saltare) });
   return "bozza pronta";
 }
 
 // ─── la risposta parte: solo da qui, solo col tocco di JJ ───
 // Va dove la persona puo' leggerla: la mail se l'ha lasciata, la pagina se
 // ha il codice del telefono. Tutte e due, se ci sono tutte e due.
-async function invia(env, id, testoDiJJ) {
+// 26 settembre, JJ: «serve che scelgo se mandare solo in chat o anche la
+// mail… altrimenti brucio le mail che ho a disposizione per rispondere cose
+// a cui basta la chat». La mail parte solo se JJ la sceglie (conMail) —
+// oppure se la pagina non c'e', perche' allora e' l'unica strada.
+const ENTRAMBE = (dati) => Boolean(dati.a && dati.chi);
+function tastiInvio(dati, id, saltare) {
+  const primo = ENTRAMBE(dati)
+    ? [{ text: "💬 Solo chat", callback_data: `invia:${id}` }, { text: "✉️ Chat + mail", callback_data: `inviam:${id}` }]
+    : [{ text: saltare ? "✅ Invia comunque" : "✅ Invia", callback_data: `invia:${id}` }];
+  return { inline_keyboard: [primo, [{ text: "🗑 Scarta", callback_data: `scarta:${id}` }]] };
+}
+
+async function invia(env, id, testoDiJJ, conMail) {
   const { dati, sha } = await leggiBozza(env, id);
   if (dati.stato === "inviata" || dati.stato === "scartata") return `già ${dati.stato}`;
   const testo = (testoDiJJ || dati.bozza || "").trim();
   if (!testo || testo.startsWith("NESSUNA RISPOSTA")) return "niente da mandare: tocca ✍️ Bozza, o rispondi col tuo testo";
   const fatto = [];
-  if (dati.a) {
+  if (dati.a && (conMail || !dati.chi)) {
     if (!env.BREVO_API_KEY || !env.MITTENTE) throw new Error("mancano BREVO_API_KEY o MITTENTE");
     const piede = "\n\n—\nHai scritto a JJA-VIS dalla sua pagina. Per non ricevere altre mail, rispondi con «cancellami».";
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -455,7 +466,7 @@ async function invia(env, id, testoDiJJ) {
     fatto.push("pagina");
   }
   if (!fatto.length) return "niente da mandare: non ha lasciato né mail né pagina";
-  await salvaBozza(env, id, { ...dati, stato: "inviata", inviato: testo, di_jj: Boolean(testoDiJJ), via: fatto,
+  await salvaBozza(env, id, { ...dati, stato: "inviata", inviato: testo, di_jj: Boolean(testoDiJJ || dati.di_jj), via: fatto,
                               quando_inviata: new Date().toISOString() }, sha);
   await segnaAttesa(env, id, false).catch((e) => console.log("attesa", e));
   return `inviata (${fatto.join(" + ")})`;
@@ -467,6 +478,17 @@ async function scarta(env, id) {
   await salvaBozza(env, id, { ...dati, stato: "scartata", quando_scartata: new Date().toISOString() }, sha);
   await segnaAttesa(env, id, false).catch((e) => console.log("attesa", e));
   return "scartata";
+}
+
+// Il testo scritto da JJ, quando la persona ha sia la pagina sia la mail:
+// non parte subito, si mette da parte e si chiede dove mandarlo.
+async function preparaTesto(env, id, testo, qui) {
+  const { dati, sha } = await leggiBozza(env, id);
+  if (dati.stato === "inviata" || dati.stato === "scartata") return `già ${dati.stato}`;
+  await salvaBozza(env, id, { ...dati, bozza: testo.trim(), di_jj: true, stato: "bozza", quando_bozza: new Date().toISOString() }, sha);
+  await tg(env, "sendMessage", { ...qui, text: `✍️ Il tuo testo  #${id}\n\n${testo.trim()}\n\nDove lo mando? Per cambiarlo, rispondi a questo messaggio.`.slice(0, 4000),
+    reply_markup: tastiInvio(dati, id, false) });
+  return "testo pronto";
 }
 
 // ─── il webhook del bot ───
@@ -487,7 +509,8 @@ async function telegram(req, env) {
       await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: azione === "bozza" ? "la scrivo…" : "fatto" }).catch(() => {});
       let esito;
       try {
-        esito = azione === "invia" ? await invia(env, id) : azione === "bozza" ? await faiBozza(env, id, qui)
+        esito = azione === "invia" ? await invia(env, id) : azione === "inviam" ? await invia(env, id, undefined, true)
+              : azione === "bozza" ? await faiBozza(env, id, qui)
               : azione === "copia" ? await copiaPerAltraIA(env, id, qui) : await scarta(env, id);
       } catch (e) { esito = `NON inviata — ${e.message || e}`; }
       if (esito !== "bozza pronta" && esito !== "copia pronta") {
@@ -543,8 +566,13 @@ async function telegram(req, env) {
     const trovato = sopra && sopra.match(/#([0-9a-f]{8})/);
     if (trovato && m.text) {
       let esito;
-      try { esito = await invia(env, trovato[1], m.text); } catch (e) { esito = `NON inviata — ${e.message || e}`; }
-      await tg(env, "sendMessage", { ...qui, text: `#${trovato[1]}: ${esito}${esito.startsWith("inviata") ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
+      try {
+        const { dati } = await leggiBozza(env, trovato[1]);
+        esito = ENTRAMBE(dati) ? await preparaTesto(env, trovato[1], m.text, qui) : await invia(env, trovato[1], m.text);
+      } catch (e) { esito = `NON inviata — ${e.message || e}`; }
+      if (esito !== "testo pronto") {
+        await tg(env, "sendMessage", { ...qui, text: `#${trovato[1]}: ${esito}${esito.startsWith("inviata") ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
+      }
     } else if (!nelGruppo) {
       await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina. /numeri per il conto." });
     }
