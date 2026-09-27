@@ -56,17 +56,20 @@ const rec = dec(archivio[file]); const id = rec.id;
 ok(rec.stato === "attesa" && rec.stima && rec.telefono === "393331234567", "salvato in preventivi/, in attesa, con la stima");
 const avviso = tgMsg.find((m) => m.text && m.text.includes(`#p${id}`));
 ok(avviso && avviso.text.includes("URGENTE") && avviso.text.includes("Al cliente partirà"), "Telegram: stima urgente e il testo che partirà");
-ok(avviso.reply_markup.inline_keyboard[0][0].callback_data === `pok:${id}` && avviso.reply_markup.inline_keyboard[0][0].text.includes(`${rec.stima.prezzo} €`), "tasto «Approva» col prezzo");
+const [tS, tP] = avviso.reply_markup.inline_keyboard[0];
+ok(tS.callback_data === `pok:${id}:sprinter` && tS.text.includes(`${rec.stima.prezzi.sprinter} €`), "tasto Sprinter col suo prezzo");
+ok(tP.callback_data === `pok:${id}:panda` && rec.stima.prezzi.panda < rec.stima.prezzi.sprinter, "tasto Panda, più economico");
+ok(avviso.text.includes("🚗 con la Panda"), "la stima dice anche il prezzo con la Panda");
 ok(mail.length === 0, "niente mail al cliente prima del tocco di JJ");
 
 console.log("── approva");
-tgMsg = []; await tocca(`pok:${id}`);
+tgMsg = []; await tocca(`pok:${id}:panda`);
 ok(mail.length === 1 && mail[0].to[0].email === "anna@esempio.it" && mail[0].replyTo.email === "jja.athenatrasporti@gmail.com", "mail al cliente, le risposte vanno ad Athena");
-ok(mail[0].textContent.includes(`${rec.stima.prezzo} €`) && mail[0].sender.name === "Athena Trasporti", "col prezzo, firmata Athena Trasporti");
+ok(mail[0].textContent.includes(`${rec.stima.prezzi.panda} €`) && mail[0].sender.name === "Athena Trasporti", "col prezzo della Panda scelta, firmata Athena Trasporti");
 const wa = tgMsg.find((m) => m.reply_markup && m.reply_markup.inline_keyboard[0][0].url);
 ok(wa && wa.reply_markup.inline_keyboard[0][0].url.startsWith("https://wa.me/393331234567?text="), "tasto WhatsApp verso il numero del cliente");
-ok(dec(archivio[file]).stato === "approvato" && dec(archivio[file]).prezzo_finale === rec.stima.prezzo, "segnato approvato col prezzo");
-await tocca(`pok:${id}`);
+ok(dec(archivio[file]).stato === "approvato" && dec(archivio[file]).prezzo_finale === rec.stima.prezzi.panda && dec(archivio[file]).mezzo === "panda", "segnato approvato, col prezzo e il mezzo");
+await tocca(`pok:${id}:sprinter`);
 ok(mail.length === 1 && tgMsg.some((m) => m.text && m.text.includes("già approvato")), "il doppio tocco non manda due volte");
 
 console.log("── il prezzo di JJ");
@@ -86,7 +89,7 @@ console.log("── la stima si rompe");
 azzera(); orsRotto = true; r = await manda(BUONA);
 const avv2 = tgMsg.find((m) => m.text && m.text.includes("PREVENTIVO"));
 ok(r.status === 201 && avv2 && avv2.text.includes("Stima non fatta"), "la richiesta arriva a JJ lo stesso, col motivo");
-ok(!avv2.reply_markup.inline_keyboard[0].some((b) => b.callback_data && b.callback_data.startsWith("pok")), "senza stima niente «Approva»: JJ risponde col prezzo");
+ok(!avv2.reply_markup.inline_keyboard.flat().some((b) => b.callback_data && b.callback_data.startsWith("pok")), "senza stima niente «Approva»: JJ risponde col prezzo");
 
 console.log("── cosa si rifiuta");
 azzera();
@@ -96,7 +99,8 @@ ok((await manda(BUONA, "https://altro.sito")).status === 403, "da un altro sito"
 ok((await manda({ ...BUONA, servizio: "Rapina" })).status === 400, "un servizio che non esiste");
 r = await manda({ ...BUONA, sito: "http://spam" });
 ok(r.status === 200 && !Object.keys(archivio).length && !tgMsg.length, "il robot: ok finto, niente salvato, niente a JJ");
-ok((await manda({ servizio: "Sgombero", da: "Limbiate", nome: "Bea", mail: "b@x.it", consenso: true })).status === 201, "sgombero senza «a dove»: va bene");
+tgMsg = []; ok((await manda({ servizio: "Sgombero", da: "Limbiate", nome: "Bea", mail: "b@x.it", consenso: true })).status === 201, "sgombero senza «a dove»: va bene");
+ok(!tgMsg.find((m) => m.text && m.text.includes("PREVENTIVO")).reply_markup.inline_keyboard.flat().some((b) => String(b.callback_data).endsWith(":panda")), "lo sgombero: solo Sprinter");
 
 console.log("── multitappa dal sito");
 azzera(); r = await manda({ ...BUONA, tappe: "Bergamo\n\nBrescia\n" });

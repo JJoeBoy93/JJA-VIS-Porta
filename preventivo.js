@@ -57,12 +57,12 @@ export function leggiComando(testo) {
   const pezzi = corpo.split(">");
   if (pezzi.length < 2 || pezzi.some((p) => !p.trim())) return null;
   const daGrezzo = pezzi[0], resto = pezzi[pezzi.length - 1], mezzo = pezzi.slice(1, -1).map((p) => p.trim());
-  const opz = { oreFacchinaggio: 0, aiutanti: 0, urgente: false, mezzo: "sprinter" };
+  const opz = { oreFacchinaggio: 0, aiutanti: 0, urgente: false, mezzo: "sprinter", mezzoScelto: false };
   let a = resto;
   a = a.replace(/\bfac(?:chinaggio)?\s+(\d+(?:[.,]\d+)?)/i, (_, n) => { opz.oreFacchinaggio = parseFloat(n.replace(",", ".")); return ""; });
   a = a.replace(/\baiut(?:anti|ante)?\s+(\d+)/i, (_, n) => { opz.aiutanti = parseInt(n, 10); return ""; });
   a = a.replace(/\burgente\b/i, () => { opz.urgente = true; return ""; });
-  a = a.replace(/\b(panda|sprinter)\b/i, (_, n) => { opz.mezzo = n.toLowerCase(); return ""; });
+  a = a.replace(/\b(panda|sprinter)\b/i, (_, n) => { opz.mezzo = n.toLowerCase(); opz.mezzoScelto = true; return ""; });
   a = a.replace(/\s+/g, " ").trim();
   if (!a) return null;
   return { da: daGrezzo.trim(), a, tappe: mezzo, ...opz };
@@ -130,7 +130,9 @@ export function testoStima(c, s, r) {
     const q = 15 / 60 * TARIFFE.guida * (c.urgente ? 1 + TARIFFE.urgenza : 1) / (1 - TARIFFE.imposte);
     righe.push(`⏱ soste non contate: ${fermate} fermate. Ogni 15 min in più ≈ ${Math.round(q)} € — se le conosci, rispondi con il prezzo`);
   }
-  righe.push("", `→ ${r.prezzo} €`, "Prezzo pieno: gli sconti li decidi tu. I caselli sono una stima (classe B): se non tornano coi tuoi, dimmelo.");
+  righe.push("", `→ ${r.prezzo} €`);
+  if (r.altro) righe.push(`🚗 con la ${r.altro.mezzo}: ${r.altro.prezzo} € (carburante ${eur(r.altro.voci[0][1])} €, usura ${eur(r.altro.voci[1][1])} € — se il carico ci sta)`);
+  righe.push("Prezzo pieno: gli sconti li decidi tu. I caselli sono una stima (classe B): se non tornano coi tuoi, dimmelo.");
   return righe.join("\n");
 }
 
@@ -138,7 +140,7 @@ export async function comandoStima(env, testo) {
   const c = leggiComando(testo);
   if (!c) return "Scrivi così: /stima Monza > Seriate (ritiro > consegna)\ncon tappe: /stima Monza > Bergamo > Seriate\nopzioni: fac 2 (ore di carico/scarico) · aiut 1 · urgente · panda\nPartenza e ritorno da casa li aggiungo io.";
   const s = await percorso(env, c.da, c.a, c.tappe);
-  return testoStima(c, s, calcola({ ...c, ...s }));
+  return testoStima(c, s, dueMezzi({ ...c, ...s }, c.mezzoScelto));
 }
 
 // ══ LE RICHIESTE DAL SITO DI ATHENA TRASPORTI — 27 settembre ══════════
@@ -191,3 +193,14 @@ export function testoCliente(r, prezzo) {
 }
 
 export const linkWa = (numero, testo) => `https://wa.me/${numero}?text=${encodeURIComponent(testo)}`;
+
+
+// ══ SPRINTER O PANDA — 27 settembre ══ JJ: «furgone o macchina come lo
+// sceglie il motore? hanno costi e guadagni diversi». Il motore NON sceglie:
+// cosa c'e' da portare lo sa JJ leggendo le note. Calcola tutti e due e JJ
+// tocca il tasto del mezzo che usera'. Lo sgombero e' sempre Sprinter.
+export function dueMezzi(p, soloQuello = false) {
+  const r = calcola({ ...p, mezzo: p.mezzo || "sprinter" });
+  if (!soloQuello && (p.mezzo || "sprinter") === "sprinter") r.altro = calcola({ ...p, mezzo: "panda" });
+  return r;
+}

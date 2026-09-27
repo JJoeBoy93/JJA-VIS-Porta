@@ -1,4 +1,4 @@
-import { comandoStima, percorso, calcola, testoStima, pulisciRichiesta, testoCliente, linkWa, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
+import { comandoStima, percorso, calcola, dueMezzi, testoStima, pulisciRichiesta, testoCliente, linkWa, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -506,12 +506,12 @@ async function telegram(req, env) {
         await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "non sei tu" });
         return new Response("ok");
       }
-      const [azione, id] = String(q.data || "").split(":");
+      const [azione, id, mezzoTasto] = String(q.data || "").split(":");
       if (azione === "pok" || azione === "pno") {
         await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "fatto" }).catch(() => {});
         const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
         let esito;
-        try { esito = azione === "pok" ? await approva(env, id, null, qui) : await rifiuta(env, id); }
+        try { esito = azione === "pok" ? await approva(env, id, null, qui, mezzoTasto) : await rifiuta(env, id); }
         catch (e) { esito = `NON fatto — ${e.message || e}`; }
         await tg(env, "sendMessage", { ...qui, text: `#p${id}: ${esito}`, reply_to_message_id: q.message.message_id });
         if (/^(approvato|rifiutato)/.test(esito)) {
@@ -1117,8 +1117,9 @@ async function richiestaPreventivo(req, env, ctx, origine) {
     const opz = SERVIZI[rec.servizio];
     const s = await percorso(env, rec.da, rec.a || env.PARTENZA, rec.tappe || []);
     const c = { ...opz, mezzo: "sprinter" };
-    const r = calcola({ ...c, ...s });
-    rec.stima = { prezzo: r.prezzo, testo: testoStima(c, s, r), km: Math.round(s.km) };
+    const r = dueMezzi({ ...c, ...s }, rec.servizio === "Sgombero");
+    rec.stima = { prezzo: r.prezzo, testo: testoStima(c, s, r), km: Math.round(s.km),
+                  prezzi: { sprinter: r.prezzo, ...(r.altro ? { panda: r.altro.prezzo } : {}) } };
   } catch (e) {
     rec.stima_errore = String(e.message || e).slice(0, 200);
   }
@@ -1136,17 +1137,20 @@ async function avvisaPreventivo(env, rec) {
   const testa = `📦 PREVENTIVO  #p${rec.id}\n${rec.servizio}${rec.quando ? ` · ${rec.quando}` : ""}\n${chi}\n` +
     `${[rec.da, ...(rec.tappe || []), rec.a || "(sgombero: da lui)"].join(" → ")}${rec.note ? `\n«${rec.note}»` : ""}\n\n`;
   const corpo = rec.stima
-    ? `${rec.stima.testo}\n\nAl cliente partirà:\n${testoCliente(rec, rec.stima.prezzo)}\n\nPer un altro prezzo rispondi a questo messaggio con la cifra (es. 150).`
+    ? `${rec.stima.testo}\n\nAl cliente partirà (col prezzo del tasto che tocchi):\n${testoCliente(rec, rec.stima.prezzo)}\n\nPer un altro prezzo rispondi a questo messaggio con la cifra (es. 150).`
     : `⚠️ Stima non fatta — ${rec.stima_errore}\nRispondi a questo messaggio col prezzo (es. 150), o rifiuta.`;
-  const tasti = [[...(rec.stima ? [{ text: `✅ Approva ${rec.stima.prezzo} €`, callback_data: `pok:${rec.id}` }] : []),
-                  { text: "❌ Rifiuta", callback_data: `pno:${rec.id}` }]];
+  const p = (rec.stima && rec.stima.prezzi) || {};
+  const tasti = [[...(p.sprinter ? [{ text: `🚐 Sprinter ${p.sprinter} €`, callback_data: `pok:${rec.id}:sprinter` }] : []),
+                  ...(p.panda ? [{ text: `🚗 Panda ${p.panda} €`, callback_data: `pok:${rec.id}:panda` }] : [])],
+                 [{ text: "❌ Rifiuta", callback_data: `pno:${rec.id}` }]].filter((riga) => riga.length);
   await tg(env, "sendMessage", { ...doveJJ(env), text: (testa + corpo).slice(0, 4000), reply_markup: { inline_keyboard: tasti } });
 }
 
-async function approva(env, id, prezzoDiJJ, qui) {
+async function approva(env, id, prezzoDiJJ, qui, mezzo) {
   const { dati, sha } = await leggiPreventivo(env, id);
   if (dati.stato !== "attesa") return `già ${dati.stato}`;
-  const prezzo = prezzoDiJJ || (dati.stima && dati.stima.prezzo);
+  const prezzi = (dati.stima && dati.stima.prezzi) || {};
+  const prezzo = prezzoDiJJ || prezzi[mezzo] || (dati.stima && dati.stima.prezzo);
   if (!prezzo) return "manca il prezzo: rispondi al messaggio con la cifra";
   const testo = testoCliente(dati, prezzo);
   const fatto = [];
@@ -1168,6 +1172,7 @@ async function approva(env, id, prezzoDiJJ, qui) {
     fatto.push("mail inviata");
   }
   await salvaPreventivo(env, id, { ...dati, stato: "approvato", prezzo_finale: prezzo, cambiato_da_jj: Boolean(prezzoDiJJ),
+                                   mezzo: prezzoDiJJ ? "scelto da JJ col prezzo" : (mezzo || "sprinter"),
                                    via: fatto, quando_approvato: new Date().toISOString() }, sha);
   if (dati.telefono) {
     await tg(env, "sendMessage", { ...qui, text: `📲 Tocca per aprire WhatsApp verso ${dati.nome} col testo pronto, poi invia tu.`,

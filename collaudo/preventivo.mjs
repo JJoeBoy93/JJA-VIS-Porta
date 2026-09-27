@@ -45,6 +45,8 @@ ok(chiamate.every((x) => !x.url.includes("/geocode/") || x.url.includes("boundar
 let t = await comandoStima(env, "/stima Monza > Seriate fac 1");
 ok(/→ \d+ €/.test(t) && t.includes("caselli: 7 €") && t.includes("facchinaggio"), "il messaggio per JJ ha le voci e il prezzo");
 ok(!t.includes(CHIAVE), "la chiave non esce nel messaggio");
+ok(t.includes("🚗 con la Panda:"), "/stima senza mezzo: Sprinter e, sotto, la Panda");
+ok(!(await comandoStima(env, "/stima Monza > Seriate panda")).includes("🚗 con la"), "/stima … panda: solo la Panda");
 
 finto({ pedaggio: false }); t = await comandoStima(env, "/stima Monza > Seriate");
 ok(t.includes("non ha detto i tratti a pedaggio"), "se ORS non dice i pedaggi, lo dice (non «0 €» muto)");
