@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 const sorgente = resolve(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), "..", "worker.js"));
 const copiaPorta = join(mkdtempSync(join(tmpdir(), "porta-")), "worker.mjs");   // worker.js e' ESM ma si chiama .js
 copyFileSync(sorgente, copiaPorta);
+// il motore del preventivo (27 settembre) e' un modulo accanto al worker: si copia anche lui
+copyFileSync(join(dirname(sorgente), "preventivo.js"), join(dirname(copiaPorta), "preventivo.js"));
 const W = (await import(copiaPorta)).default;
 const repo = new Map(), tgInviati = [], claudeVisti = [], brevo = [];
 let conta = 0;

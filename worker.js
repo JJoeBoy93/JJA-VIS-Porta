@@ -1,3 +1,4 @@
+import { comandoStima } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -554,6 +555,12 @@ async function telegram(req, env) {
       await tg(env, "sendMessage", { ...qui, text: esito, disable_web_page_preview: true });
       return new Response("ok");
     }
+    if (m.text && /^\/stima\b/.test(m.text)) {
+      let esito;
+      try { esito = await comandoStima(env, m.text); } catch (e) { esito = `Stima non fatta — ${e.message || e}`; }
+      await tg(env, "sendMessage", { ...qui, text: esito });
+      return new Response("ok");
+    }
     if (m.text && /^\/numeri/.test(m.text)) {
       let raccolti = null;
       try { raccolti = await raccogli(env); } catch {}
@@ -574,7 +581,7 @@ async function telegram(req, env) {
         await tg(env, "sendMessage", { ...qui, text: `#${trovato[1]}: ${esito}${esito.startsWith("inviata") ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
       }
     } else if (!nelGruppo) {
-      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina. /numeri per il conto." });
+      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina. /numeri per il conto, /stima per un preventivo." });
     }
   } catch (e) {
     console.log("telegram", e);
