@@ -502,8 +502,17 @@ async function telegram(req, env) {
   if (req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== await segretoTelegram(env)) {
     return new Response("no", { status: 403 });
   }
-  const u = await req.json().catch(() => ({}));
+  let u = await req.json().catch(() => ({}));
   try {
+    // Un tasto del /menu vale come il comando scritto: si rientra dal giro
+    // dei messaggi, cosi' ogni comando ha una strada sola.
+    const tastoMenu = u.callback_query && String(u.callback_query.data || "").match(/^menu:([a-z]+)$/);
+    if (tastoMenu && String(u.callback_query.from && u.callback_query.from.id) === String(env.TG_CHAT)) {
+      const q = u.callback_query;
+      await tg(env, "answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
+      u = { message: { message_id: q.message.message_id, from: q.from, chat: q.message.chat,
+        ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}), text: `/${tastoMenu[1]}` } };
+    }
     if (u.callback_query) {
       const q = u.callback_query;
       if (String(q.from && q.from.id) !== String(env.TG_CHAT)) {
@@ -559,6 +568,12 @@ async function telegram(req, env) {
     // Un link di un video incollato da solo vale come /video: copia e incolla.
     if (m.text && /^https?:\/\//.test(m.text.trim()) && (riconosciVideo(m.text.trim().split(/\s+/)[0]) || /^https?:\/\/(vm|vt)\.tiktok\.com\//.test(m.text.trim()))) {
       m.text = "/video " + m.text.trim();
+    }
+    // Il tasto «Menu» di Telegram si imposta al primo messaggio di JJ.
+    await impostaComandi(env);
+    if (m.text && /^\/(menu|aiuto|start|comandi)\b/.test(m.text)) {
+      await tg(env, "sendMessage", { ...qui, text: RIEPILOGO, reply_markup: { inline_keyboard: TASTI_MENU } });
+      return new Response("ok");
     }
     if (m.text && /^\/novita\b/.test(m.text)) {
       let esito;
@@ -616,7 +631,7 @@ async function telegram(req, env) {
         await tg(env, "sendMessage", { ...qui, text: `#${trovato[1]}: ${esito}${esito.startsWith("inviata") ? " col tuo testo" : ""}`, reply_to_message_id: m.message_id });
       }
     } else if (!nelGruppo) {
-      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina. /numeri per il conto, /stima per un preventivo." });
+      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: "Per rispondere a qualcuno, rispondi al suo messaggio (quello col #). Qui arrivano solo le voci della pagina. /menu per tutti i comandi." });
     }
   } catch (e) {
     console.log("telegram", e);
@@ -1383,4 +1398,66 @@ async function comandoCalendario(env, testo) {
   const cosa = /^\/chiudi/.test(cmd) ? "chiuso" : "aperto";
   return `${giornoLeggibile(giorno)}, ${fasce.join(" e ")}: ${cosa}.` +
     (prenotate.length ? `\n⚠️ ${prenotate.join(" e ")} ha già un lavoro prenotato (#p${cal[giorno][prenotate[0]].preventivo}): quello non l'ho toccato.` : "") + notaGoogle;
+}
+
+
+// ══ IL MENU DEI COMANDI — 27 settembre 2026 ═══════════════════════════════
+// JJ: «non mi ricorderò mai tutti i comandi di JJA VIS, serve un menù che
+// porta tutte le scelte fattibili con il riepilogo dei comandi».
+// Due cose: l'elenco nel tasto «Menu» di Telegram (setMyCommands, SOLO per
+// la chat di JJ e per il suo gruppo: gli sconosciuti non lo vedono), e /menu
+// col riepilogo intero, gli esempi e i tasti per i comandi senza argomenti.
+// Chi aggiunge un comando lo aggiunge QUI: collaudo/menu.mjs controlla che
+// ogni comando del menu sia davvero capito dalla porta.
+export const COMANDI = [
+  ["menu", "Tutti i comandi, con gli esempi"],
+  ["stima", "Un prezzo: /stima Monza > Seriate (fac 2 · aiut 1 · urgente · panda)"],
+  ["calendario", "I prossimi lavori e i giorni chiusi"],
+  ["chiudi", "Chiudi un giorno ai clienti: /chiudi 12/10 (o 12/10 mattina)"],
+  ["apri", "Riapri un giorno: /apri 12/10"],
+  ["numeri", "Il conto della pagina JJA-VIS (e aggiorna vetrina e briefing)"],
+  ["video", "Un video sulla pagina: /video <link> <titolo>"],
+  ["togli", "Togli un video: /togli 2 (senza numero li elenca)"],
+  ["novita", "Una novità sulla pagina: /novita Titolo | due righe"],
+];
+const RIEPILOGO = [
+  "📋 I COMANDI DI JJA-VIS",
+  "",
+  "💶 PREVENTIVI",
+  "/stima Monza > Seriate — il prezzo di un lavoro",
+  "   con tappe: /stima Monza > Bergamo > Seriate",
+  "   opzioni in coda: fac 2 (ore di carico) · aiut 1 · urgente · panda",
+  "↩️ rispondi a un «📦 PREVENTIVO» con una cifra (es. 150) → parte a quel prezzo",
+  "",
+  "📅 CALENDARIO",
+  "/calendario — prossimi lavori e giorni chiusi",
+  "/chiudi 12/10 — nessuno prenota quel giorno (o /chiudi 12/10 mattina)",
+  "/apri 12/10 — lo riapre (i lavori prenotati non li tocca)",
+  "",
+  "🌐 LA PAGINA JJA-VIS",
+  "/numeri — persone, domande, voti",
+  "/video <link> <titolo> — aggiunge un video (basta anche incollare il link)",
+  "/togli — elenca i video · /togli 2 toglie il secondo",
+  "/novita Titolo | due righe — aggiunge una novità · /novita togli 2",
+  "",
+  "💬 RISPONDERE ALLE PERSONE",
+  "↩️ rispondi a un messaggio col # → la risposta va a quella persona",
+  "",
+  "/menu — questo elenco. Lo trovi sempre anche nel tasto «Menu» accanto al messaggio.",
+  "Tocca un tasto qui sotto per i comandi più usati:",
+].join("\n");
+const TASTI_MENU = [
+  [{ text: "📅 Calendario", callback_data: "menu:calendario" }, { text: "📊 Numeri", callback_data: "menu:numeri" }],
+  [{ text: "💶 Come si fa una stima", callback_data: "menu:stima" }],
+  [{ text: "🎬 Video sulla pagina", callback_data: "menu:togli" }, { text: "✨ Novità", callback_data: "menu:novita" }],
+];
+
+// Il tasto «Menu» di Telegram, solo nelle chat di JJ.
+let comandiImpostati = false;
+async function impostaComandi(env) {
+  if (comandiImpostati) return;
+  const commands = COMANDI.map(([command, description]) => ({ command, description }));
+  const scopi = [env.TG_CHAT, env.TG_GRUPPO].filter(Boolean).map((chat_id) => ({ type: "chat", chat_id }));
+  for (const scope of scopi) await tg(env, "setMyCommands", { commands, scope }).catch((e) => console.log("setMyCommands", e));
+  comandiImpostati = true;
 }
