@@ -1,4 +1,4 @@
-import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
+import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, FASCE, serveGiornata, giorniPrenotabili, leggiData, occupati, libero, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -137,6 +137,8 @@ export default {
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
     if (req.method === "POST" && url.pathname === "/preventivo") return richiestaPreventivo(req, env, ctx, origine);
+    if (req.method === "GET" && url.pathname === "/prenota") return paginaPrenota(url, env, origine);
+    if (req.method === "POST" && url.pathname === "/prenota") return prenota(req, env, origine);
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
 
@@ -571,6 +573,12 @@ async function telegram(req, env) {
     if (m.text && /^\/stima\b/.test(m.text)) {
       let esito;
       try { esito = await comandoStima(env, m.text); } catch (e) { esito = `Stima non fatta — ${e.message || e}`; }
+      await tg(env, "sendMessage", { ...qui, text: esito });
+      return new Response("ok");
+    }
+    if (m.text && /^\/(calendario|chiudi|apri)\b/.test(m.text)) {
+      let esito;
+      try { esito = await comandoCalendario(env, m.text); } catch (e) { esito = `Calendario non toccato — ${e.message || e}`; }
       await tg(env, "sendMessage", { ...qui, text: esito });
       return new Response("ok");
     }
@@ -1112,7 +1120,7 @@ async function richiestaPreventivo(req, env, ctx, origine) {
   if (errore) return risposta({ errore }, 400, origine);
   if (!env.GH_TOKEN || !env.TG_BOT_TOKEN || !env.TG_CHAT) return risposta({ errore: "porta non pronta" }, 503, origine);
   const id = nuovoId();
-  const rec = { id, creato: new Date().toISOString(), ...richiesta, stato: "attesa" };
+  const rec = { id, chiave: nuovoId() + nuovoId(), creato: new Date().toISOString(), ...richiesta, stato: "attesa" };
   try {
     const opz = SERVIZI[rec.servizio];
     const s = await percorso(env, rec.da, rec.a || env.PARTENZA, rec.tappe || []);
@@ -1121,6 +1129,7 @@ async function richiestaPreventivo(req, env, ctx, origine) {
     const r = dueMezzi({ ...c, ...s }, scelta.solo);
     const chiave = (x) => x.mezzo.toLowerCase();
     rec.stima = { prezzo: r.prezzo, testo: testoStima(c, s, r), km: Math.round(s.km), primo: scelta.mezzo,
+                  ore: Math.round((s.oreGuida + (opz.oreFacchinaggio || 0)) * 10) / 10,
                   prezzi: { [chiave(r)]: r.prezzo, ...(r.altro ? { [chiave(r.altro)]: r.altro.prezzo } : {}) } };
   } catch (e) {
     rec.stima_errore = String(e.message || e).slice(0, 200);
@@ -1192,4 +1201,94 @@ async function rifiuta(env, id) {
   if (dati.stato !== "attesa") return `già ${dati.stato}`;
   await salvaPreventivo(env, id, { ...dati, stato: "rifiutato", quando_rifiutato: new Date().toISOString() }, sha);
   return "rifiutato — al cliente non parte niente";
+}
+
+
+// ══ IL CALENDARIO — 27 settembre ══════════════════════════════════════
+// Il preventivo approvato porta al cliente il link della pagina prenota.html
+// (id + chiave casuale: senza la chiave non si vede e non si prenota). Il
+// cliente sceglie giorno e fascia → calendario.json nell'archivio privato →
+// preventivo «confermato» → JJ lo sa su Telegram. JJ chiude/apre i giorni da
+// Telegram. Nessuno vede di chi e' un giorno occupato.
+async function leggiCalendario(env) {
+  try { const d = await gh(env, "GET", "calendario.json"); return { cal: deb64(d.content), sha: d.sha }; }
+  catch (e) { if (String(e.message).includes("404")) return { cal: {}, sha: null }; throw e; }
+}
+const salvaCalendario = (env, cal, sha, perche) =>
+  gh(env, "PUT", "calendario.json", { message: `calendario: ${perche}`, content: b64(cal), ...(sha ? { sha } : {}) });
+
+async function preventivoConChiave(env, id, k) {
+  if (!/^[0-9a-f]{8}$/.test(id || "") || !/^[0-9a-f]{16}$/.test(k || "")) return null;
+  try { const x = await leggiPreventivo(env, id); return x.dati.chiave === k ? x : null; } catch { return null; }
+}
+
+async function paginaPrenota(url, env, origine) {
+  const x = await preventivoConChiave(env, url.searchParams.get("p"), url.searchParams.get("k"));
+  if (!x) return risposta({ errore: "preventivo non trovato" }, 404, origine);
+  const d = x.dati;
+  if (!["approvato", "confermato"].includes(d.stato)) return risposta({ errore: "questo preventivo non è ancora pronto" }, 409, origine);
+  const { cal } = await leggiCalendario(env);
+  return risposta({ servizio: d.servizio, da: d.da, a: d.a, tappe: d.tappe || [], prezzo: d.prezzo_finale, stato: d.stato,
+    giorno: d.giorno || "", fascia: d.fascia || "", giornata: serveGiornata(d.stima && d.stima.ore),
+    giorni: giorniPrenotabili(), occupati: occupati(cal) }, 200, origine);
+}
+
+async function prenota(req, env, origine) {
+  if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
+  if (await frenato(env, `pren:${req.headers.get("CF-Connecting-IP") || "?"}`)) return risposta({ errore: "troppe richieste, riprova tra un minuto" }, 429, origine);
+  let b; try { b = JSON.parse((await req.text()).slice(0, 2000)); } catch { return risposta({ errore: "non e' JSON" }, 400, origine); }
+  const x = await preventivoConChiave(env, b.p, b.k);
+  if (!x) return risposta({ errore: "preventivo non trovato" }, 404, origine);
+  const d = x.dati;
+  if (d.stato === "confermato") return risposta({ errore: `già prenotato: ${d.giorno}, ${d.fascia}` }, 409, origine);
+  if (d.stato !== "approvato") return risposta({ errore: "questo preventivo non è ancora pronto" }, 409, origine);
+  const giorno = String(b.giorno || "");
+  if (!giorniPrenotabili().includes(giorno)) return risposta({ errore: "giorno non prenotabile" }, 400, origine);
+  const giornata = serveGiornata(d.stima && d.stima.ore);
+  const fasce = giornata ? FASCE : (FASCE.includes(b.fascia) ? [b.fascia] : null);
+  if (!fasce) return risposta({ errore: "scegli mattina o pomeriggio" }, 400, origine);
+  const { cal, sha } = await leggiCalendario(env);
+  if (!libero(cal, giorno, fasce)) return risposta({ errore: "quel momento è appena stato preso: scegline un altro" }, 409, origine);
+  cal[giorno] = { ...(cal[giorno] || {}) };
+  for (const f of fasce) cal[giorno][f] = { preventivo: d.id };
+  // Prima il calendario (col suo sha: se nel frattempo e' cambiato, GitHub rifiuta e nessuno prenota due volte).
+  try { await salvaCalendario(env, cal, sha, `${giorno} ${fasce.join("+")} → #p${d.id}`); }
+  catch { return risposta({ errore: "quel momento è appena stato preso: riprova" }, 409, origine); }
+  const fascia = giornata ? "giornata intera" : fasce[0];
+  await salvaPreventivo(env, d.id, { ...d, stato: "confermato", giorno, fascia, quando_confermato: new Date().toISOString() }, x.sha);
+  await tg(env, "sendMessage", { ...doveJJ(env), text: `📅 CONFERMATO  #p${d.id}\n${d.nome} ha scelto ${giornoLeggibile(giorno)}, ${fascia}.\n` +
+    `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\nGià segnato nel calendario (/calendario).` }).catch((e) => console.log("avviso conferma", e));
+  return risposta({ ok: true, giorno, fascia }, 200, origine);
+}
+
+const GIORNI_SETT = ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"];
+const MESI = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
+function giornoLeggibile(iso) { const d = new Date(iso + "T12:00:00Z"); return `${GIORNI_SETT[d.getUTCDay()]} ${d.getUTCDate()} ${MESI[d.getUTCMonth()]}`; }
+
+// /calendario — i prossimi impegni; /chiudi 12/10 [mattina|pomeriggio]; /apri 12/10 [fascia]
+async function comandoCalendario(env, testo) {
+  const [cmd, dataGrezza, fasciaGrezza] = testo.trim().split(/\s+/);
+  const { cal, sha } = await leggiCalendario(env);
+  if (/^\/calendario/.test(cmd)) {
+    const oggi = new Date().toISOString().slice(0, 10);
+    const righe = Object.keys(cal).filter((g) => g >= oggi).sort().slice(0, 20).map((g) =>
+      `${giornoLeggibile(g)}: ` + FASCE.map((f) => cal[g][f] ? `${f} ${cal[g][f].preventivo ? "#p" + cal[g][f].preventivo : "chiuso"}` : "").filter(Boolean).join(" · "));
+    return righe.length ? `📅 Prossimi impegni\n${righe.join("\n")}` : "📅 Calendario libero. /chiudi 12/10 per chiudere un giorno (o /chiudi 12/10 mattina).";
+  }
+  const giorno = leggiData(dataGrezza);
+  if (!giorno) return `Scrivi così: ${cmd} 12/10 (oppure ${cmd} 12/10 mattina)`;
+  const fasce = fasciaGrezza ? (FASCE.includes(fasciaGrezza.toLowerCase()) ? [fasciaGrezza.toLowerCase()] : null) : FASCE;
+  if (!fasce) return "La fascia è mattina o pomeriggio.";
+  cal[giorno] = { ...(cal[giorno] || {}) };
+  const prenotate = fasce.filter((f) => cal[giorno][f] && cal[giorno][f].preventivo);
+  if (/^\/chiudi/.test(cmd)) {
+    for (const f of fasce) if (!cal[giorno][f]) cal[giorno][f] = { chiuso: true };
+  } else {
+    for (const f of fasce) if (cal[giorno][f] && cal[giorno][f].chiuso) delete cal[giorno][f];
+    if (!Object.keys(cal[giorno]).length) delete cal[giorno];
+  }
+  await salvaCalendario(env, cal, sha, `${cmd.slice(1)} ${giorno} ${fasce.join("+")}`);
+  const cosa = /^\/chiudi/.test(cmd) ? "chiuso" : "aperto";
+  return `${giornoLeggibile(giorno)}, ${fasce.join(" e ")}: ${cosa}.` +
+    (prenotate.length ? `\n⚠️ ${prenotate.join(" e ")} ha già un lavoro prenotato (#p${cal[giorno][prenotate[0]].preventivo}): quello non l'ho toccato.` : "");
 }

@@ -183,13 +183,18 @@ export function pulisciRichiesta(d) {
 }
 
 // Il testo che arriva al cliente: lo vede JJ prima che parta.
+export const PAGINA_PRENOTA = "https://jjoeboy93.github.io/athena-trasporti/prenota.html";
+export const linkPrenota = (r) => `${PAGINA_PRENOTA}?p=${r.id}&k=${r.chiave}`;
+
 export function testoCliente(r, prezzo) {
   const conTappe = r.tappe && r.tappe.length ? `, con tappe a ${r.tappe.join(", ")},` : "";
   const tratta = r.a ? `da ${r.da}${conTappe} a ${r.a}` : `a ${r.da}`;
   return `Buongiorno ${r.nome},\n` +
     `per ${r.servizio.toLowerCase()} ${tratta}${r.quando ? ` (${r.quando})` : ""} il prezzo è ${prezzo} €, tutto compreso: ` +
     `carburante, pedaggi e tempo di lavoro. È il prezzo finale, senza IVA da aggiungere.\n` +
-    `Se va bene, rispondi a questo messaggio e fissiamo il giorno.\n\n` +
+    (r.id && r.chiave
+      ? `Se va bene, scegli il giorno e conferma qui:\n${linkPrenota(r)}\nPer qualsiasi domanda rispondi a questo messaggio.\n\n`
+      : `Se va bene, rispondi a questo messaggio e fissiamo il giorno.\n\n`) +
     `Athena Trasporti — 377 594 7995`;
 }
 
@@ -222,3 +227,40 @@ export function mezziPer(ingombro, servizio) {
   if (servizio === "Sgombero" || ingombro === "furgone") return { mezzo: "sprinter", solo: true };
   return { mezzo: ingombro === "auto" ? "panda" : "sprinter", solo: false };
 }
+
+
+// ══ IL CALENDARIO — 27 settembre ════════════════════════════════════════
+// JJ: «non devo segnare io il lavoro, se dice si, lo segna nel calendario».
+// Il cliente sceglie il giorno dalla pagina del link nel preventivo: la porta
+// segna e avvisa JJ. Due fasce, mattina e pomeriggio; un lavoro oltre le 4
+// ore le prende tutte e due. Tutti i giorni aperti (JJ: «adesso non dice no a
+// niente»); li chiude JJ da Telegram. Il sito vede solo libero/occupato.
+export const FASCE = ["mattina", "pomeriggio"];
+export const GIORNI_AVANTI = 45;
+export const serveGiornata = (ore) => (ore || 0) > 4;
+
+export function giornoIso(d) { return d.toISOString().slice(0, 10); }
+export function giorniPrenotabili(oggi = new Date()) {
+  const g = [];
+  for (let i = 1; i <= GIORNI_AVANTI; i++) g.push(giornoIso(new Date(oggi.getTime() + i * 86400000)));
+  return g;
+}
+// «12/10», «12/10/2026», «2026-10-12» → ISO; il resto → ""
+export function leggiData(s, oggi = new Date()) {
+  s = String(s || "").trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return s;
+  m = s.match(/^(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?$/);
+  if (!m) return "";
+  let anno = m[3] ? Number(m[3].length === 2 ? "20" + m[3] : m[3]) : oggi.getUTCFullYear();
+  const iso = `${anno}-${String(m[2]).padStart(2, "0")}-${String(m[1]).padStart(2, "0")}`;
+  if (!m[3] && iso < giornoIso(oggi)) return `${anno + 1}${iso.slice(4)}`;
+  return isNaN(Date.parse(iso)) ? "" : iso;
+}
+// Quello che il sito puo' vedere: solo quali fasce sono prese, di nessuno.
+export function occupati(cal) {
+  const o = {};
+  for (const [g, f] of Object.entries(cal || {})) { const prese = FASCE.filter((x) => f[x]); if (prese.length) o[g] = prese; }
+  return o;
+}
+export function libero(cal, giorno, fasce) { return fasce.every((x) => !(cal[giorno] && cal[giorno][x])); }
