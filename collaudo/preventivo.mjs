@@ -49,6 +49,26 @@ ok(!t.includes(CHIAVE), "la chiave non esce nel messaggio");
 finto({ pedaggio: false }); t = await comandoStima(env, "/stima Monza > Seriate");
 ok(t.includes("non ha detto i tratti a pedaggio"), "se ORS non dice i pedaggi, lo dice (non «0 €» muto)");
 
+console.log("── casa, ritiro, tappe, consegna, casa");
+const tre = leggiComando("/stima Monza > Bergamo > Brescia > Seriate fac 1");
+ok(tre.da === "Monza" && tre.a === "Seriate" && tre.tappe.join("|") === "Bergamo|Brescia" && tre.oreFacchinaggio === 1, "il comando legge le tappe in mezzo");
+ok(leggiComando("/stima Monza > > Seriate") === null, "una tappa vuota non passa");
+const conTratti = (n) => { chiamate = []; globalThis.fetch = async (url, o = {}) => {
+  chiamate.push({ url: String(url), o }); const j = (s, b) => new Response(JSON.stringify(b), { status: s });
+  if (String(url).includes("/geocode/")) { const t = new URL(url).searchParams.get("text"); return j(200, { features: [{ geometry: { coordinates: [9, 45] }, properties: { label: t } }] }); }
+  return j(200, { routes: [{ summary: { distance: n * 10000, duration: 3600 }, segments: Array.from({ length: n }, () => ({ distance: 10000 })), extras: { tollways: { summary: [] } } }] });
+}; };
+conTratti(5); s = await percorso(env, "Monza", "Seriate", ["Bergamo", "Brescia"]);
+const coo = JSON.parse(chiamate.at(-1).o.body).coordinates;
+ok(coo.length === 6, "6 punti: casa, ritiro, 2 tappe, consegna, casa");
+ok(s.tratti.length === 5 && s.tratti[0].da === "Limbiate" && s.tratti[1].a === "Bergamo" && s.tratti[4].a === "Limbiate", "i km di ogni tratto, coi nomi giusti");
+t = await comandoStima(env, "/stima Monza > Bergamo > Brescia > Seriate");
+ok(t.includes("Limbiate → Monza: 10 km a vuoto") && t.includes("Brescia → Seriate: 10 km") && t.includes("Seriate → Limbiate: 10 km a vuoto"), "il messaggio mostra il giro tratto per tratto");
+conTratti(2); t = await comandoStima(env, "/stima Monza > Seriate");
+ok(t.includes("Monza → Seriate") && t.includes("partenza da casa e ritorno a vuoto compresi"), "se i tratti non tornano col conto dei punti: niente km inventati");
+let troppe = ""; try { await percorso(env, "A", "B", Array(9).fill("X")); } catch (e) { troppe = e.message; }
+ok(troppe.includes("al massimo 8"), "oltre 8 tappe si dice");
+
 console.log("── gli errori, per nome");
 const errore = async (e, testo) => { try { await comandoStima(e, testo); return ""; } catch (x) { return x.message; } };
 ok((await errore({ PARTENZA: "Limbiate" }, "/stima A > B")).includes("manca ORS_KEY"), "senza chiave: «manca ORS_KEY»");

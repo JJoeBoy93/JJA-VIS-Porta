@@ -1115,7 +1115,7 @@ async function richiestaPreventivo(req, env, ctx, origine) {
   const rec = { id, creato: new Date().toISOString(), ...richiesta, stato: "attesa" };
   try {
     const opz = SERVIZI[rec.servizio];
-    const s = await percorso(env, rec.da, rec.a || env.PARTENZA);
+    const s = await percorso(env, rec.da, rec.a || env.PARTENZA, rec.tappe || []);
     const c = { ...opz, mezzo: "sprinter" };
     const r = calcola({ ...c, ...s });
     rec.stima = { prezzo: r.prezzo, testo: testoStima(c, s, r), km: Math.round(s.km) };
@@ -1134,7 +1134,7 @@ async function richiestaPreventivo(req, env, ctx, origine) {
 async function avvisaPreventivo(env, rec) {
   const chi = `👤 ${rec.nome}${rec.telefono ? ` · +${rec.telefono}` : ""}${rec.mail ? ` · ${rec.mail}` : ""}`;
   const testa = `📦 PREVENTIVO  #p${rec.id}\n${rec.servizio}${rec.quando ? ` · ${rec.quando}` : ""}\n${chi}\n` +
-    `${rec.da} → ${rec.a || "(sgombero: da lui)"}${rec.note ? `\n«${rec.note}»` : ""}\n\n`;
+    `${[rec.da, ...(rec.tappe || []), rec.a || "(sgombero: da lui)"].join(" → ")}${rec.note ? `\n«${rec.note}»` : ""}\n\n`;
   const corpo = rec.stima
     ? `${rec.stima.testo}\n\nAl cliente partirà:\n${testoCliente(rec, rec.stima.prezzo)}\n\nPer un altro prezzo rispondi a questo messaggio con la cifra (es. 150).`
     : `⚠️ Stima non fatta — ${rec.stima_errore}\nRispondi a questo messaggio col prezzo (es. 150), o rifiuta.`;

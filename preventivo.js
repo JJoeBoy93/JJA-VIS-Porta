@@ -54,15 +54,18 @@ export function calcola({ km, kmPedaggio = 0, oreGuida, oreFacchinaggio = 0, aiu
 // Il comando di JJ: «/stima Limbiate > Seriate fac 2 aiut 1 urgente panda»
 export function leggiComando(testo) {
   const corpo = testo.replace(/^\/stima(@\w+)?\s*/i, "");
-  const [daGrezzo, resto = ""] = corpo.split(">");
-  if (!daGrezzo.trim() || !resto.trim()) return null;
+  const pezzi = corpo.split(">");
+  if (pezzi.length < 2 || pezzi.some((p) => !p.trim())) return null;
+  const daGrezzo = pezzi[0], resto = pezzi[pezzi.length - 1], mezzo = pezzi.slice(1, -1).map((p) => p.trim());
   const opz = { oreFacchinaggio: 0, aiutanti: 0, urgente: false, mezzo: "sprinter" };
   let a = resto;
   a = a.replace(/\bfac(?:chinaggio)?\s+(\d+(?:[.,]\d+)?)/i, (_, n) => { opz.oreFacchinaggio = parseFloat(n.replace(",", ".")); return ""; });
   a = a.replace(/\baiut(?:anti|ante)?\s+(\d+)/i, (_, n) => { opz.aiutanti = parseInt(n, 10); return ""; });
   a = a.replace(/\burgente\b/i, () => { opz.urgente = true; return ""; });
   a = a.replace(/\b(panda|sprinter)\b/i, (_, n) => { opz.mezzo = n.toLowerCase(); return ""; });
-  return { da: daGrezzo.trim(), a: a.replace(/\s+/g, " ").trim(), ...opz };
+  a = a.replace(/\s+/g, " ").trim();
+  if (!a) return null;
+  return { da: daGrezzo.trim(), a, tappe: mezzo, ...opz };
 }
 
 const BASE = (env) => env.ORS_BASE || "https://api.openrouteservice.org";
@@ -77,21 +80,33 @@ async function geocodifica(env, testo) {
 }
 
 // Partenza → carico → scarico → partenza. Mai la chiave nei messaggi d'errore.
-export async function percorso(env, da, a) {
+// Casa → ritiro → tappe (nell'ordine dato dal cliente) → consegna → casa.
+// JJ, 27 settembre: «Limbiate è sempre la mia partenza, poi c'è il ritiro e
+// la consegna e poi torno a casa, oppure ci sono servizi multitappa».
+export const MAX_TAPPE = 8;
+export async function percorso(env, da, a, tappe = []) {
   if (!env.ORS_KEY) throw new Error("manca ORS_KEY nei segreti della porta");
   if (!env.PARTENZA) throw new Error("manca PARTENZA nei segreti della porta (il comune da cui parte JJ)");
-  const [casa, p1, p2] = await Promise.all([geocodifica(env, env.PARTENZA), geocodifica(env, da), geocodifica(env, a)]);
+  if (tappe.length > MAX_TAPPE) throw new Error(`al massimo ${MAX_TAPPE} tappe intermedie`);
+  const punti = await Promise.all([env.PARTENZA, da, ...tappe, a].map((x) => geocodifica(env, x)));
+  const casa = punti[0], p1 = punti[1], p2 = punti[punti.length - 1];
   const r = await fetch(`${BASE(env)}/v2/directions/driving-car`, {
     method: "POST",
     headers: { "Authorization": env.ORS_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ coordinates: [casa.lngLat, p1.lngLat, p2.lngLat, casa.lngLat], extra_info: ["tollways"] }),
+    body: JSON.stringify({ coordinates: [...punti.map((p) => p.lngLat), casa.lngLat], extra_info: ["tollways"] }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`percorso: openrouteservice ${r.status} ${(j.error && (j.error.message || j.error)) || ""}`.trim());
   const rt = (j.routes || [])[0];
   if (!rt) throw new Error("percorso: nessuna strada trovata");
   const pedaggio = ((rt.extras && rt.extras.tollways && rt.extras.tollways.summary) || []).find((s) => s.value === 1);
+  // I km di ogni tratto: ORS da' un `segment` per coppia di punti. Se il conto
+  // non torna, il dettaglio si tace invece di inventarlo.
+  const nomi = [...punti.map((p) => p.nome), casa.nome];
+  const tratti = (rt.segments || []).length === nomi.length - 1
+    ? rt.segments.map((g, i) => ({ da: nomi[i], a: nomi[i + 1], km: g.distance / 1000 })) : null;
   return {
+    tratti, casa: casa.nome, tappe: punti.slice(2, -1).map((p) => p.nome),
     km: rt.summary.distance / 1000,
     oreGuida: rt.summary.duration / 3600,
     kmPedaggio: pedaggio ? pedaggio.distance / 1000 : 0,
@@ -101,8 +116,11 @@ export async function percorso(env, da, a) {
 }
 
 export function testoStima(c, s, r) {
-  const righe = [`🧮 STIMA — ${r.mezzo}${c.urgente ? " · URGENTE" : ""}`,
-    `${s.da} → ${s.a}`, `(partenza e ritorno a vuoto compresi)`, ""];
+  const n = (s.tratti || []).length;
+  const giro = s.tratti
+    ? s.tratti.map((x, i) => `${i === 0 ? "🏠" : i === n - 1 ? "🏠" : "📦"} ${x.da} → ${x.a}: ${Math.round(x.km)} km${i === 0 || i === n - 1 ? " a vuoto" : ""}`)
+    : [[s.da, ...(s.tappe || []), s.a].join(" → "), "(partenza da casa e ritorno a vuoto compresi)"];
+  const righe = [`🧮 STIMA — ${r.mezzo}${c.urgente ? " · URGENTE" : ""}`, ...giro, ""];
   for (const [nome, euro, nota] of r.voci) righe.push(`${nome}: ${eur(euro)} €${nota ? ` — ${nota}` : ""}`);
   if (!s.pedaggioNoto) righe.push("⚠️ caselli: openrouteservice non ha detto i tratti a pedaggio");
   righe.push("", `→ ${r.prezzo} €`, "Prezzo pieno: gli sconti li decidi tu. I caselli sono una stima (classe B): se non tornano coi tuoi, dimmelo.");
@@ -111,8 +129,8 @@ export function testoStima(c, s, r) {
 
 export async function comandoStima(env, testo) {
   const c = leggiComando(testo);
-  if (!c) return "Scrivi così: /stima Limbiate > Seriate\nopzioni: fac 2 (ore di carico/scarico) · aiut 1 · urgente · panda";
-  const s = await percorso(env, c.da, c.a);
+  if (!c) return "Scrivi così: /stima Monza > Seriate (ritiro > consegna)\ncon tappe: /stima Monza > Bergamo > Seriate\nopzioni: fac 2 (ore di carico/scarico) · aiut 1 · urgente · panda\nPartenza e ritorno da casa li aggiungo io.";
+  const s = await percorso(env, c.da, c.a, c.tappe);
   return testoStima(c, s, calcola({ ...c, ...s }));
 }
 
@@ -140,7 +158,9 @@ export function telefonoWa(v) {
 export function pulisciRichiesta(d) {
   if (!d || typeof d !== "object") return { errore: "richiesta vuota" };
   const servizio = Object.keys(SERVIZI).includes(d.servizio) ? d.servizio : "";
-  const r = { servizio, da: t(d.da, 120), a: t(d.a, 120), quando: t(d.quando, 80), note: t(d.note, 800),
+  const tappe = (Array.isArray(d.tappe) ? d.tappe : String(d.tappe || "").split("\n")).map((x) => t(x, 120)).filter(Boolean);
+  if (tappe.length > MAX_TAPPE) return { errore: `al massimo ${MAX_TAPPE} tappe intermedie` };
+  const r = { servizio, da: t(d.da, 120), a: t(d.a, 120), tappe, quando: t(d.quando, 80), note: t(d.note, 800),
               nome: t(d.nome, 60), telefono: telefonoWa(d.telefono), mail: t(d.mail, 120) };
   if (r.mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.mail)) r.mail = "";
   if (!servizio) return { errore: "scegli il servizio" };
@@ -154,7 +174,8 @@ export function pulisciRichiesta(d) {
 
 // Il testo che arriva al cliente: lo vede JJ prima che parta.
 export function testoCliente(r, prezzo) {
-  const tratta = r.a ? `da ${r.da} a ${r.a}` : `a ${r.da}`;
+  const conTappe = r.tappe && r.tappe.length ? `, con tappe a ${r.tappe.join(", ")},` : "";
+  const tratta = r.a ? `da ${r.da}${conTappe} a ${r.a}` : `a ${r.da}`;
   return `Buongiorno ${r.nome},\n` +
     `per ${r.servizio.toLowerCase()} ${tratta}${r.quando ? ` (${r.quando})` : ""} il prezzo è ${prezzo} €, tutto compreso: ` +
     `carburante, pedaggi e tempo di lavoro. È il prezzo finale, senza IVA da aggiungere.\n` +

@@ -98,5 +98,12 @@ r = await manda({ ...BUONA, sito: "http://spam" });
 ok(r.status === 200 && !Object.keys(archivio).length && !tgMsg.length, "il robot: ok finto, niente salvato, niente a JJ");
 ok((await manda({ servizio: "Sgombero", da: "Limbiate", nome: "Bea", mail: "b@x.it", consenso: true })).status === 201, "sgombero senza «a dove»: va bene");
 
+console.log("── multitappa dal sito");
+azzera(); r = await manda({ ...BUONA, tappe: "Bergamo\n\nBrescia\n" });
+const recT = dec(archivio[Object.keys(archivio).find((k) => k.startsWith("preventivi/"))]);
+ok(r.status === 201 && recT.tappe.join("|") === "Bergamo|Brescia", "le tappe, una per riga, righe vuote tolte");
+ok(tgMsg.some((m) => m.text && m.text.includes("Monza → Bergamo → Brescia → Seriate") && m.text.includes("con tappe a Bergamo, Brescia")), "JJ vede il giro, e il cliente leggerà le tappe");
+ok((await manda({ ...BUONA, tappe: Array(9).fill("X").join("\n") })).status === 400, "oltre 8 tappe: rifiutato con un motivo");
+
 console.log(errori ? `\nROSSO: ${errori}` : "\nVERDE");
 process.exit(errori ? 1 : 0);
