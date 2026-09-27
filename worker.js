@@ -98,7 +98,11 @@ function normalizzaGruppo(v) {
 function conGruppo(env) { return env.TG_GRUPPO ? { ...env, TG_GRUPPO: normalizzaGruppo(env.TG_GRUPPO) } : env; }
 
 export default {
-  async scheduled(evento, env, ctx) { env = conGruppo(env); ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e))); },
+  async scheduled(evento, env, ctx) {
+    env = conGruppo(env);
+    if (evento.cron === "0 18 * * *") ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e)));
+    else ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
+  },
   async fetch(req, env, ctx) {
     env = conGruppo(env);
     const url = new URL(req.url);
@@ -602,6 +606,12 @@ async function telegram(req, env) {
     if (m.text && /^\/stima\b/.test(m.text)) {
       let esito;
       try { esito = await comandoStima(env, m.text); } catch (e) { esito = `Stima non fatta — ${e.message || e}`; }
+      await tg(env, "sendMessage", { ...qui, text: esito });
+      return new Response("ok");
+    }
+    if (m.text && /^\/annulla\b/.test(m.text)) {
+      let esito;
+      try { esito = await annulla(env, m.text); } catch (e) { esito = `Non annullato — ${e.message || e}`; }
       await tg(env, "sendMessage", { ...qui, text: esito });
       return new Response("ok");
     }
@@ -1491,6 +1501,7 @@ export const COMANDI = [
   ["calendario", "I prossimi lavori e i giorni chiusi"],
   ["chiudi", "Chiudi un giorno ai clienti: /chiudi 12/10 (o 12/10 mattina)"],
   ["apri", "Riapri un giorno: /apri 12/10"],
+  ["annulla", "Annulla una prenotazione: /annulla p1a2b3c4d (il # lo trovi in /calendario)"],
   ["numeri", "Il conto della pagina JJA-VIS (e aggiorna vetrina e briefing)"],
   ["video", "Un video sulla pagina: /video <link> <titolo>"],
   ["togli", "Togli un video: /togli 2 (senza numero li elenca)"],
@@ -1509,6 +1520,8 @@ const RIEPILOGO = [
   "/calendario — prossimi lavori e giorni chiusi",
   "/chiudi 12/10 — nessuno prenota quel giorno (o /chiudi 12/10 mattina)",
   "/apri 12/10 — lo riapre (i lavori prenotati non li tocca)",
+  "/annulla p1a2b3c4d — annulla una prenotazione e libera il giorno",
+  "💶 i giorni in attesa di caparra si liberano da soli dopo 48 ore",
   "",
   "🌐 LA PAGINA JJA-VIS",
   "/numeri — persone, domande, voti",
@@ -1536,4 +1549,51 @@ async function impostaComandi(env) {
   const scopi = [env.TG_CHAT, env.TG_GRUPPO].filter(Boolean).map((chat_id) => ({ type: "chat", chat_id }));
   for (const scope of scopi) await tg(env, "setMyCommands", { commands, scope }).catch((e) => console.log("setMyCommands", e));
   comandiImpostati = true;
+}
+
+
+// ══ I GIORNI BLOCCATI SENZA CAPARRA — 27 settembre 2026 ═════════════════
+// Un cliente sceglie il giorno e poi non paga: il giorno resterebbe preso per
+// sempre. Ogni ora (cron «7 * * * *») quelli bloccati da oltre 48 ore si
+// liberano da soli e JJ lo sa. Il cliente puo' riprenotare dallo stesso link.
+export const ORE_CAPARRA = 48;
+async function liberaScaduti(env) {
+  const { cal } = await leggiCalendario(env);
+  const ids = new Set();
+  for (const f of Object.values(cal)) for (const v of Object.values(f)) if (v && v.caparra && v.preventivo) ids.add(v.preventivo);
+  const liberati = [];
+  for (const id of ids) {
+    let d;
+    try { d = (await leggiPreventivo(env, id)).dati; } catch { continue; }
+    if (d.stato !== "caparra" || !d.quando_bloccato) continue;
+    if (Date.now() - Date.parse(d.quando_bloccato) < ORE_CAPARRA * 3600000) continue;
+    const esito = await liberaGiorno(env, id).catch((e) => `NON liberato (${e.message || e})`);
+    liberati.push(`#p${id} ${d.nome}: ${esito}`);
+  }
+  if (liberati.length) {
+    await tg(env, "sendMessage", { ...doveJJ(env), text: `⏰ Caparra non arrivata in ${ORE_CAPARRA} ore:\n${liberati.join("\n")}` }).catch(() => {});
+  }
+  return liberati;
+}
+
+// /annulla p1a2b3c4d — una prenotazione che salta. Libera il giorno nella
+// porta; dal telefono l'evento lo toglie JJ (l'app oggi sa scrivere, non
+// cancellare), e finche' c'e' quel momento resta occupato anche per i clienti.
+async function annulla(env, testo) {
+  const m = testo.match(/#?p?([0-9a-f]{8})\b/);
+  if (!m) return "Quale? Scrivi /annulla e il codice, per esempio /annulla p1a2b3c4d (lo trovi in /calendario).";
+  const id = m[1];
+  let x;
+  try { x = await leggiPreventivo(env, id); } catch { return `#p${id}: non lo trovo.`; }
+  const d = x.dati;
+  if (d.stato === "caparra") return `#p${id}: ${await liberaGiorno(env, id)}`;
+  if (d.stato !== "confermato") return `#p${id}: non è prenotato (${d.stato}).`;
+  const { cal, sha } = await leggiCalendario(env);
+  for (const f of FASCE) if (cal[d.giorno] && cal[d.giorno][f] && cal[d.giorno][f].preventivo === id) delete cal[d.giorno][f];
+  if (cal[d.giorno] && !Object.keys(cal[d.giorno]).length) delete cal[d.giorno];
+  await salvaCalendario(env, cal, sha, `${d.giorno} #p${id} annullato`);
+  await salvaPreventivo(env, id, { ...d, stato: "annullato", quando_annullato: new Date().toISOString() }, x.sha);
+  return `#p${id} annullato: ${giornoLeggibile(d.giorno)}, ${d.fascia} di nuovo libero nella porta.` +
+    (d.evento_google === "telefono" ? "\n⚠️ Sul telefono l'evento «🚚 Athena … #p" + id + "» c'è ancora: cancellalo tu, finché resta quel momento conta come occupato." : "") +
+    (d.telefono || d.mail ? `\nAvvisa ${d.nome}${d.telefono ? ` (+${d.telefono})` : ""}${d.mail ? ` (${d.mail})` : ""}.` : "");
 }

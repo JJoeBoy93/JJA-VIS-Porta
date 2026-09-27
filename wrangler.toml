@@ -26,8 +26,9 @@ limit = 40
 period = 60
 
 # Il conto della sera nell'argomento «📊 Numeri»: ogni giorno alle 18 UTC.
+# Ogni ora: i giorni bloccati da oltre 48 ore senza caparra si liberano.
 [triggers]
-crons = ["0 18 * * *"]
+crons = ["0 18 * * *", "7 * * * *"]
 
 # Hermes, raggiunto direttamente dentro Cloudflare: e' la strada dei numeri
 # verso il briefing di JARVIS (lo Space non puo' uscire verso Cloudflare).

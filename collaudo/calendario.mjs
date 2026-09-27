@@ -133,6 +133,32 @@ ok(mail.some((m) => m.subject.startsWith("Confermato") && m.to[0].email === "a@x
 await tocca(`cap:${r5.id}`);
 ok(mail.filter((m) => m.subject.startsWith("Confermato")).length === 1, "il doppio tocco non manda due conferme");
 
+console.log("── 48 ore senza caparra");
+const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
+const r7 = await preventivoApprovato(); const r8 = await preventivoApprovato();
+const fra7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+await post("/prenota", { p: r7.id, k: r7.chiave, giorno: fra7, fascia: "mattina" });
+await post("/prenota", { p: r8.id, k: r8.chiave, giorno: fra7, fascia: "pomeriggio" });
+const vecchio = (id, ore) => { const d = dec(archivio[`preventivi/${id}.json`]); d.quando_bloccato = new Date(Date.now() - ore * 3600000).toISOString(); archivio[`preventivi/${id}.json`] = enc(d); };
+vecchio(r7.id, 49); vecchio(r8.id, 47);
+const giro = async (cron) => { const att = []; await W.scheduled({ cron }, env, { waitUntil: (p) => att.push(p) }); await Promise.all(att); };
+tgMsg = []; await giro("0 18 * * *");
+ok(dec(archivio[`preventivi/${r7.id}.json`]).stato === "caparra", "il conto delle 18 non libera niente");
+tgMsg = []; await giro("7 * * * *");
+ok(dec(archivio[`preventivi/${r7.id}.json`]).stato === "approvato" && !(dec(archivio["calendario.json"])[fra7] || {}).mattina, "49 ore senza caparra: il giorno si libera da solo");
+ok(dec(archivio[`preventivi/${r8.id}.json`]).stato === "caparra" && dec(archivio["calendario.json"])[fra7].pomeriggio, "47 ore: resta bloccato");
+ok(tgMsg.some((m) => m.text.startsWith("⏰") && m.text.includes(r7.id) && !m.text.includes(r8.id)), "JJ sa quale si è liberato");
+
+console.log("── /annulla");
+await tocca(`cap:${r8.id}`);
+tgMsg = []; await scrivi(`/annulla p${r8.id}`);
+ok(dec(archivio[`preventivi/${r8.id}.json`]).stato === "annullato" && !(dec(archivio["calendario.json"])[fra7] || {}).pomeriggio, "confermato → annullato, il giorno torna libero");
+ok(tgMsg.at(-1).text.includes("annullato") && tgMsg.at(-1).text.includes("Avvisa"), "JJ lo legge, con chi avvisare");
+tgMsg = []; await scrivi("/annulla");
+ok(tgMsg.at(-1).text.startsWith("Quale?"), "senza codice: spiega come si scrive");
+tgMsg = []; await scrivi("/annulla p00000000");
+ok(tgMsg.at(-1).text.includes("non lo trovo"), "codice che non c'è: detto");
+
 console.log("── le aziende");
 env.IBAN = "IT60X0542811101000000123456";
 const AZ = { servizio: "Consegna conto terzi", da: "Monza", a: "Seriate", nome: "Luca", mail: "l@ditta.it", consenso: true,
