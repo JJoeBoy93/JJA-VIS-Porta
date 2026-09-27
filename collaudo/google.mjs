@@ -59,6 +59,7 @@ globalThis.fetch = async (url, o = {}) => {
   return j(200, { routes: [{ summary: { distance: 50000, duration: 7200 }, extras: { tollways: { summary: [] } } }] });
 };
 const ctx = { waitUntil() {} };
+const caparra = (id) => W.fetch(new Request("https://porta/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": createHash("sha256").update("bot").digest("hex").slice(0, 32) }, body: JSON.stringify({ callback_query: { id: "q", from: { id: 42 }, data: `cap:${id}`, message: { message_id: 1, chat: { id: 42 } } } }) }), env, ctx);
 const dec = (s) => JSON.parse(Buffer.from(s, "base64").toString("utf8"));
 const post = (p, c) => W.fetch(new Request(`https://porta${p}`, { method: "POST", headers: { Origin: "https://jjoeboy93.github.io", "Content-Type": "application/json" }, body: JSON.stringify(c) }), env, ctx);
 const get = (p) => W.fetch(new Request(`https://porta${p}`, { headers: { Origin: "https://jjoeboy93.github.io" } }), env, ctx);
@@ -100,11 +101,13 @@ occupatoJJ = [{ start: roma(domani, 9), end: roma(domani, 10) }];
 ok((await post("/prenota", { p: r.id, k: r.chiave, giorno: domani, fascia: "mattina" })).status === 409, "domani mattina hai un appuntamento: il cliente non la prende");
 tgMsg = [];
 ok((await post("/prenota", { p: r.id, k: r.chiave, giorno: domani, fascia: "pomeriggio" })).status === 200, "domani pomeriggio sì");
+ok(!eventi.some((e) => e.titolo.includes("Anna")), "bloccato in attesa della caparra: su Google non c'è ancora");
+await caparra(r.id);
 const ev = eventi.at(-1);
 ok(ev.cal === env.CAL_ATHENA && ev.giorno === domani && ev.da === 13 && ev.fino === 19 && ev.fuso === "Europe/Rome", "evento in «Athena Trasporti», 13-19 ora di Roma");
 ok(ev.titolo.includes("Monza → Seriate") && ev.titolo.includes("Anna"), "col titolo leggibile nel briefing");
 ok(dec(archivio[`preventivi/${r.id}.json`]).evento_google === ev.id, "l'id dell'evento resta nel preventivo");
-ok(tgMsg.some((m) => m.text.includes("Già nel tuo calendario Google")), "JJ sa che è già sul telefono");
+ok(tgMsg.some((m) => m.text.includes("sul calendario Google")), "JJ sa che è già sul telefono");
 occupatoJJ = [];
 
 console.log("── Google giù al momento sbagliato");
@@ -114,6 +117,7 @@ let chiamate = 0; const vero = globalThis.fetch;
 globalThis.fetch = async (url, o) => { if (String(url).includes("/events")) return new Response(JSON.stringify({ error: { message: "Forbidden" } }), { status: 403 }); return vero(url, o); };
 tgMsg = [];
 ok((await post("/prenota", { p: r2.id, k: r2.chiave, giorno: dopo, fascia: "mattina" })).status === 200, "il cliente prenota lo stesso (il posto era libero)");
+await caparra(r2.id);
 ok(tgMsg.some((m) => m.text.includes("NON segnato nel calendario Google") && m.text.includes("403")), "JJ è avvisato che su Google non c'è, e perché");
 globalThis.fetch = vero;
 

@@ -183,6 +183,18 @@ export function pulisciRichiesta(d) {
 }
 
 // Il testo che arriva al cliente: lo vede JJ prima che parta.
+// ══ LA CAPARRA — 27 settembre 2026 ══ JJ: «se mi contatta gente che vuole
+// provare a fare un lavoro a gratis… va fatto qualcosa che mi tutela»; poi
+// «va bene come hai detto»: caparra CONFIRMATORIA (art. 1385 c.c.) del 30%
+// sopra i 100 €, tutto anticipato sotto, saldo prima dello scarico. Su PayPal
+// «beni e servizi» (ricevuta e protezione). Da confermare col commercialista.
+export const PAYPAL = "19.jjardito93@gmail.com";
+export const SOGLIA_CAPARRA = 100;
+export function caparraDi(prezzo) {
+  const p = Number(prezzo) || 0;
+  return p < SOGLIA_CAPARRA ? { importo: p, tutto: true } : { importo: Math.ceil(p * 0.3 / 5) * 5, tutto: false };
+}
+
 export const PAGINA_PRENOTA = "https://jjoeboy93.github.io/athena-trasporti/prenota.html";
 export const linkPrenota = (r) => `${PAGINA_PRENOTA}?p=${r.id}&k=${r.chiave}`;
 
@@ -193,7 +205,11 @@ export function testoCliente(r, prezzo) {
     `per ${r.servizio.toLowerCase()} ${tratta}${r.quando ? ` (${r.quando})` : ""} il prezzo è ${prezzo} €, tutto compreso: ` +
     `carburante, pedaggi e tempo di lavoro. È il prezzo finale, senza IVA da aggiungere.\n` +
     (r.id && r.chiave
-      ? `Se va bene, scegli il giorno e conferma qui:\n${linkPrenota(r)}\nPer qualsiasi domanda rispondi a questo messaggio.\n\n`
+      ? `Se va bene, scegli il giorno e conferma qui:\n${linkPrenota(r)}\n` +
+        (caparraDi(prezzo).tutto
+          ? `Il giorno si blocca col pagamento anticipato di ${prezzo} € su PayPal.\n`
+          : `Il giorno si blocca con una caparra di ${caparraDi(prezzo).importo} € su PayPal; il resto si paga prima dello scarico.\n`) +
+        `Per qualsiasi domanda rispondi a questo messaggio.\n\n`
       : `Se va bene, rispondi a questo messaggio e fissiamo il giorno.\n\n`) +
     `Athena Trasporti — 377 594 7995`;
 }

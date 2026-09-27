@@ -45,6 +45,7 @@ globalThis.fetch = async (url, o = {}) => {
   return j(200, { routes: [{ summary: { distance: 50000, duration: 7200 }, extras: { tollways: { summary: [] } } }] });
 };
 const ctx = { waitUntil() {} };
+const caparra = (id) => W.fetch(new Request("https://porta/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": createHash("sha256").update("bot").digest("hex").slice(0, 32) }, body: JSON.stringify({ callback_query: { id: "q", from: { id: 42 }, data: `cap:${id}`, message: { message_id: 1, chat: { id: 42 } } } }) }), env, ctx);
 const dec = (s) => JSON.parse(Buffer.from(s, "base64").toString("utf8"));
 const post = (p, c) => W.fetch(new Request(`https://porta${p}`, { method: "POST", headers: { Origin: "https://jjoeboy93.github.io", "Content-Type": "application/json" }, body: JSON.stringify(c) }), env, ctx);
 const get = (p) => W.fetch(new Request(`https://porta${p}`, { headers: { Origin: "https://jjoeboy93.github.io" } }), env, ctx);
@@ -76,8 +77,11 @@ hermesGiu = false;
 
 console.log("── la prenotazione va al telefono, e basta quella");
 ok((await post("/prenota", { p: r.id, k: r.chiave, giorno: domani })).status === 409, "lo sgombero (giornata intera) non entra in un giorno con la mattina presa");
-tgMsg = [];
+tgMsg = []; aHermes = [];
 ok((await post("/prenota", { p: r.id, k: r.chiave, giorno: dopo })).status === 200, "dopodomani sì");
+await get(`/prenota?p=${r.id}&k=${r.chiave}`);
+ok(!aHermes.length, "bloccato in attesa della caparra: al telefono non va ancora");
+await caparra(r.id);
 const mandato = aHermes.at(-1);
 ok(mandato && mandato.id === r.id && mandato.giorno === dopo && mandato.fasce.sort().join() === "mattina,pomeriggio" && mandato.servizio === "Sgombero", "al telefono: id, giorno, fasce, servizio");
 ok(Object.keys(mandato).sort().join() === "fasce,giorno,id,servizio" && !JSON.stringify(mandato).match(/Mario|Roma|armadi|333/), "niente nome, indirizzo, note o telefono del cliente verso JARVIS");

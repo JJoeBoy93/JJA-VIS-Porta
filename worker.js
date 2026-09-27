@@ -1,5 +1,5 @@
 import { googleCollegato, occupatiGoogle, segnaGoogle, togliGoogle } from "./google.js";
-import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, FASCE, serveGiornata, giorniPrenotabili, leggiData, occupati, libero, MAIL_ATHENA } from "./preventivo.js";
+import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, caparraDi, PAYPAL, FASCE, serveGiornata, giorniPrenotabili, leggiData, occupati, libero, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -520,6 +520,18 @@ async function telegram(req, env) {
         return new Response("ok");
       }
       const [azione, id, mezzoTasto] = String(q.data || "").split(":");
+      if (azione === "cap" || azione === "lib") {
+        await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "fatto" }).catch(() => {});
+        const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
+        let esito;
+        try { esito = azione === "cap" ? await caparraArrivata(env, id) : await liberaGiorno(env, id); }
+        catch (e) { esito = `NON fatto — ${e.message || e}`; }
+        await tg(env, "sendMessage", { ...qui, text: `#p${id}: ${esito}`, reply_to_message_id: q.message.message_id });
+        if (/^(confermato|liberato)/.test(esito)) {
+          await tg(env, "editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+        }
+        return new Response("ok");
+      }
       if (azione === "pok" || azione === "pno") {
         await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "fatto" }).catch(() => {});
         const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
@@ -1284,7 +1296,7 @@ async function occupatiTelefono(env, cal) {
   for (const [giorno, f] of Object.entries(cal || {})) {
     if (giorno < oggi) continue;
     for (const [fascia, v] of Object.entries(f)) {
-      if (v && v.preventivo && v.servizio && !gia.has(v.preventivo)) {
+      if (v && v.preventivo && v.servizio && !v.caparra && !gia.has(v.preventivo)) {   // in attesa di caparra: non ancora
         const m = (mancanti[v.preventivo] = mancanti[v.preventivo] || { id: v.preventivo, giorno, fasce: [], servizio: v.servizio });
         m.fasce.push(fascia);
       }
@@ -1298,13 +1310,14 @@ async function paginaPrenota(url, env, origine) {
   const x = await preventivoConChiave(env, url.searchParams.get("p"), url.searchParams.get("k"));
   if (!x) return risposta({ errore: "preventivo non trovato" }, 404, origine);
   const d = x.dati;
-  if (!["approvato", "confermato"].includes(d.stato)) return risposta({ errore: "questo preventivo non è ancora pronto" }, 409, origine);
+  if (!["approvato", "caparra", "confermato"].includes(d.stato)) return risposta({ errore: "questo preventivo non è ancora pronto" }, 409, origine);
   const { cal } = await leggiCalendario(env);
   let occ;
   try { occ = await tuttiOccupati(env, cal); }
   catch (e) { console.log("calendario", e); return risposta({ errore: "il calendario non si legge in questo momento, riprova tra poco" }, 503, origine); }
   return risposta({ servizio: d.servizio, da: d.da, a: d.a, tappe: d.tappe || [], prezzo: d.prezzo_finale, stato: d.stato,
     giorno: d.giorno || "", fascia: d.fascia || "", giornata: serveGiornata(d.stima && d.stima.ore),
+    caparra: caparraDi(d.prezzo_finale).importo, tutto: caparraDi(d.prezzo_finale).tutto, paypal: PAYPAL, causale: `#p${d.id}`,
     giorni: giorniPrenotabili(), occupati: occ }, 200, origine);
 }
 
@@ -1316,6 +1329,7 @@ async function prenota(req, env, origine) {
   if (!x) return risposta({ errore: "preventivo non trovato" }, 404, origine);
   const d = x.dati;
   if (d.stato === "confermato") return risposta({ errore: `già prenotato: ${d.giorno}, ${d.fascia}` }, 409, origine);
+  if (d.stato === "caparra") return risposta({ errore: `giorno già bloccato (${d.giorno}, ${d.fascia}): manca solo la caparra` }, 409, origine);
   if (d.stato !== "approvato") return risposta({ errore: "questo preventivo non è ancora pronto" }, 409, origine);
   const giorno = String(b.giorno || "");
   if (!giorniPrenotabili().includes(giorno)) return risposta({ errore: "giorno non prenotabile" }, 400, origine);
@@ -1328,28 +1342,71 @@ async function prenota(req, env, origine) {
   catch (e) { return risposta({ errore: "il calendario non si legge in questo momento, riprova tra poco" }, 503, origine); }
   if (!libero(cal, giorno, fasce) || fasce.some((f) => (occ[giorno] || []).includes(f))) return risposta({ errore: "quel momento è appena stato preso: scegline un altro" }, 409, origine);
   cal[giorno] = { ...(cal[giorno] || {}) };
-  for (const f of fasce) cal[giorno][f] = { preventivo: d.id, servizio: d.servizio };
+  // Bloccato, non ancora fermo: nessun altro cliente lo prende, ma sul
+  // telefono va solo quando JJ tocca «💶 Caparra arrivata».
+  for (const f of fasce) cal[giorno][f] = { preventivo: d.id, servizio: d.servizio, caparra: true };
   // Prima il calendario (col suo sha: se nel frattempo e' cambiato, GitHub rifiuta e nessuno prenota due volte).
-  try { await salvaCalendario(env, cal, sha, `${giorno} ${fasce.join("+")} → #p${d.id}`); }
+  try { await salvaCalendario(env, cal, sha, `${giorno} ${fasce.join("+")} → #p${d.id} (caparra)`); }
   catch { return risposta({ errore: "quel momento è appena stato preso: riprova" }, 409, origine); }
   const fascia = giornata ? "giornata intera" : fasce[0];
-  // Nel calendario Google di JJ: lo vede sul telefono e lo vede JARVIS.
-  let evento = "", avvisoGoogle = "";
+  const cap = caparraDi(d.prezzo_finale);
+  await salvaPreventivo(env, d.id, { ...d, stato: "caparra", giorno, fascia, fasce, caparra: cap.importo, quando_bloccato: new Date().toISOString() }, x.sha);
+  await tg(env, "sendMessage", { ...doveJJ(env),
+    text: `📅 BLOCCATO  #p${d.id}\n${d.nome} ha scelto ${giornoLeggibile(giorno)}, ${fascia}.\n` +
+      `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\n\n` +
+      `💶 Aspetta ${cap.tutto ? "il pagamento" : "la caparra"} di ${cap.importo} € su PayPal (causale #p${d.id}). Quando arriva, tocca «Caparra arrivata»: solo allora è confermato e va sul calendario del telefono.`,
+    reply_markup: { inline_keyboard: [[{ text: `💶 Caparra arrivata (${cap.importo} €)`, callback_data: `cap:${d.id}` }],
+                                      [{ text: "❌ Libera il giorno", callback_data: `lib:${d.id}` }]] } }).catch((e) => console.log("avviso blocco", e));
+  return risposta({ ok: true, giorno, fascia, stato: "caparra", caparra: cap.importo, tutto: cap.tutto, paypal: PAYPAL, causale: `#p${d.id}` }, 200, origine);
+}
+
+// «💶 Caparra arrivata»: da bloccato a confermato, e sul calendario vero.
+async function caparraArrivata(env, id) {
+  const { dati: d, sha } = await leggiPreventivo(env, id);
+  if (d.stato === "confermato") return "già confermato";
+  if (d.stato !== "caparra") return `non è in attesa di caparra (${d.stato})`;
+  const giorno = d.giorno, fasce = d.fasce || (d.fascia === "giornata intera" ? FASCE : [d.fascia]);
+  const { cal, sha: shaCal } = await leggiCalendario(env);
+  for (const f of fasce) if (cal[giorno] && cal[giorno][f] && cal[giorno][f].preventivo === id) delete cal[giorno][f].caparra;
+  await salvaCalendario(env, cal, shaCal, `${giorno} #p${id} confermato`);
+  // Nel calendario di JJ: lo vede sul telefono e lo vede JARVIS.
+  let evento = "", avviso = "";
   if (googleCollegato(env)) {
     try {
       evento = await segnaGoogle(env, { giorno, fasce, titolo: `🚚 ${d.servizio}: ${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} — ${d.nome}`,
         dettagli: `${d.prezzo_finale} € · preventivo #p${d.id}${d.telefono ? `\nTel +${d.telefono}` : ""}${d.mail ? `\n${d.mail}` : ""}${d.note ? `\n«${d.note}»` : ""}` });
-    } catch (e) { avvisoGoogle = `\n⚠️ NON segnato nel calendario Google (${e.message}): JARVIS non lo vede, segnalo a mano.`; }
+    } catch (e) { avviso = ` ⚠️ NON segnato nel calendario Google (${e.message}).`; }
   } else if (telefonoCollegato(env)) {
-    try {
-      await aHermes(env, "/jjavis/prenotazione", { id: d.id, giorno, fasce, servizio: d.servizio });
-      evento = "telefono";
-    } catch (e) { avvisoGoogle = `\n⚠️ NON passato al telefono (${e.message}): lo rimando al prossimo giro, controlla.`; }
-  } else avvisoGoogle = "\n(calendario del telefono non collegato: segnato solo nella porta)";
-  await salvaPreventivo(env, d.id, { ...d, stato: "confermato", giorno, fascia, evento_google: evento, quando_confermato: new Date().toISOString() }, x.sha);
-  await tg(env, "sendMessage", { ...doveJJ(env), text: `📅 CONFERMATO  #p${d.id}\n${d.nome} ha scelto ${giornoLeggibile(giorno)}, ${fascia}.\n` +
-    `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\n${evento === "telefono" ? "Entro 15 minuti è nel calendario del telefono (lo segna JARVIS)." : evento ? "Già nel tuo calendario Google (Athena Trasporti)." : "Segnato nella porta (/calendario)."}${avvisoGoogle}` }).catch((e) => console.log("avviso conferma", e));
-  return risposta({ ok: true, giorno, fascia }, 200, origine);
+    try { await aHermes(env, "/jjavis/prenotazione", { id: d.id, giorno, fasce, servizio: d.servizio }); evento = "telefono"; }
+    catch (e) { avviso = ` ⚠️ NON passato al telefono (${e.message}): lo rimando al prossimo giro.`; }
+  }
+  await salvaPreventivo(env, id, { ...d, stato: "confermato", evento_google: evento, quando_confermato: new Date().toISOString() }, sha);
+  // Al cliente: la conferma, per mail se l'ha lasciata.
+  let mail = "";
+  if (d.mail && env.BREVO_API_KEY && env.MITTENTE) {
+    const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
+      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ sender: { name: "Athena Trasporti", email: env.MITTENTE }, replyTo: { email: MAIL_ATHENA, name: "Athena Trasporti" },
+        to: [{ email: d.mail, name: d.nome }], subject: `Confermato: ${giornoLeggibile(giorno)}, ${d.fascia}`,
+        textContent: `Buongiorno ${d.nome},\nla ${caparraDi(d.prezzo_finale).tutto ? "somma" : "caparra"} è arrivata: il lavoro è confermato per ${giornoLeggibile(giorno)}, ${d.fascia}.\n` +
+          `${caparraDi(d.prezzo_finale).tutto ? "" : `Il resto (${d.prezzo_finale - (d.caparra || 0)} €) si paga prima dello scarico.\n`}\nAthena Trasporti — 377 594 7995` }) }).catch(() => null);
+    mail = r && r.ok ? " Mail di conferma al cliente inviata." : " (mail di conferma non partita)";
+  }
+  return `confermato ${giornoLeggibile(giorno)}, ${d.fascia} — ${evento === "telefono" ? "entro 15 minuti sul calendario del telefono" : evento ? "sul calendario Google" : "segnato nella porta"}.${mail}${avviso}` +
+    (d.telefono ? `\nSe vuoi avvisarlo su WhatsApp: «caparra arrivata, confermato ${giornoLeggibile(giorno)}».` : "");
+}
+
+// «❌ Libera il giorno»: la caparra non e' arrivata. Il cliente puo' riscegliere.
+async function liberaGiorno(env, id) {
+  const { dati: d, sha } = await leggiPreventivo(env, id);
+  if (d.stato !== "caparra") return `non è bloccato (${d.stato})`;
+  const { cal, sha: shaCal } = await leggiCalendario(env);
+  for (const f of FASCE) if (cal[d.giorno] && cal[d.giorno][f] && cal[d.giorno][f].preventivo === id) delete cal[d.giorno][f];
+  if (cal[d.giorno] && !Object.keys(cal[d.giorno]).length) delete cal[d.giorno];
+  await salvaCalendario(env, cal, shaCal, `${d.giorno} #p${id} liberato`);
+  const { giorno, fascia, fasce, caparra, ...resto } = d;
+  await salvaPreventivo(env, id, { ...resto, stato: "approvato", liberato: `${giorno} ${fascia}` }, sha);
+  return `liberato ${giornoLeggibile(giorno)}, ${fascia}: altri clienti possono prenderlo. Il link del preventivo funziona ancora.`;
 }
 
 const GIORNI_SETT = ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"];
@@ -1363,7 +1420,7 @@ async function comandoCalendario(env, testo) {
   if (/^\/calendario/.test(cmd)) {
     const oggi = new Date().toISOString().slice(0, 10);
     const righe = Object.keys(cal).filter((g) => g >= oggi).sort().slice(0, 20).map((g) =>
-      `${giornoLeggibile(g)}: ` + FASCE.map((f) => cal[g][f] ? `${f} ${cal[g][f].preventivo ? "#p" + cal[g][f].preventivo : "chiuso"}` : "").filter(Boolean).join(" · "));
+      `${giornoLeggibile(g)}: ` + FASCE.map((f) => cal[g][f] ? `${f} ${cal[g][f].preventivo ? "#p" + cal[g][f].preventivo + (cal[g][f].caparra ? " (💶 attesa caparra)" : "") : "chiuso"}` : "").filter(Boolean).join(" · "));
     let stato = "\n⚠️ nessun calendario collegato: i tuoi appuntamenti non contano";
     if (googleCollegato(env)) stato = "\n(Google collegato: contano anche i tuoi appuntamenti)";
     else if (telefonoCollegato(env)) {
