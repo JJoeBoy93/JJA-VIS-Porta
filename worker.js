@@ -1,4 +1,4 @@
-import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
+import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -1179,8 +1179,9 @@ async function approva(env, id, prezzoDiJJ, qui, mezzo) {
                                    mezzo: prezzoDiJJ ? "scelto da JJ col prezzo" : (mezzo || "sprinter"),
                                    via: fatto, quando_approvato: new Date().toISOString() }, sha);
   if (dati.telefono) {
-    await tg(env, "sendMessage", { ...qui, text: `📲 Tocca per aprire WhatsApp verso ${dati.nome} col testo pronto, poi invia tu.`,
-      reply_markup: { inline_keyboard: [[{ text: "📲 Apri WhatsApp", url: linkWa(dati.telefono, testo) }]] } });
+    await tg(env, "sendMessage", { ...qui, text: `📲 WhatsApp verso ${dati.nome}, col testo pronto: invia tu.\n💻 WhatsApp Web = dal numero di Athena, se è collegato nel browser. 📲 = dall'app di questo telefono.`,
+      reply_markup: { inline_keyboard: [[{ text: "💻 WhatsApp Web (Athena)", url: linkWaWeb(dati.telefono, testo) }],
+                                        [{ text: "📲 App di questo telefono", url: linkWa(dati.telefono, testo) }]] } });
     fatto.push("WhatsApp pronto");
   }
   return `approvato ${prezzo} € — ${fatto.join(" + ")}`;

@@ -194,6 +194,10 @@ export function testoCliente(r, prezzo) {
 }
 
 export const linkWa = (numero, testo) => `https://wa.me/${numero}?text=${encodeURIComponent(testo)}`;
+// JJ, 27 settembre: il WhatsApp Business di Athena sta su un altro telefono e
+// su questo non si puo' affiancare; ci arriva solo da WhatsApp Web. Questo
+// link apre la chat del cliente, col testo pronto, nel WhatsApp Web collegato.
+export const linkWaWeb = (numero, testo) => `https://web.whatsapp.com/send?phone=${numero}&text=${encodeURIComponent(testo)}`;
 
 
 // ══ SPRINTER O PANDA — 27 settembre ══ JJ: «furgone o macchina come lo
