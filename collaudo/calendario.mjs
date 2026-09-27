@@ -133,5 +133,32 @@ ok(mail.some((m) => m.subject.startsWith("Confermato") && m.to[0].email === "a@x
 await tocca(`cap:${r5.id}`);
 ok(mail.filter((m) => m.subject.startsWith("Confermato")).length === 1, "il doppio tocco non manda due conferme");
 
+console.log("── le aziende");
+env.IBAN = "IT60X0542811101000000123456";
+const AZ = { servizio: "Consegna conto terzi", da: "Monza", a: "Seriate", nome: "Luca", mail: "l@ditta.it", consenso: true,
+             azienda: true, ragione_sociale: "Ditta Srl", piva: "IT 01234567890", sdi: "abc1234", sede: "Via X 1, Monza" };
+const errAz = async (c) => (await (await post("/preventivo", c)).json()).errore || "";
+ok((await errAz({ ...AZ, piva: "123" })).includes("11 cifre"), "P.IVA sbagliata: detto");
+ok((await errAz({ ...AZ, sdi: "", pec: "" })).includes("codice destinatario"), "senza codice destinatario né PEC: detto");
+ok((await errAz({ ...AZ, sede: "" })).includes("sede"), "senza sede: detto");
+tgMsg = []; mail = [];
+await post("/preventivo", AZ);
+const ra = Object.keys(archivio).filter((k) => k.startsWith("preventivi/")).map((k) => dec(archivio[k])).find((x) => x.stato === "attesa");
+ok(ra.tipo === "azienda" && ra.fattura.piva === "01234567890" && ra.fattura.sdi === "ABC1234", "salvata come azienda, coi dati della fattura puliti");
+ok(tgMsg.some((m) => m.text.includes("🏢 AZIENDA") && m.text.includes("P.IVA 01234567890") && m.text.includes("Codice destinatario ABC1234")), "JJ vede i dati per la fattura");
+await tocca(`pok:${ra.id}:sprinter`);
+const pa = mail.at(-1).textContent;
+ok(pa.includes("bonifico a 30 giorni") && pa.includes(env.IBAN) && !pa.includes("PayPal") && !pa.includes("caparra"), "al cliente: bonifico a 30 giorni con l'IBAN, niente PayPal né caparra");
+const fra6 = new Date(Date.now() + 6 * 86400000).toISOString().slice(0, 10);
+const rA = dec(archivio[`preventivi/${ra.id}.json`]);
+tgMsg = []; mail = [];
+x = await post("/prenota", { p: rA.id, k: rA.chiave, giorno: fra6, fascia: "mattina" });
+const jA = await x.json();
+ok(x.status === 200 && jA.stato === "confermato" && jA.iban === env.IBAN, "l'azienda sceglie il giorno: confermato subito");
+ok(dec(archivio[`preventivi/${ra.id}.json`]).stato === "confermato" && !dec(archivio["calendario.json"])[fra6].mattina.caparra, "nessuna caparra in attesa");
+ok(tgMsg.some((m) => m.text.includes("CONFERMATO (azienda)") && m.text.includes("fattura elettronica") && m.text.includes("Ditta Srl")), "JJ riceve cosa fatturare");
+ok(mail.some((m) => m.textContent.includes("fattura elettronica") && m.textContent.includes("30 giorni")), "e l'azienda la mail di conferma coi termini");
+delete env.IBAN;
+
 console.log(errori ? `\nROSSO: ${errori}` : "\nVERDE");
 process.exit(errori ? 1 : 0);

@@ -179,7 +179,21 @@ export function pulisciRichiesta(d) {
   if (!r.nome) return { errore: "manca il nome" };
   if (!r.telefono && !r.mail) return { errore: "serve un telefono o una mail per mandarti il preventivo" };
   if (d.consenso !== true) return { errore: "serve il consenso per ricontattarti" };
-  return { richiesta: { ...r, consenso: true } };
+  // ══ LE AZIENDE — 27 settembre ══ JJ: «per le aziende devi per forza fare
+  // fattura… serve mettere iban nel preventivo». I dati della fattura
+  // elettronica: ragione sociale, P.IVA, codice destinatario o PEC, sede.
+  if (d.azienda === true) {
+    const a = { ragione_sociale: t(d.ragione_sociale, 120), piva: String(d.piva || "").replace(/^IT/i, "").replace(/\s/g, ""),
+                sdi: String(d.sdi || "").trim().toUpperCase(), pec: t(d.pec, 120), sede: t(d.sede, 160) };
+    if (!a.ragione_sociale) return { errore: "manca la ragione sociale" };
+    if (!/^\d{11}$/.test(a.piva)) return { errore: "la partita IVA ha 11 cifre" };
+    if (a.sdi && !/^[A-Z0-9]{7}$/.test(a.sdi)) a.sdi = "";
+    if (a.pec && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a.pec)) a.pec = "";
+    if (!a.sdi && !a.pec) return { errore: "serve il codice destinatario (7 caratteri) o la PEC per la fattura" };
+    if (!a.sede) return { errore: "manca la sede per la fattura" };
+    return { richiesta: { ...r, consenso: true, tipo: "azienda", fattura: a } };
+  }
+  return { richiesta: { ...r, consenso: true, tipo: "privato" } };
 }
 
 // Il testo che arriva al cliente: lo vede JJ prima che parta.
@@ -198,15 +212,20 @@ export function caparraDi(prezzo) {
 export const PAGINA_PRENOTA = "https://jjoeboy93.github.io/athena-trasporti/prenota.html";
 export const linkPrenota = (r) => `${PAGINA_PRENOTA}?p=${r.id}&k=${r.chiave}`;
 
-export function testoCliente(r, prezzo) {
+// Aziende: niente caparra, bonifico a 30 giorni dalla fattura (JJ: «le
+// aziende di solito pagano a 30/60/90 giorni»; termini diversi si dicono).
+export const GIORNI_AZIENDE = 30;
+export function testoCliente(r, prezzo, iban = "") {
   const conTappe = r.tappe && r.tappe.length ? `, con tappe a ${r.tappe.join(", ")},` : "";
   const tratta = r.a ? `da ${r.da}${conTappe} a ${r.a}` : `a ${r.da}`;
   return `Buongiorno ${r.nome},\n` +
     `per ${r.servizio.toLowerCase()} ${tratta}${r.quando ? ` (${r.quando})` : ""} il prezzo è ${prezzo} €, tutto compreso: ` +
-    `carburante, pedaggi e tempo di lavoro. È il prezzo finale, senza IVA da aggiungere.\n` +
+    `carburante, pedaggi e tempo di lavoro. È il prezzo finale, senza IVA da aggiungere${r.tipo === "azienda" ? " (regime forfettario)" : ""}.\n` +
     (r.id && r.chiave
       ? `Se va bene, scegli il giorno e conferma qui:\n${linkPrenota(r)}\n` +
-        (caparraDi(prezzo).tutto
+        (r.tipo === "azienda"
+          ? `Pagamento con bonifico a ${GIORNI_AZIENDE} giorni dalla data della fattura elettronica${iban ? ` (IBAN ${iban}, intestato ad Ardito Jacopo Joe)` : ""}. Se avete termini diversi, ditemelo prima.\n`
+          : caparraDi(prezzo).tutto
           ? `Il giorno si blocca col pagamento anticipato di ${prezzo} € su PayPal.\n`
           : `Il giorno si blocca con una caparra di ${caparraDi(prezzo).importo} € su PayPal; il resto si paga prima dello scarico.\n`) +
         `Per qualsiasi domanda rispondi a questo messaggio.\n\n`

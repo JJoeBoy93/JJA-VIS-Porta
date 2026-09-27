@@ -1,5 +1,5 @@
 import { googleCollegato, occupatiGoogle, segnaGoogle, togliGoogle } from "./google.js";
-import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, caparraDi, PAYPAL, FASCE, serveGiornata, giorniPrenotabili, leggiData, occupati, libero, MAIL_ATHENA } from "./preventivo.js";
+import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, caparraDi, PAYPAL, GIORNI_AZIENDE, FASCE, serveGiornata, giorniPrenotabili, leggiData, occupati, libero, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -1173,12 +1173,15 @@ async function richiestaPreventivo(req, env, ctx, origine) {
 }
 
 async function avvisaPreventivo(env, rec) {
-  const chi = `👤 ${rec.nome}${rec.telefono ? ` · +${rec.telefono}` : ""}${rec.mail ? ` · ${rec.mail}` : ""}`;
+  const f = rec.fattura;
+  const chi = `👤 ${rec.nome}${rec.telefono ? ` · +${rec.telefono}` : ""}${rec.mail ? ` · ${rec.mail}` : ""}` +
+    (f ? `\n🏢 AZIENDA — dati fattura:\n${f.ragione_sociale}\nP.IVA ${f.piva}\n${f.sdi ? `Codice destinatario ${f.sdi}` : `PEC ${f.pec}`}\n${f.sede}` +
+         (env.IBAN ? "" : "\n⚠️ manca IBAN nei Secrets della porta: il preventivo parte senza") : "");
   const testa = `📦 PREVENTIVO  #p${rec.id}\n${rec.servizio}${rec.quando ? ` · ${rec.quando}` : ""}\n${chi}\n` +
     `📐 ingombro: ${INGOMBRI[rec.ingombro] || "non detto"}\n` +
     `${[rec.da, ...(rec.tappe || []), rec.a || "(sgombero: da lui)"].join(" → ")}${rec.note ? `\n«${rec.note}»` : ""}\n\n`;
   const corpo = rec.stima
-    ? `${rec.stima.testo}\n\nAl cliente partirà (col prezzo del tasto che tocchi):\n${testoCliente(rec, rec.stima.prezzo)}\n\nPer un altro prezzo rispondi a questo messaggio con la cifra (es. 150).`
+    ? `${rec.stima.testo}\n\nAl cliente partirà (col prezzo del tasto che tocchi):\n${testoCliente(rec, rec.stima.prezzo, env.IBAN)}\n\nPer un altro prezzo rispondi a questo messaggio con la cifra (es. 150).`
     : `⚠️ Stima non fatta — ${rec.stima_errore}\nRispondi a questo messaggio col prezzo (es. 150), o rifiuta.`;
   const p = (rec.stima && rec.stima.prezzi) || {};
   const tS = p.sprinter ? [{ text: `🚐 Sprinter ${p.sprinter} €`, callback_data: `pok:${rec.id}:sprinter` }] : [];
@@ -1194,7 +1197,7 @@ async function approva(env, id, prezzoDiJJ, qui, mezzo) {
   const prezzi = (dati.stima && dati.stima.prezzi) || {};
   const prezzo = prezzoDiJJ || prezzi[mezzo] || (dati.stima && dati.stima.prezzo);
   if (!prezzo) return "manca il prezzo: rispondi al messaggio con la cifra";
-  const testo = testoCliente(dati, prezzo);
+  const testo = testoCliente(dati, prezzo, env.IBAN);
   const fatto = [];
   if (dati.mail) {
     if (!env.BREVO_API_KEY || !env.MITTENTE) throw new Error("mancano BREVO_API_KEY o MITTENTE");
@@ -1318,6 +1321,7 @@ async function paginaPrenota(url, env, origine) {
   return risposta({ servizio: d.servizio, da: d.da, a: d.a, tappe: d.tappe || [], prezzo: d.prezzo_finale, stato: d.stato,
     giorno: d.giorno || "", fascia: d.fascia || "", giornata: serveGiornata(d.stima && d.stima.ore),
     caparra: caparraDi(d.prezzo_finale).importo, tutto: caparraDi(d.prezzo_finale).tutto, paypal: PAYPAL, causale: `#p${d.id}`,
+    tipo: d.tipo || "privato", ...(d.tipo === "azienda" ? { giorni_pagamento: GIORNI_AZIENDE, iban: env.IBAN || "" } : {}),
     giorni: giorniPrenotabili(), occupati: occ }, 200, origine);
 }
 
@@ -1349,6 +1353,12 @@ async function prenota(req, env, origine) {
   try { await salvaCalendario(env, cal, sha, `${giorno} ${fasce.join("+")} → #p${d.id} (caparra)`); }
   catch { return risposta({ errore: "quel momento è appena stato preso: riprova" }, 409, origine); }
   const fascia = giornata ? "giornata intera" : fasce[0];
+  if (d.tipo === "azienda") {
+    // Niente caparra: confermato subito, sul calendario del telefono.
+    await salvaPreventivo(env, d.id, { ...d, stato: "caparra", giorno, fascia, fasce, caparra: 0 }, x.sha);
+    const esito = await caparraArrivata(env, d.id);
+    return risposta({ ok: true, giorno, fascia, stato: "confermato", tipo: "azienda", giorni_pagamento: GIORNI_AZIENDE, iban: env.IBAN || "" }, 200, origine);
+  }
   const cap = caparraDi(d.prezzo_finale);
   await salvaPreventivo(env, d.id, { ...d, stato: "caparra", giorno, fascia, fasce, caparra: cap.importo, quando_bloccato: new Date().toISOString() }, x.sha);
   await tg(env, "sendMessage", { ...doveJJ(env),
@@ -1388,9 +1398,18 @@ async function caparraArrivata(env, id) {
       headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ sender: { name: "Athena Trasporti", email: env.MITTENTE }, replyTo: { email: MAIL_ATHENA, name: "Athena Trasporti" },
         to: [{ email: d.mail, name: d.nome }], subject: `Confermato: ${giornoLeggibile(giorno)}, ${d.fascia}`,
-        textContent: `Buongiorno ${d.nome},\nla ${caparraDi(d.prezzo_finale).tutto ? "somma" : "caparra"} è arrivata: il lavoro è confermato per ${giornoLeggibile(giorno)}, ${d.fascia}.\n` +
+        textContent: d.tipo === "azienda"
+          ? `Buongiorno ${d.nome},\nil lavoro è confermato per ${giornoLeggibile(giorno)}, ${d.fascia}.\nA lavoro svolto riceverete la fattura elettronica di ${d.prezzo_finale} €, da pagare con bonifico a ${GIORNI_AZIENDE} giorni${env.IBAN ? ` (IBAN ${env.IBAN})` : ""}.\n\nAthena Trasporti — 377 594 7995`
+          : `Buongiorno ${d.nome},\nla ${caparraDi(d.prezzo_finale).tutto ? "somma" : "caparra"} è arrivata: il lavoro è confermato per ${giornoLeggibile(giorno)}, ${d.fascia}.\n` +
           `${caparraDi(d.prezzo_finale).tutto ? "" : `Il resto (${d.prezzo_finale - (d.caparra || 0)} €) si paga prima dello scarico.\n`}\nAthena Trasporti — 377 594 7995` }) }).catch(() => null);
     mail = r && r.ok ? " Mail di conferma al cliente inviata." : " (mail di conferma non partita)";
+  }
+  if (d.tipo === "azienda") {
+    const f = d.fattura || {};
+    await tg(env, "sendMessage", { ...doveJJ(env), text: `📅 CONFERMATO (azienda)  #p${d.id}\n${d.nome} — ${f.ragione_sociale || ""}\n${giornoLeggibile(giorno)}, ${d.fascia} · ${d.prezzo_finale} €\n` +
+      `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")}\n\n🧾 A lavoro fatto, fattura elettronica:\n${f.ragione_sociale}\nP.IVA ${f.piva}\n${f.sdi ? `Codice destinatario ${f.sdi}` : `PEC ${f.pec}`}\n${f.sede}\n` +
+      `Importo ${d.prezzo_finale} € · bonifico a ${GIORNI_AZIENDE} giorni · causale #p${d.id}\n` +
+      `${evento === "telefono" ? "Entro 15 minuti è nel calendario del telefono." : evento ? "Sul calendario Google." : "Segnato nella porta."}${mail}${avviso}` }).catch((e) => console.log("avviso azienda", e));
   }
   return `confermato ${giornoLeggibile(giorno)}, ${d.fascia} — ${evento === "telefono" ? "entro 15 minuti sul calendario del telefono" : evento ? "sul calendario Google" : "segnato nella porta"}.${mail}${avviso}` +
     (d.telefono ? `\nSe vuoi avvisarlo su WhatsApp: «caparra arrivata, confermato ${giornoLeggibile(giorno)}».` : "");
