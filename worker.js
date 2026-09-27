@@ -1229,10 +1229,54 @@ async function preventivoConChiave(env, id, k) {
 // libero: si solleva, e la pagina dice che il calendario non si legge.
 async function tuttiOccupati(env, cal) {
   const o = occupati(cal);
-  if (!googleCollegato(env)) return o;
-  const g = await occupatiGoogle(env, giorniPrenotabili());
-  for (const [giorno, fasce] of Object.entries(g)) o[giorno] = [...new Set([...(o[giorno] || []), ...fasce])];
+  let g = null;
+  if (googleCollegato(env)) g = await occupatiGoogle(env, giorniPrenotabili());
+  else if (telefonoCollegato(env)) g = await occupatiTelefono(env, cal);
+  for (const [giorno, fasce] of Object.entries(g || {})) o[giorno] = [...new Set([...(o[giorno] || []), ...fasce])];
   return o;
+}
+
+// ══ L'AGENDA DEL TELEFONO DI JJ — 27 settembre ══════════════════════════
+// JJ: «non puoi collegare a quello che c'è già senza aggiungere altre
+// cose?». Il calendario vero e' quello del telefono: l'app JARVIS manda allo
+// Space, ogni 15 minuti, gli eventi dei prossimi giorni; lo Space calcola le
+// mezze giornate occupate; qui le chiediamo a Hermes (service binding, stesso
+// segreto dei numeri). Solo fasce e id: niente titoli.
+// Dati vecchi oltre ORE_VECCHIO (telefono spento, app ferma): non si fa
+// prenotare su un calendario che non si sa com'e'.
+const ORE_VECCHIO = 12;
+const telefonoCollegato = (env) => Boolean(env.HERMES && env.JJAVIS_SEGRETO);
+async function aHermes(env, percorso, corpo) {
+  const r = await env.HERMES.fetch(new Request(`https://hermes${percorso}`, {
+    method: corpo ? "POST" : "GET",
+    headers: { "Content-Type": "application/json", "X-JJAVIS-Segreto": env.JJAVIS_SEGRETO },
+    body: corpo ? JSON.stringify(corpo) : undefined }));
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Hermes/Space ${r.status}: ${j.errore || j.error || ""}`);
+  return j;
+}
+async function occupatiTelefono(env, cal) {
+  const a = await aHermes(env, "/jjavis/agenda");
+  // Agenda mai arrivata (APK vecchio, o Space appena ripartito: il telefono
+  // la rimanda entro 15 minuti): vale il registro della porta, come prima
+  // del telefono. Arrivata ma vecchia: il telefono e' spento, non si prenota.
+  if (a.aggiornato && (a.minuti_fa || 0) > ORE_VECCHIO * 60) throw new Error(`l'agenda del telefono è vecchia di ${Math.round(a.minuti_fa / 60)} ore`);
+  // I lavori confermati che il telefono non mostra ancora: si rimandano (lo
+  // Space puo' essere ripartito e aver perso la coda).
+  const gia = new Set([...(a.athena || []), ...(a.in_coda || [])]);
+  const oggi = new Date().toISOString().slice(0, 10);
+  const mancanti = {};
+  for (const [giorno, f] of Object.entries(cal || {})) {
+    if (giorno < oggi) continue;
+    for (const [fascia, v] of Object.entries(f)) {
+      if (v && v.preventivo && v.servizio && !gia.has(v.preventivo)) {
+        const m = (mancanti[v.preventivo] = mancanti[v.preventivo] || { id: v.preventivo, giorno, fasce: [], servizio: v.servizio });
+        m.fasce.push(fascia);
+      }
+    }
+  }
+  for (const m of Object.values(mancanti)) await aHermes(env, "/jjavis/prenotazione", m).catch((e) => console.log("rimando", e));
+  return a.occupati || {};
 }
 
 async function paginaPrenota(url, env, origine) {
@@ -1269,7 +1313,7 @@ async function prenota(req, env, origine) {
   catch (e) { return risposta({ errore: "il calendario non si legge in questo momento, riprova tra poco" }, 503, origine); }
   if (!libero(cal, giorno, fasce) || fasce.some((f) => (occ[giorno] || []).includes(f))) return risposta({ errore: "quel momento è appena stato preso: scegline un altro" }, 409, origine);
   cal[giorno] = { ...(cal[giorno] || {}) };
-  for (const f of fasce) cal[giorno][f] = { preventivo: d.id };
+  for (const f of fasce) cal[giorno][f] = { preventivo: d.id, servizio: d.servizio };
   // Prima il calendario (col suo sha: se nel frattempo e' cambiato, GitHub rifiuta e nessuno prenota due volte).
   try { await salvaCalendario(env, cal, sha, `${giorno} ${fasce.join("+")} → #p${d.id}`); }
   catch { return risposta({ errore: "quel momento è appena stato preso: riprova" }, 409, origine); }
@@ -1281,10 +1325,15 @@ async function prenota(req, env, origine) {
       evento = await segnaGoogle(env, { giorno, fasce, titolo: `🚚 ${d.servizio}: ${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} — ${d.nome}`,
         dettagli: `${d.prezzo_finale} € · preventivo #p${d.id}${d.telefono ? `\nTel +${d.telefono}` : ""}${d.mail ? `\n${d.mail}` : ""}${d.note ? `\n«${d.note}»` : ""}` });
     } catch (e) { avvisoGoogle = `\n⚠️ NON segnato nel calendario Google (${e.message}): JARVIS non lo vede, segnalo a mano.`; }
-  } else avvisoGoogle = "\n(calendario Google non collegato: segnato solo nella porta)";
+  } else if (telefonoCollegato(env)) {
+    try {
+      await aHermes(env, "/jjavis/prenotazione", { id: d.id, giorno, fasce, servizio: d.servizio });
+      evento = "telefono";
+    } catch (e) { avvisoGoogle = `\n⚠️ NON passato al telefono (${e.message}): lo rimando al prossimo giro, controlla.`; }
+  } else avvisoGoogle = "\n(calendario del telefono non collegato: segnato solo nella porta)";
   await salvaPreventivo(env, d.id, { ...d, stato: "confermato", giorno, fascia, evento_google: evento, quando_confermato: new Date().toISOString() }, x.sha);
   await tg(env, "sendMessage", { ...doveJJ(env), text: `📅 CONFERMATO  #p${d.id}\n${d.nome} ha scelto ${giornoLeggibile(giorno)}, ${fascia}.\n` +
-    `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\n${evento ? "Già nel tuo calendario Google (Athena Trasporti)." : "Segnato nella porta (/calendario)."}${avvisoGoogle}` }).catch((e) => console.log("avviso conferma", e));
+    `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\n${evento === "telefono" ? "Entro 15 minuti è nel calendario del telefono (lo segna JARVIS)." : evento ? "Già nel tuo calendario Google (Athena Trasporti)." : "Segnato nella porta (/calendario)."}${avvisoGoogle}` }).catch((e) => console.log("avviso conferma", e));
   return risposta({ ok: true, giorno, fascia }, 200, origine);
 }
 
@@ -1300,7 +1349,13 @@ async function comandoCalendario(env, testo) {
     const oggi = new Date().toISOString().slice(0, 10);
     const righe = Object.keys(cal).filter((g) => g >= oggi).sort().slice(0, 20).map((g) =>
       `${giornoLeggibile(g)}: ` + FASCE.map((f) => cal[g][f] ? `${f} ${cal[g][f].preventivo ? "#p" + cal[g][f].preventivo : "chiuso"}` : "").filter(Boolean).join(" · "));
-    const stato = googleCollegato(env) ? "\n(Google collegato: contano anche i tuoi appuntamenti)" : "\n⚠️ calendario Google NON collegato: i tuoi appuntamenti non contano";
+    let stato = "\n⚠️ nessun calendario collegato: i tuoi appuntamenti non contano";
+    if (googleCollegato(env)) stato = "\n(Google collegato: contano anche i tuoi appuntamenti)";
+    else if (telefonoCollegato(env)) {
+      try { const a = await aHermes(env, "/jjavis/agenda");
+        stato = a.aggiornato ? `\n📱 calendario del telefono: aggiornato ${a.minuti_fa} min fa${(a.in_coda || []).length ? ` · ${a.in_coda.length} lavori da segnare` : ""}` : "\n⚠️ il telefono non ha ancora mandato l'agenda (app JARVIS accesa?)";
+      } catch (e) { stato = `\n⚠️ calendario del telefono non raggiungibile: ${e.message}`; }
+    }
     return (righe.length ? `📅 Prossimi lavori e chiusure\n${righe.join("\n")}` : "📅 Nessun lavoro né chiusura. /chiudi 12/10 per chiudere un giorno (o /chiudi 12/10 mattina).") + stato;
   }
   const giorno = leggiData(dataGrezza);
