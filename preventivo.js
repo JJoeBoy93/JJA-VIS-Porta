@@ -115,3 +115,51 @@ export async function comandoStima(env, testo) {
   const s = await percorso(env, c.da, c.a);
   return testoStima(c, s, calcola({ ...c, ...s }));
 }
+
+// ══ LE RICHIESTE DAL SITO DI ATHENA TRASPORTI — 27 settembre ══════════
+// Il cliente compila il modulo → la porta calcola → JJ su Telegram approva,
+// cambia o rifiuta → solo allora il preventivo parte al cliente. Il sito
+// non mostra mai un prezzo: lo decide JJ.
+export const SERVIZI = {
+  "Consegna conto terzi": { oreFacchinaggio: 0, urgente: false },
+  "Consegna urgente":     { oreFacchinaggio: 0, urgente: true },
+  "Sgombero":             { oreFacchinaggio: 3, urgente: false },  // stima: JJ la cambia
+};
+export const MAIL_ATHENA = "jja.athenatrasporti@gmail.com";   // pubblica, sul sito
+
+const t = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+export function telefonoWa(v) {
+  let c = String(v || "").replace(/[^\d+]/g, "");
+  if (c.startsWith("+")) c = c.slice(1); else if (c.startsWith("00")) c = c.slice(2);
+  if (/^3\d{8,9}$/.test(c)) c = "39" + c;          // cellulare italiano senza prefisso
+  return /^\d{10,15}$/.test(c) ? c : "";
+}
+
+// Solo i campi noti; senza consenso o senza un modo di ricontattarlo, niente.
+export function pulisciRichiesta(d) {
+  if (!d || typeof d !== "object") return { errore: "richiesta vuota" };
+  const servizio = Object.keys(SERVIZI).includes(d.servizio) ? d.servizio : "";
+  const r = { servizio, da: t(d.da, 120), a: t(d.a, 120), quando: t(d.quando, 80), note: t(d.note, 800),
+              nome: t(d.nome, 60), telefono: telefonoWa(d.telefono), mail: t(d.mail, 120) };
+  if (r.mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.mail)) r.mail = "";
+  if (!servizio) return { errore: "scegli il servizio" };
+  if (!r.da) return { errore: "manca da dove" };
+  if (!r.a && servizio !== "Sgombero") return { errore: "manca a dove" };
+  if (!r.nome) return { errore: "manca il nome" };
+  if (!r.telefono && !r.mail) return { errore: "serve un telefono o una mail per mandarti il preventivo" };
+  if (d.consenso !== true) return { errore: "serve il consenso per ricontattarti" };
+  return { richiesta: { ...r, consenso: true } };
+}
+
+// Il testo che arriva al cliente: lo vede JJ prima che parta.
+export function testoCliente(r, prezzo) {
+  const tratta = r.a ? `da ${r.da} a ${r.a}` : `a ${r.da}`;
+  return `Buongiorno ${r.nome},\n` +
+    `per ${r.servizio.toLowerCase()} ${tratta}${r.quando ? ` (${r.quando})` : ""} il prezzo è ${prezzo} €, tutto compreso: ` +
+    `carburante, pedaggi e tempo di lavoro. È il prezzo finale, senza IVA da aggiungere.\n` +
+    `Se va bene, rispondi a questo messaggio e fissiamo il giorno.\n\n` +
+    `Athena Trasporti — 377 594 7995`;
+}
+
+export const linkWa = (numero, testo) => `https://wa.me/${numero}?text=${encodeURIComponent(testo)}`;

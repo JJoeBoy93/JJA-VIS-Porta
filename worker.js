@@ -1,4 +1,4 @@
-import { comandoStima } from "./preventivo.js";
+import { comandoStima, percorso, calcola, testoStima, pulisciRichiesta, testoCliente, linkWa, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -136,6 +136,7 @@ export default {
     if (req.method === "GET" && url.pathname === "/video") return videoPerPagina(env, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
+    if (req.method === "POST" && url.pathname === "/preventivo") return richiestaPreventivo(req, env, ctx, origine);
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
 
@@ -506,6 +507,18 @@ async function telegram(req, env) {
         return new Response("ok");
       }
       const [azione, id] = String(q.data || "").split(":");
+      if (azione === "pok" || azione === "pno") {
+        await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "fatto" }).catch(() => {});
+        const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
+        let esito;
+        try { esito = azione === "pok" ? await approva(env, id, null, qui) : await rifiuta(env, id); }
+        catch (e) { esito = `NON fatto — ${e.message || e}`; }
+        await tg(env, "sendMessage", { ...qui, text: `#p${id}: ${esito}`, reply_to_message_id: q.message.message_id });
+        if (/^(approvato|rifiutato)/.test(esito)) {
+          await tg(env, "editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+        }
+        return new Response("ok");
+      }
       const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
       await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: azione === "bozza" ? "la scrivo…" : "fatto" }).catch(() => {});
       let esito;
@@ -570,6 +583,18 @@ async function telegram(req, env) {
       return new Response("ok");
     }
     const sopra = m.reply_to_message && (m.reply_to_message.text || "");
+    const preventivoSopra = sopra && sopra.match(/#p([0-9a-f]{8})/);
+    if (preventivoSopra && m.text) {
+      const cifra = m.text.replace(/[€\s]/g, "").replace(",", ".");
+      let esito;
+      if (!/^\d+(\.\d+)?$/.test(cifra)) esito = "rispondi solo col prezzo, per esempio 150";
+      else {
+        try { esito = await approva(env, preventivoSopra[1], Math.round(parseFloat(cifra)), qui); }
+        catch (e) { esito = `NON fatto — ${e.message || e}`; }
+      }
+      await tg(env, "sendMessage", { ...qui, text: `#p${preventivoSopra[1]}: ${esito}`, reply_to_message_id: m.message_id });
+      return new Response("ok");
+    }
     const trovato = sopra && sopra.match(/#([0-9a-f]{8})/);
     if (trovato && m.text) {
       let esito;
@@ -1057,4 +1082,104 @@ async function pubblica(env, file, origine, vuoto) {
   const r = risposta(dati, 200, origine);
   r.headers.set("Cache-Control", "public, max-age=60");
   return r;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// IL PREVENTIVO DAL SITO DI ATHENA TRASPORTI — 27 settembre 2026
+// modulo del sito → POST /preventivo → stima col motore → Telegram a JJ con
+// «✅ Approva» / «❌ Rifiuta»; per un altro prezzo JJ risponde al messaggio
+// con la cifra. Solo allora parte al cliente: per mail (Brevo, risposte a
+// Athena) e/o col tasto che apre WhatsApp verso il suo numero, e JJ invia.
+// Il sito non vede mai un prezzo. Le richieste stanno in preventivi/<id>.json
+// nell'archivio privato. Se la stima non riesce, la richiesta arriva lo
+// stesso a JJ col motivo: un cliente non si perde per un calcolo.
+// ══════════════════════════════════════════════════════════════════════
+const leggiPreventivo = async (env, id) => { const d = await gh(env, "GET", `preventivi/${id}.json`); return { dati: deb64(d.content), sha: d.sha }; };
+const salvaPreventivo = (env, id, dati, sha) =>
+  gh(env, "PUT", `preventivi/${id}.json`, { message: `preventivo ${id}: ${dati.stato}`, content: b64(dati), ...(sha ? { sha } : {}) });
+const doveJJ = (env) => ({ chat_id: env.TG_GRUPPO || env.TG_CHAT });
+
+async function richiestaPreventivo(req, env, ctx, origine) {
+  if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
+  if (await frenato(env, `prev:${req.headers.get("CF-Connecting-IP") || "?"}`)) return risposta({ errore: "troppe richieste, riprova tra un minuto" }, 429, origine);
+  const grezzo = await req.text();
+  if (grezzo.length > TETTO_CORPO) return risposta({ errore: "troppo lungo" }, 413, origine);
+  let d;
+  try { d = JSON.parse(grezzo); } catch { return risposta({ errore: "non e' JSON" }, 400, origine); }
+  if (typeof d.sito === "string" && d.sito.trim()) return risposta({ ok: true }, 200, origine);   // robot
+  const { richiesta, errore } = pulisciRichiesta(d);
+  if (errore) return risposta({ errore }, 400, origine);
+  if (!env.GH_TOKEN || !env.TG_BOT_TOKEN || !env.TG_CHAT) return risposta({ errore: "porta non pronta" }, 503, origine);
+  const id = nuovoId();
+  const rec = { id, creato: new Date().toISOString(), ...richiesta, stato: "attesa" };
+  try {
+    const opz = SERVIZI[rec.servizio];
+    const s = await percorso(env, rec.da, rec.a || env.PARTENZA);
+    const c = { ...opz, mezzo: "sprinter" };
+    const r = calcola({ ...c, ...s });
+    rec.stima = { prezzo: r.prezzo, testo: testoStima(c, s, r), km: Math.round(s.km) };
+  } catch (e) {
+    rec.stima_errore = String(e.message || e).slice(0, 200);
+  }
+  try {
+    await salvaPreventivo(env, id, rec);
+    await avvisaPreventivo(env, rec);
+  } catch (e) {
+    return risposta({ errore: String(e.message || e) }, 502, origine);
+  }
+  return risposta({ ok: true, via: [rec.telefono && "whatsapp", rec.mail && "mail"].filter(Boolean) }, 201, origine);
+}
+
+async function avvisaPreventivo(env, rec) {
+  const chi = `👤 ${rec.nome}${rec.telefono ? ` · +${rec.telefono}` : ""}${rec.mail ? ` · ${rec.mail}` : ""}`;
+  const testa = `📦 PREVENTIVO  #p${rec.id}\n${rec.servizio}${rec.quando ? ` · ${rec.quando}` : ""}\n${chi}\n` +
+    `${rec.da} → ${rec.a || "(sgombero: da lui)"}${rec.note ? `\n«${rec.note}»` : ""}\n\n`;
+  const corpo = rec.stima
+    ? `${rec.stima.testo}\n\nAl cliente partirà:\n${testoCliente(rec, rec.stima.prezzo)}\n\nPer un altro prezzo rispondi a questo messaggio con la cifra (es. 150).`
+    : `⚠️ Stima non fatta — ${rec.stima_errore}\nRispondi a questo messaggio col prezzo (es. 150), o rifiuta.`;
+  const tasti = [[...(rec.stima ? [{ text: `✅ Approva ${rec.stima.prezzo} €`, callback_data: `pok:${rec.id}` }] : []),
+                  { text: "❌ Rifiuta", callback_data: `pno:${rec.id}` }]];
+  await tg(env, "sendMessage", { ...doveJJ(env), text: (testa + corpo).slice(0, 4000), reply_markup: { inline_keyboard: tasti } });
+}
+
+async function approva(env, id, prezzoDiJJ, qui) {
+  const { dati, sha } = await leggiPreventivo(env, id);
+  if (dati.stato !== "attesa") return `già ${dati.stato}`;
+  const prezzo = prezzoDiJJ || (dati.stima && dati.stima.prezzo);
+  if (!prezzo) return "manca il prezzo: rispondi al messaggio con la cifra";
+  const testo = testoCliente(dati, prezzo);
+  const fatto = [];
+  if (dati.mail) {
+    if (!env.BREVO_API_KEY || !env.MITTENTE) throw new Error("mancano BREVO_API_KEY o MITTENTE");
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        sender: { name: "Athena Trasporti", email: env.MITTENTE },
+        replyTo: { email: MAIL_ATHENA, name: "Athena Trasporti" },
+        to: [{ email: dati.mail, name: dati.nome }],
+        subject: `Il tuo preventivo: ${prezzo} €`,
+        textContent: testo + "\n\n—\nHai chiesto un preventivo dal sito di Athena Trasporti.",
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`Brevo ${res.status}: ${d.message || d.code || ""}`);
+    fatto.push("mail inviata");
+  }
+  await salvaPreventivo(env, id, { ...dati, stato: "approvato", prezzo_finale: prezzo, cambiato_da_jj: Boolean(prezzoDiJJ),
+                                   via: fatto, quando_approvato: new Date().toISOString() }, sha);
+  if (dati.telefono) {
+    await tg(env, "sendMessage", { ...qui, text: `📲 Tocca per aprire WhatsApp verso ${dati.nome} col testo pronto, poi invia tu.`,
+      reply_markup: { inline_keyboard: [[{ text: "📲 Apri WhatsApp", url: linkWa(dati.telefono, testo) }]] } });
+    fatto.push("WhatsApp pronto");
+  }
+  return `approvato ${prezzo} € — ${fatto.join(" + ")}`;
+}
+
+async function rifiuta(env, id) {
+  const { dati, sha } = await leggiPreventivo(env, id);
+  if (dati.stato !== "attesa") return `già ${dati.stato}`;
+  await salvaPreventivo(env, id, { ...dati, stato: "rifiutato", quando_rifiutato: new Date().toISOString() }, sha);
+  return "rifiutato — al cliente non parte niente";
 }
