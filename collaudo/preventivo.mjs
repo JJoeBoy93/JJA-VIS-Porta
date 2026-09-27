@@ -64,7 +64,9 @@ ok(coo.length === 6, "6 punti: casa, ritiro, 2 tappe, consegna, casa");
 ok(s.tratti.length === 5 && s.tratti[0].da === "Limbiate" && s.tratti[1].a === "Bergamo" && s.tratti[4].a === "Limbiate", "i km di ogni tratto, coi nomi giusti");
 t = await comandoStima(env, "/stima Monza > Bergamo > Brescia > Seriate");
 ok(t.includes("Limbiate → Monza: 10 km a vuoto") && t.includes("Brescia → Seriate: 10 km") && t.includes("Seriate → Limbiate: 10 km a vuoto"), "il messaggio mostra il giro tratto per tratto");
+ok(t.includes("⏱ soste non contate: 4 fermate") && t.includes("≈ 8 €"), "con le tappe ricorda le soste, col prezzo di 15 minuti");
 conTratti(2); t = await comandoStima(env, "/stima Monza > Seriate");
+ok(!t.includes("soste non contate"), "senza tappe niente promemoria");
 ok(t.includes("Monza → Seriate") && t.includes("partenza da casa e ritorno a vuoto compresi"), "se i tratti non tornano col conto dei punti: niente km inventati");
 let troppe = ""; try { await percorso(env, "A", "B", Array(9).fill("X")); } catch (e) { troppe = e.message; }
 ok(troppe.includes("al massimo 8"), "oltre 8 tappe si dice");

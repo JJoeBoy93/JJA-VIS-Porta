@@ -123,6 +123,13 @@ export function testoStima(c, s, r) {
   const righe = [`🧮 STIMA — ${r.mezzo}${c.urgente ? " · URGENTE" : ""}`, ...giro, ""];
   for (const [nome, euro, nota] of r.voci) righe.push(`${nome}: ${eur(euro)} €${nota ? ` — ${nota}` : ""}`);
   if (!s.pedaggioNoto) righe.push("⚠️ caselli: openrouteservice non ha detto i tratti a pedaggio");
+  // JJ, 27 settembre: il tempo di una fermata «non è sempre uguale… non lo sai
+  // subito». Il motore non lo inventa: lo ricorda, col conto pronto.
+  const fermate = (s.tappe || []).length + 2;   // ritiro + tappe + consegna
+  if ((s.tappe || []).length) {
+    const q = 15 / 60 * TARIFFE.guida * (c.urgente ? 1 + TARIFFE.urgenza : 1) / (1 - TARIFFE.imposte);
+    righe.push(`⏱ soste non contate: ${fermate} fermate. Ogni 15 min in più ≈ ${Math.round(q)} € — se le conosci, rispondi con il prezzo`);
+  }
   righe.push("", `→ ${r.prezzo} €`, "Prezzo pieno: gli sconti li decidi tu. I caselli sono una stima (classe B): se non tornano coi tuoi, dimmelo.");
   return righe.join("\n");
 }
