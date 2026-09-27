@@ -1,4 +1,4 @@
-import { comandoStima, percorso, calcola, dueMezzi, testoStima, pulisciRichiesta, testoCliente, linkWa, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
+import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, SERVIZI, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
 // un archivio privato (JJoeBoy93/JJA-VIS-Voci). Non legge niente, non
@@ -1116,10 +1116,12 @@ async function richiestaPreventivo(req, env, ctx, origine) {
   try {
     const opz = SERVIZI[rec.servizio];
     const s = await percorso(env, rec.da, rec.a || env.PARTENZA, rec.tappe || []);
-    const c = { ...opz, mezzo: "sprinter" };
-    const r = dueMezzi({ ...c, ...s }, rec.servizio === "Sgombero");
-    rec.stima = { prezzo: r.prezzo, testo: testoStima(c, s, r), km: Math.round(s.km),
-                  prezzi: { sprinter: r.prezzo, ...(r.altro ? { panda: r.altro.prezzo } : {}) } };
+    const scelta = mezziPer(rec.ingombro, rec.servizio);
+    const c = { ...opz, mezzo: scelta.mezzo };
+    const r = dueMezzi({ ...c, ...s }, scelta.solo);
+    const chiave = (x) => x.mezzo.toLowerCase();
+    rec.stima = { prezzo: r.prezzo, testo: testoStima(c, s, r), km: Math.round(s.km), primo: scelta.mezzo,
+                  prezzi: { [chiave(r)]: r.prezzo, ...(r.altro ? { [chiave(r.altro)]: r.altro.prezzo } : {}) } };
   } catch (e) {
     rec.stima_errore = String(e.message || e).slice(0, 200);
   }
@@ -1135,13 +1137,15 @@ async function richiestaPreventivo(req, env, ctx, origine) {
 async function avvisaPreventivo(env, rec) {
   const chi = `👤 ${rec.nome}${rec.telefono ? ` · +${rec.telefono}` : ""}${rec.mail ? ` · ${rec.mail}` : ""}`;
   const testa = `📦 PREVENTIVO  #p${rec.id}\n${rec.servizio}${rec.quando ? ` · ${rec.quando}` : ""}\n${chi}\n` +
+    `📐 ingombro: ${INGOMBRI[rec.ingombro] || "non detto"}\n` +
     `${[rec.da, ...(rec.tappe || []), rec.a || "(sgombero: da lui)"].join(" → ")}${rec.note ? `\n«${rec.note}»` : ""}\n\n`;
   const corpo = rec.stima
     ? `${rec.stima.testo}\n\nAl cliente partirà (col prezzo del tasto che tocchi):\n${testoCliente(rec, rec.stima.prezzo)}\n\nPer un altro prezzo rispondi a questo messaggio con la cifra (es. 150).`
     : `⚠️ Stima non fatta — ${rec.stima_errore}\nRispondi a questo messaggio col prezzo (es. 150), o rifiuta.`;
   const p = (rec.stima && rec.stima.prezzi) || {};
-  const tasti = [[...(p.sprinter ? [{ text: `🚐 Sprinter ${p.sprinter} €`, callback_data: `pok:${rec.id}:sprinter` }] : []),
-                  ...(p.panda ? [{ text: `🚗 Panda ${p.panda} €`, callback_data: `pok:${rec.id}:panda` }] : [])],
+  const tS = p.sprinter ? [{ text: `🚐 Sprinter ${p.sprinter} €`, callback_data: `pok:${rec.id}:sprinter` }] : [];
+  const tP = p.panda ? [{ text: `🚗 Panda ${p.panda} €`, callback_data: `pok:${rec.id}:panda` }] : [];
+  const tasti = [(rec.stima && rec.stima.primo === "panda") ? [...tP, ...tS] : [...tS, ...tP],
                  [{ text: "❌ Rifiuta", callback_data: `pno:${rec.id}` }]].filter((riga) => riga.length);
   await tg(env, "sendMessage", { ...doveJJ(env), text: (testa + corpo).slice(0, 4000), reply_markup: { inline_keyboard: tasti } });
 }

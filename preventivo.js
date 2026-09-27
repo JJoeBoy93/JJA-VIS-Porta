@@ -131,7 +131,7 @@ export function testoStima(c, s, r) {
     righe.push(`⏱ soste non contate: ${fermate} fermate. Ogni 15 min in più ≈ ${Math.round(q)} € — se le conosci, rispondi con il prezzo`);
   }
   righe.push("", `→ ${r.prezzo} €`);
-  if (r.altro) righe.push(`🚗 con la ${r.altro.mezzo}: ${r.altro.prezzo} € (carburante ${eur(r.altro.voci[0][1])} €, usura ${eur(r.altro.voci[1][1])} € — se il carico ci sta)`);
+  if (r.altro) righe.push(`${r.altro.mezzo === "Panda" ? "🚗" : "🚐"} con ${r.altro.mezzo === "Panda" ? "la Panda" : "lo Sprinter"}: ${r.altro.prezzo} € (carburante ${eur(r.altro.voci[0][1])} €, usura ${eur(r.altro.voci[1][1])} €)`);
   righe.push("Prezzo pieno: gli sconti li decidi tu. I caselli sono una stima (classe B): se non tornano coi tuoi, dimmelo.");
   return righe.join("\n");
 }
@@ -169,7 +169,8 @@ export function pulisciRichiesta(d) {
   const servizio = Object.keys(SERVIZI).includes(d.servizio) ? d.servizio : "";
   const tappe = (Array.isArray(d.tappe) ? d.tappe : String(d.tappe || "").split("\n")).map((x) => t(x, 120)).filter(Boolean);
   if (tappe.length > MAX_TAPPE) return { errore: `al massimo ${MAX_TAPPE} tappe intermedie` };
-  const r = { servizio, da: t(d.da, 120), a: t(d.a, 120), tappe, quando: t(d.quando, 80), note: t(d.note, 800),
+  const ingombro = servizio === "Sgombero" ? "furgone" : (Object.keys(INGOMBRI).includes(d.ingombro) ? d.ingombro : "nonso");
+  const r = { servizio, ingombro, da: t(d.da, 120), a: t(d.a, 120), tappe, quando: t(d.quando, 80), note: t(d.note, 800),
               nome: t(d.nome, 60), telefono: telefonoWa(d.telefono), mail: t(d.mail, 120) };
   if (r.mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.mail)) r.mail = "";
   if (!servizio) return { errore: "scegli il servizio" };
@@ -200,7 +201,20 @@ export const linkWa = (numero, testo) => `https://wa.me/${numero}?text=${encodeU
 // cosa c'e' da portare lo sa JJ leggendo le note. Calcola tutti e due e JJ
 // tocca il tasto del mezzo che usera'. Lo sgombero e' sempre Sprinter.
 export function dueMezzi(p, soloQuello = false) {
-  const r = calcola({ ...p, mezzo: p.mezzo || "sprinter" });
-  if (!soloQuello && (p.mezzo || "sprinter") === "sprinter") r.altro = calcola({ ...p, mezzo: "panda" });
+  const primo = p.mezzo || "sprinter";
+  const r = calcola({ ...p, mezzo: primo });
+  if (!soloQuello) r.altro = calcola({ ...p, mezzo: primo === "sprinter" ? "panda" : "sprinter" });
   return r;
+}
+
+// ══ L'INGOMBRO — 27 settembre ══ JJ: «fai la domanda secca, ovviamente se
+// selezionano sgombero solo furgone». La risposta del cliente decide quale
+// mezzo si calcola per primo e quali tasti vede JJ:
+//   auto    → Panda per prima, Sprinter come alternativa
+//   furgone → solo Sprinter
+//   nonso   → Sprinter per primo, Panda come alternativa
+export const INGOMBRI = { auto: "sta in un'auto", furgone: "serve un furgone", nonso: "non lo sa" };
+export function mezziPer(ingombro, servizio) {
+  if (servizio === "Sgombero" || ingombro === "furgone") return { mezzo: "sprinter", solo: true };
+  return { mezzo: ingombro === "auto" ? "panda" : "sprinter", solo: false };
 }

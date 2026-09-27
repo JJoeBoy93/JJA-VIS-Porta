@@ -109,5 +109,19 @@ ok(r.status === 201 && recT.tappe.join("|") === "Bergamo|Brescia", "le tappe, un
 ok(tgMsg.some((m) => m.text && m.text.includes("Monza → Bergamo → Brescia → Seriate") && m.text.includes("con tappe a Bergamo, Brescia")), "JJ vede il giro, e il cliente leggerà le tappe");
 ok((await manda({ ...BUONA, tappe: Array(9).fill("X").join("\n") })).status === 400, "oltre 8 tappe: rifiutato con un motivo");
 
+console.log("── l'ingombro");
+const tastiDi = async (corpo) => { azzera(); await manda(corpo); const m = tgMsg.find((x) => x.text && x.text.includes("PREVENTIVO"));
+  return { t: m.reply_markup.inline_keyboard[0].map((b) => b.callback_data.split(":")[2]), testo: m.text }; };
+let k = await tastiDi({ ...BUONA, ingombro: "auto" });
+ok(k.t.join(",") === "panda,sprinter" && k.testo.includes("sta in un'auto") && k.testo.includes("STIMA — Panda"), "sta in un'auto: Panda per prima, Sprinter come alternativa");
+k = await tastiDi({ ...BUONA, ingombro: "furgone" });
+ok(k.t.join(",") === "sprinter" && k.testo.includes("serve un furgone"), "serve un furgone: solo Sprinter");
+k = await tastiDi({ ...BUONA, ingombro: "nonso" });
+ok(k.t.join(",") === "sprinter,panda", "non lo sa: Sprinter per primo, Panda come alternativa");
+k = await tastiDi({ ...BUONA, ingombro: "boh" });
+ok(k.t.join(",") === "sprinter,panda" && k.testo.includes("non lo sa"), "un valore strano vale «non lo sa»");
+k = await tastiDi({ servizio: "Sgombero", da: "Limbiate", nome: "Bea", mail: "b@x.it", consenso: true, ingombro: "auto" });
+ok(k.t.join(",") === "sprinter" && k.testo.includes("serve un furgone"), "sgombero: sempre furgone, anche se dice «auto»");
+
 console.log(errori ? `\nROSSO: ${errori}` : "\nVERDE");
 process.exit(errori ? 1 : 0);
