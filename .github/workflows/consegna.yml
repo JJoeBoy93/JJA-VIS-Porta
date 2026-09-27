@@ -51,13 +51,16 @@ jobs:
           JJAVIS_SEGRETO: ${{ secrets.JJAVIS_SEGRETO }}
           ORS_KEY: ${{ secrets.ORS_KEY }}
           PARTENZA: ${{ secrets.PARTENZA }}
+          GOOGLE_SA: ${{ secrets.GOOGLE_SA }}
+          CAL_JJ: ${{ secrets.CAL_JJ }}
+          CAL_ATHENA: ${{ secrets.CAL_ATHENA }}
         run: |
           set -o pipefail
           if [ -z "$GH_TOKEN_V" ]; then echo "::error::manca VOCI_TOKEN: la porta e' accesa ma non puo' salvare"; exit 1; fi
           python3 - <<'PY'
           import json, os
           nomi = {"GH_TOKEN": "GH_TOKEN_V", "TG_BOT_TOKEN": "TG_BOT_TOKEN", "TG_CHAT": "TG_CHAT",
-                  "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY", "BREVO_API_KEY": "BREVO_API_KEY", "MITTENTE": "MITTENTE", "TG_GRUPPO": "TG_GRUPPO", "JJAVIS_SEGRETO": "JJAVIS_SEGRETO", "ORS_KEY": "ORS_KEY", "PARTENZA": "PARTENZA"}
+                  "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY", "BREVO_API_KEY": "BREVO_API_KEY", "MITTENTE": "MITTENTE", "TG_GRUPPO": "TG_GRUPPO", "JJAVIS_SEGRETO": "JJAVIS_SEGRETO", "ORS_KEY": "ORS_KEY", "PARTENZA": "PARTENZA", "GOOGLE_SA": "GOOGLE_SA", "CAL_JJ": "CAL_JJ", "CAL_ATHENA": "CAL_ATHENA"}
           d = {k: os.environ[v].strip() for k, v in nomi.items() if os.environ.get(v, "").strip()}
           mancano = [k for k in nomi if k not in d]
           json.dump(d, open("/tmp/segreti.json", "w"))

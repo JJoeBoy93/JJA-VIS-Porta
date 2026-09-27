@@ -12,6 +12,7 @@ const copiaPorta = join(mkdtempSync(join(tmpdir(), "porta-")), "worker.mjs");   
 copyFileSync(sorgente, copiaPorta);
 // il motore del preventivo (27 settembre) e' un modulo accanto al worker: si copia anche lui
 copyFileSync(join(dirname(sorgente), "preventivo.js"), join(dirname(copiaPorta), "preventivo.js"));
+copyFileSync(join(dirname(sorgente), "google.js"), join(dirname(copiaPorta), "google.js"));
 const W = (await import(copiaPorta)).default;
 const repo = new Map(), tgInviati = [], claudeVisti = [], brevo = [];
 let conta = 0;

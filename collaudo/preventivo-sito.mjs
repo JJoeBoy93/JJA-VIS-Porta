@@ -14,6 +14,7 @@ const qui = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "prev-"));
 copyFileSync(join(qui, "..", "worker.js"), join(dir, "worker.mjs"));
 copyFileSync(join(qui, "..", "preventivo.js"), join(dir, "preventivo.js"));
+copyFileSync(join(qui, "..", "google.js"), join(dir, "google.js"));
 const W = (await import(join(dir, "worker.mjs"))).default;
 
 let errori = 0;

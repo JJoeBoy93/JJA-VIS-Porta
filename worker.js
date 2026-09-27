@@ -1,3 +1,4 @@
+import { googleCollegato, occupatiGoogle, segnaGoogle, togliGoogle } from "./google.js";
 import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoStima, pulisciRichiesta, testoCliente, linkWa, linkWaWeb, SERVIZI, FASCE, serveGiornata, giorniPrenotabili, leggiData, occupati, libero, MAIL_ATHENA } from "./preventivo.js";
 // ══ LA PORTA DI JJA-VIS ══
 // Riceve le risposte della pagina pubblica e le scrive, una per file, in
@@ -126,6 +127,7 @@ export default {
         bozze_claude: Boolean(env.ANTHROPIC_API_KEY),
         mail_brevo: Boolean(env.BREVO_API_KEY),
         mittente: env.MITTENTE || "manca",
+        calendario_google: googleCollegato(env),
         gruppo_finisce_con: env.TG_GRUPPO ? env.TG_GRUPPO.slice(-4) : "manca",
       }, 200, origine);
     }
@@ -1222,15 +1224,29 @@ async function preventivoConChiave(env, id, k) {
   try { const x = await leggiPreventivo(env, id); return x.dati.chiave === k ? x : null; } catch { return null; }
 }
 
+// Le fasce prese: quelle della porta (calendario.json) più il calendario
+// Google di JJ. Se Google e' collegato ma non risponde, NON si mostra tutto
+// libero: si solleva, e la pagina dice che il calendario non si legge.
+async function tuttiOccupati(env, cal) {
+  const o = occupati(cal);
+  if (!googleCollegato(env)) return o;
+  const g = await occupatiGoogle(env, giorniPrenotabili());
+  for (const [giorno, fasce] of Object.entries(g)) o[giorno] = [...new Set([...(o[giorno] || []), ...fasce])];
+  return o;
+}
+
 async function paginaPrenota(url, env, origine) {
   const x = await preventivoConChiave(env, url.searchParams.get("p"), url.searchParams.get("k"));
   if (!x) return risposta({ errore: "preventivo non trovato" }, 404, origine);
   const d = x.dati;
   if (!["approvato", "confermato"].includes(d.stato)) return risposta({ errore: "questo preventivo non è ancora pronto" }, 409, origine);
   const { cal } = await leggiCalendario(env);
+  let occ;
+  try { occ = await tuttiOccupati(env, cal); }
+  catch (e) { console.log("calendario", e); return risposta({ errore: "il calendario non si legge in questo momento, riprova tra poco" }, 503, origine); }
   return risposta({ servizio: d.servizio, da: d.da, a: d.a, tappe: d.tappe || [], prezzo: d.prezzo_finale, stato: d.stato,
     giorno: d.giorno || "", fascia: d.fascia || "", giornata: serveGiornata(d.stima && d.stima.ore),
-    giorni: giorniPrenotabili(), occupati: occupati(cal) }, 200, origine);
+    giorni: giorniPrenotabili(), occupati: occ }, 200, origine);
 }
 
 async function prenota(req, env, origine) {
@@ -1248,16 +1264,27 @@ async function prenota(req, env, origine) {
   const fasce = giornata ? FASCE : (FASCE.includes(b.fascia) ? [b.fascia] : null);
   if (!fasce) return risposta({ errore: "scegli mattina o pomeriggio" }, 400, origine);
   const { cal, sha } = await leggiCalendario(env);
-  if (!libero(cal, giorno, fasce)) return risposta({ errore: "quel momento è appena stato preso: scegline un altro" }, 409, origine);
+  let occ;
+  try { occ = await tuttiOccupati(env, cal); }
+  catch (e) { return risposta({ errore: "il calendario non si legge in questo momento, riprova tra poco" }, 503, origine); }
+  if (!libero(cal, giorno, fasce) || fasce.some((f) => (occ[giorno] || []).includes(f))) return risposta({ errore: "quel momento è appena stato preso: scegline un altro" }, 409, origine);
   cal[giorno] = { ...(cal[giorno] || {}) };
   for (const f of fasce) cal[giorno][f] = { preventivo: d.id };
   // Prima il calendario (col suo sha: se nel frattempo e' cambiato, GitHub rifiuta e nessuno prenota due volte).
   try { await salvaCalendario(env, cal, sha, `${giorno} ${fasce.join("+")} → #p${d.id}`); }
   catch { return risposta({ errore: "quel momento è appena stato preso: riprova" }, 409, origine); }
   const fascia = giornata ? "giornata intera" : fasce[0];
-  await salvaPreventivo(env, d.id, { ...d, stato: "confermato", giorno, fascia, quando_confermato: new Date().toISOString() }, x.sha);
+  // Nel calendario Google di JJ: lo vede sul telefono e lo vede JARVIS.
+  let evento = "", avvisoGoogle = "";
+  if (googleCollegato(env)) {
+    try {
+      evento = await segnaGoogle(env, { giorno, fasce, titolo: `🚚 ${d.servizio}: ${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} — ${d.nome}`,
+        dettagli: `${d.prezzo_finale} € · preventivo #p${d.id}${d.telefono ? `\nTel +${d.telefono}` : ""}${d.mail ? `\n${d.mail}` : ""}${d.note ? `\n«${d.note}»` : ""}` });
+    } catch (e) { avvisoGoogle = `\n⚠️ NON segnato nel calendario Google (${e.message}): JARVIS non lo vede, segnalo a mano.`; }
+  } else avvisoGoogle = "\n(calendario Google non collegato: segnato solo nella porta)";
+  await salvaPreventivo(env, d.id, { ...d, stato: "confermato", giorno, fascia, evento_google: evento, quando_confermato: new Date().toISOString() }, x.sha);
   await tg(env, "sendMessage", { ...doveJJ(env), text: `📅 CONFERMATO  #p${d.id}\n${d.nome} ha scelto ${giornoLeggibile(giorno)}, ${fascia}.\n` +
-    `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\nGià segnato nel calendario (/calendario).` }).catch((e) => console.log("avviso conferma", e));
+    `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\n${evento ? "Già nel tuo calendario Google (Athena Trasporti)." : "Segnato nella porta (/calendario)."}${avvisoGoogle}` }).catch((e) => console.log("avviso conferma", e));
   return risposta({ ok: true, giorno, fascia }, 200, origine);
 }
 
@@ -1273,7 +1300,8 @@ async function comandoCalendario(env, testo) {
     const oggi = new Date().toISOString().slice(0, 10);
     const righe = Object.keys(cal).filter((g) => g >= oggi).sort().slice(0, 20).map((g) =>
       `${giornoLeggibile(g)}: ` + FASCE.map((f) => cal[g][f] ? `${f} ${cal[g][f].preventivo ? "#p" + cal[g][f].preventivo : "chiuso"}` : "").filter(Boolean).join(" · "));
-    return righe.length ? `📅 Prossimi impegni\n${righe.join("\n")}` : "📅 Calendario libero. /chiudi 12/10 per chiudere un giorno (o /chiudi 12/10 mattina).";
+    const stato = googleCollegato(env) ? "\n(Google collegato: contano anche i tuoi appuntamenti)" : "\n⚠️ calendario Google NON collegato: i tuoi appuntamenti non contano";
+    return (righe.length ? `📅 Prossimi lavori e chiusure\n${righe.join("\n")}` : "📅 Nessun lavoro né chiusura. /chiudi 12/10 per chiudere un giorno (o /chiudi 12/10 mattina).") + stato;
   }
   const giorno = leggiData(dataGrezza);
   if (!giorno) return `Scrivi così: ${cmd} 12/10 (oppure ${cmd} 12/10 mattina)`;
@@ -1281,14 +1309,23 @@ async function comandoCalendario(env, testo) {
   if (!fasce) return "La fascia è mattina o pomeriggio.";
   cal[giorno] = { ...(cal[giorno] || {}) };
   const prenotate = fasce.filter((f) => cal[giorno][f] && cal[giorno][f].preventivo);
+  let notaGoogle = "";
   if (/^\/chiudi/.test(cmd)) {
-    for (const f of fasce) if (!cal[giorno][f]) cal[giorno][f] = { chiuso: true };
+    const nuove = fasce.filter((f) => !cal[giorno][f]);
+    let evento = "";
+    if (nuove.length && googleCollegato(env)) {
+      try { evento = await segnaGoogle(env, { giorno, fasce: nuove, titolo: "⛔ Athena: chiuso", dettagli: "Chiuso da /chiudi: i clienti non possono prenotare." }); }
+      catch (e) { notaGoogle = `\n⚠️ non segnato su Google (${e.message})`; }
+    }
+    for (const f of nuove) cal[giorno][f] = { chiuso: true, ...(evento ? { evento } : {}) };
   } else {
-    for (const f of fasce) if (cal[giorno][f] && cal[giorno][f].chiuso) delete cal[giorno][f];
+    const eventi = new Set();
+    for (const f of fasce) if (cal[giorno][f] && cal[giorno][f].chiuso) { if (cal[giorno][f].evento) eventi.add(cal[giorno][f].evento); delete cal[giorno][f]; }
+    for (const id of eventi) await togliGoogle(env, id).catch((e) => { notaGoogle = `\n⚠️ su Google la chiusura è rimasta (${e.message}): toglila a mano`; });
     if (!Object.keys(cal[giorno]).length) delete cal[giorno];
   }
   await salvaCalendario(env, cal, sha, `${cmd.slice(1)} ${giorno} ${fasce.join("+")}`);
   const cosa = /^\/chiudi/.test(cmd) ? "chiuso" : "aperto";
   return `${giornoLeggibile(giorno)}, ${fasce.join(" e ")}: ${cosa}.` +
-    (prenotate.length ? `\n⚠️ ${prenotate.join(" e ")} ha già un lavoro prenotato (#p${cal[giorno][prenotate[0]].preventivo}): quello non l'ho toccato.` : "");
+    (prenotate.length ? `\n⚠️ ${prenotate.join(" e ")} ha già un lavoro prenotato (#p${cal[giorno][prenotate[0]].preventivo}): quello non l'ho toccato.` : "") + notaGoogle;
 }
