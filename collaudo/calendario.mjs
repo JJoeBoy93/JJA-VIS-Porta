@@ -120,6 +120,8 @@ const P = await import(join(dir, "preventivo.js"));
 ok(P.caparraDi(90).tutto && P.caparraDi(90).importo === 90, "sotto i 100 €: tutto anticipato");
 ok(!P.caparraDi(120).tutto && P.caparraDi(120).importo === 40 && P.caparraDi(845).importo === 255, "sopra: 30% arrotondato a 5 € in su (120 → 40, 845 → 255)");
 ok(P.caparraDi(100).importo === 30, "a 100 € esatti: caparra");
+const prova = { id: "abcdef12", chiave: "0123456789abcdef", servizio: "Sgombero", da: "Limbiate", a: "", nome: "Sara", tipo: "privato" };
+ok(P.testoCliente(prova, 190, "IT60X0542811101000000123456").includes("con PayPal o bonifico") && P.testoCliente(prova, 190, "").includes("€ su PayPal;"), "con l'IBAN il preventivo offre anche il bonifico; senza, solo PayPal");
 ok(mail.some((m) => m.textContent.includes("caparra di") || m.textContent.includes("pagamento anticipato")), "il preventivo al cliente dice già della caparra");
 const r5 = await preventivoApprovato();
 const fra5 = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);

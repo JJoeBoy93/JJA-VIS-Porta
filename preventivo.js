@@ -226,8 +226,8 @@ export function testoCliente(r, prezzo, iban = "") {
         (r.tipo === "azienda"
           ? `Pagamento con bonifico a ${GIORNI_AZIENDE} giorni dalla data della fattura elettronica${iban ? ` (IBAN ${iban}, intestato ad Ardito Jacopo Joe)` : ""}. Se avete termini diversi, ditemelo prima.\n`
           : caparraDi(prezzo).tutto
-          ? `Il giorno si blocca col pagamento anticipato di ${prezzo} € su PayPal.\n`
-          : `Il giorno si blocca con una caparra di ${caparraDi(prezzo).importo} € su PayPal; il resto si paga prima dello scarico.\n`) +
+          ? `Il giorno si blocca col pagamento anticipato di ${prezzo} € ${iban ? "con PayPal o bonifico" : "su PayPal"}.\n`
+          : `Il giorno si blocca con una caparra di ${caparraDi(prezzo).importo} € ${iban ? "con PayPal o bonifico" : "su PayPal"}; il resto si paga prima dello scarico.\n`) +
         `Per qualsiasi domanda rispondi a questo messaggio.\n\n`
       : `Se va bene, rispondi a questo messaggio e fissiamo il giorno.\n\n`) +
     `Athena Trasporti — 377 594 7995`;

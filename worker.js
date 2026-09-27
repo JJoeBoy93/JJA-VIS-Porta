@@ -1330,7 +1330,8 @@ async function paginaPrenota(url, env, origine) {
   catch (e) { console.log("calendario", e); return risposta({ errore: "il calendario non si legge in questo momento, riprova tra poco" }, 503, origine); }
   return risposta({ servizio: d.servizio, da: d.da, a: d.a, tappe: d.tappe || [], prezzo: d.prezzo_finale, stato: d.stato,
     giorno: d.giorno || "", fascia: d.fascia || "", giornata: serveGiornata(d.stima && d.stima.ore),
-    caparra: caparraDi(d.prezzo_finale).importo, tutto: caparraDi(d.prezzo_finale).tutto, paypal: PAYPAL, causale: `#p${d.id}`,
+    // JJ, 27 settembre: «se non hanno pay pal non possono pagarmi» → anche il bonifico, stesso IBAN delle aziende.
+    caparra: caparraDi(d.prezzo_finale).importo, tutto: caparraDi(d.prezzo_finale).tutto, paypal: PAYPAL, causale: `#p${d.id}`, iban: env.IBAN || "",
     tipo: d.tipo || "privato", ...(d.tipo === "azienda" ? { giorni_pagamento: GIORNI_AZIENDE, iban: env.IBAN || "" } : {}),
     giorni: giorniPrenotabili(), occupati: occ }, 200, origine);
 }
@@ -1374,10 +1375,10 @@ async function prenota(req, env, origine) {
   await tg(env, "sendMessage", { ...doveJJ(env),
     text: `📅 BLOCCATO  #p${d.id}\n${d.nome} ha scelto ${giornoLeggibile(giorno)}, ${fascia}.\n` +
       `${[d.da, ...(d.tappe || []), d.a].filter(Boolean).join(" → ")} · ${d.prezzo_finale} €${d.telefono ? `\n📞 +${d.telefono}` : ""}${d.mail ? `\n✉️ ${d.mail}` : ""}\n\n` +
-      `💶 Aspetta ${cap.tutto ? "il pagamento" : "la caparra"} di ${cap.importo} € su PayPal (causale #p${d.id}). Quando arriva, tocca «Caparra arrivata»: solo allora è confermato e va sul calendario del telefono.`,
+      `💶 Aspetta ${cap.tutto ? "il pagamento" : "la caparra"} di ${cap.importo} € su PayPal${env.IBAN ? " o con bonifico" : ""} (causale #p${d.id}). Quando arriva, tocca «Caparra arrivata»: solo allora è confermato e va sul calendario del telefono.`,
     reply_markup: { inline_keyboard: [[{ text: `💶 Caparra arrivata (${cap.importo} €)`, callback_data: `cap:${d.id}` }],
                                       [{ text: "❌ Libera il giorno", callback_data: `lib:${d.id}` }]] } }).catch((e) => console.log("avviso blocco", e));
-  return risposta({ ok: true, giorno, fascia, stato: "caparra", caparra: cap.importo, tutto: cap.tutto, paypal: PAYPAL, causale: `#p${d.id}` }, 200, origine);
+  return risposta({ ok: true, giorno, fascia, stato: "caparra", caparra: cap.importo, tutto: cap.tutto, paypal: PAYPAL, iban: env.IBAN || "", causale: `#p${d.id}` }, 200, origine);
 }
 
 // «💶 Caparra arrivata»: da bloccato a confermato, e sul calendario vero.
