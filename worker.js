@@ -893,6 +893,19 @@ async function raccogli(env) {
   return { file, letti };
 }
 
+// Il prezzo accanto alla cosa che fa perdere tempo: «Preventivi, conti,
+// fatture: 15 € (1)». Senza la cosa, il numero sembra il prezzo di JJA-VIS.
+const CURSORE_PARTE_DA = 15;             // index.html: value="15"
+function perCosa(letti) {
+  const g = {};
+  for (const u of letti) if (u.ha_risposto && typeof u.prezzo_al_mese === "number") (g[u.tempo || "cosa non detta"] ||= []).push(u.prezzo_al_mese);
+  const righe = Object.entries(g).sort((a, b) => b[1].length - a[1].length)
+    .map(([cosa, p]) => `· ${cosa}: ${p.length === 1 ? p[0] : (p.reduce((a, b) => a + b, 0) / p.length).toFixed(1)} € (${p.length})`);
+  const fermi = Object.values(g).flat().filter((x) => x === CURSORE_PARTE_DA).length;
+  if (fermi) righe.push(`  (${CURSORE_PARTE_DA} € è dove parte il cursore: ${fermi} risposte su ${Object.values(g).flat().length} sono lì — possono essere prezzi veri o cursori non mossi)`);
+  return righe;
+}
+
 async function numeri(env, raccolti) {
   let file, letti;
   try { ({ file, letti } = raccolti || await raccogli(env)); } catch (e) { return `📊 Numeri non letti: ${e.message || e}`; }
@@ -908,7 +921,14 @@ async function numeri(env, raccolti) {
     `📊 Numeri — ${oggi}`,
     `Persone: ${file.length}${file.length > letti.length ? ` (lette ${letti.length}: conto parziale)` : ""} · attive oggi ${letti.filter((u) => String(u.ultimo).startsWith(oggi)).length} · nuove oggi ${letti.filter((u) => String(u.primo).startsWith(oggi)).length}`,
     `Hanno fatto il sondaggio: ${letti.filter((u) => u.ha_risposto).length} · hanno scritto: ${letti.filter((u) => (u.conti || {}).messaggi).length} (${letti.reduce((t, u) => t + ((u.conti || {}).messaggi || 0), 0)} messaggi) · tornati a rispondere: ${letti.filter((u) => (u.conti || {}).conoscenze).length}`,
-    `Quanto varrebbe al mese: media ${media} €, mediana ${mediana} € (su ${prezzi.length})`,
+    // 28/9, JJ: «la domanda di quanto varrebbe è in funzione di quello che
+    // serve a chi chiede… messa così sembra che quanto vale è JJAVIS». La
+    // pagina chiede «Se lo facessi io al posto tuo, quanto varrebbe al mese?»
+    // DOPO «cosa ti fa perdere tempo»: il prezzo e' di QUELLA cosa, per
+    // quella persona. Si legge accanto alla cosa, e il 15 e' dove parte il
+    // cursore (chi non lo muove risponde 15).
+    `Quanto varrebbe al mese farsi togliere il tempo perso (ognuno la sua cosa): media ${media} €, mediana ${mediana} € (su ${prezzi.length})`,
+    ...perCosa(letti),
     `Nomi: ${conta(letti.map((u) => u.nome_assistente))}`,
     `Aspetti: ${conta(letti.map((u) => u.tema))}`,
     `Mestieri: ${conta(letti.map((u) => u.mestiere))}`,
