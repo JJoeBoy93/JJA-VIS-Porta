@@ -1109,13 +1109,23 @@ async function aggiornaVetrina(env) {
     const r = await env.HERMES.fetch(new Request("https://hermes/jjavis/vetrina", { headers: { "X-JJAVIS-Segreto": env.JJAVIS_SEGRETO } }));
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok) return `NON aggiornata (${r.status})`;
+    // 1 ottobre, JJ: «le canzoni sono diminuite nella pagina, e ? nei numeri».
+    // Quella sera lo Space non aveva la fonoteca pronta: niente numero, e la
+    // vetrina veniva riscritta SENZA canzoni, così la pagina tornava al numero
+    // scritto a mano (4.639). Adesso un numero che manca non cancella l'ultimo
+    // buono, e il perché si legge nel conto.
+    let sha, prima = {};
+    try { const g = await gh(env, "GET", "vetrina.json"); sha = g.sha; prima = deb64(g.content) || {}; } catch {}
     const v = { quando: d.quando || new Date().toISOString() };
-    if (Number.isInteger(d.canzoni)) v.canzoni = d.canzoni;
-    if (Number.isInteger(d.attrezzi)) v.attrezzi = d.attrezzi;
-    let sha;
-    try { sha = (await gh(env, "GET", "vetrina.json")).sha; } catch {}
+    const tenuti = [];
+    for (const k of ["canzoni", "attrezzi"]) {
+      if (Number.isInteger(d[k])) v[k] = d[k];
+      else if (Number.isInteger(prima[k])) { v[k] = prima[k]; tenuti.push(k); }
+    }
     await gh(env, "PUT", "vetrina.json", { message: "vetrina", content: b64(v), ...(sha ? { sha } : {}) });
-    return `aggiornata (${v.canzoni ?? "?"} canzoni, ${v.attrezzi ?? "?"} attrezzi)`;
+    const perche = d.canzoni_perche ? ` — lo Space: ${d.canzoni_perche}` : "";
+    return `aggiornata (${v.canzoni ?? "?"} canzoni, ${v.attrezzi ?? "?"} attrezzi)` +
+      (tenuti.length ? `; ${tenuti.join(" e ")} non arrivati stasera${perche}: tengo l'ultimo numero buono` : "");
   } catch (e) { return `NON aggiornata (${e.message || e})`; }
 }
 
