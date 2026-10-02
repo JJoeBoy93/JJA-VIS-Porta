@@ -94,6 +94,9 @@ ok(!r.d.subito, "«NESSUNA RISPOSTA»: niente bolla sulla pagina");
 aiRisposta = { risposta: "Ok", servizio: "inventato", tipo: "boh", bozza: "", passa_a_jj: false };
 r = await parla("ciao");
 ok(r.d.subito && r.d.subito.azione === null, "servizio inventato dal modello: niente pulsante sbagliato");
+aiRisposta = { risposta: "Ciao!", servizio: "nessuno", tipo: "Sito o pagina web", bozza: "x", passa_a_jj: false };
+const n = await W.novaSubito(env, { domanda: "ciao", profilo: {} });
+ok(n.tipo === "" && n.bozza === "", "tipo e frase solo con la commissione (il modello li metteva anche con «nessuno»)");
 
 console.log("── la pagina chiede se è accesa");
 repo.set("nova.json", b64({ acceso: true }));
@@ -111,6 +114,7 @@ tg.length = 0; ai.length = 0;
 aiRisposta = { risposta: "Risposta di prova", servizio: "nessuno", tipo: "", bozza: "", passa_a_jj: false };
 await bot("/nova prova");
 ok(ai.length === 12 && tg.filter((x) => (x.text || "").includes("❓")).length >= 4, "/nova prova: 12 domande di prova, i risultati a JJ");
+ok([...repo.keys()].some((k) => k.startsWith("nova-prove/") && de(repo.get(k)).prove.length === 12), "e restano nell'archivio, tutte e 12 (per leggerle senza foto)");
 await bot("/nova spento");
 ok(de(repo.get("nova.json")).acceso === false, "/nova spento la spegne");
 

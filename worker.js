@@ -248,7 +248,9 @@ Il tuo secondo fine e' la BOTTEGA: ogni risposta, quando ha senso, porta a una c
 Per le domande di sapere generale (per esempio dove studiare una cosa) rispondi in breve e in concreto con nomi di risorse famose e gratuite che conosci con certezza (senza link inventati), poi, se c'entra, proponi la commissione.
 Il campo «bozza» e' la frase, scritta come la scriverebbe lui, con cui partirebbe la richiesta della commissione (es. «Uno strumento web che mi prepari le domande per le interrogazioni dal programma di classe»). Vuoto se il servizio non e' «commissione».
 «passa_a_jj» = true quando: chiede un prezzo, una data, un appuntamento, un contatto o una cosa personale; e' un reclamo; chiede di cose che qui sopra non ci sono; o non sei sicuro. In quel caso la risposta dice in una riga che lo passi a chi ti costruisce, che ti risponde qui.
-Al massimo 90 parole nella risposta. Rispondi SOLO col JSON richiesto.`;
+E' UNA CHAT SUL TELEFONO: al massimo 60 parole, UN paragrafo solo, niente elenchi. Non chiedere la mail e non spiegare come si chiede un preventivo: quando il servizio non e' «nessuno», sotto la tua risposta la pagina mette un pulsante che porta dritto alla Bottega, con la richiesta gia' scritta — al massimo chiudi con «te lo preparo: tocca qui sotto».
+«tipo» si riempie solo se il servizio e' «commissione»; altrimenti e' "".
+Rispondi SOLO col JSON richiesto.`;
 const NOVA_SCHEMA = { name: "risposta_nova", strict: true, schema: { type: "object", additionalProperties: false,
   properties: { risposta: { type: "string" }, servizio: { type: "string", enum: NOVA_SERVIZI },
     tipo: { type: "string", enum: NOVA_TIPI }, bozza: { type: "string" }, passa_a_jj: { type: "boolean" } },
@@ -283,7 +285,8 @@ export async function novaSubito(env, rec, fetchFn = fetch) {
     const risposta = testo(j.risposta, 900);
     if (!risposta || /^NESSUNA RISPOSTA/i.test(risposta)) return { passa: true, motivo: "niente da rispondere" };
     return { risposta, servizio: NOVA_SERVIZI.includes(j.servizio) ? j.servizio : "nessuno",
-      tipo: NOVA_TIPI.includes(j.tipo) ? j.tipo : "", bozza: testo(j.bozza, 300), passa: j.passa_a_jj === true };
+      tipo: j.servizio === "commissione" && NOVA_TIPI.includes(j.tipo) ? j.tipo : "",
+      bozza: j.servizio === "commissione" ? testo(j.bozza, 300) : "", passa: j.passa_a_jj === true };
   } catch (e) { return { errore: String(e.message || e) }; }
 }
 
@@ -714,6 +717,11 @@ async function telegram(req, env) {
         // tutte insieme, non una dopo l'altra: Telegram non aspetta un minuto
         const esiti = await Promise.all(NOVA_PROVE.map((q) => novaSubito(env, { domanda: q, nome: "", mestiere: "", profilo: {} })));
         const righe = NOVA_PROVE.map((q, i) => { const n = esiti[i]; return (`❓ ${q}\n` + (n.risposta ? `${n.passa ? "↪️ a te · " : ""}${n.servizio}${n.tipo ? " · " + n.tipo : ""}\n${n.risposta}${n.bozza ? `\n📝 ${n.bozza}` : ""}` : `⚠️ ${n.errore || n.motivo}`)); });
+        // 2/10: JJ non riesce a mandare tutte le foto. Le prove restano
+        // nell'archivio (nova-prove/), dove Athena le legge tutte.
+        const quando = new Date().toISOString();
+        try { await gh(env, "PUT", `nova-prove/${quando.replace(/[:.]/g, "-")}.json`, { message: "nova: prove",
+          content: b64({ quando, modello: NOVA_MODELLO, prove: NOVA_PROVE.map((q, i) => ({ domanda: q, ...esiti[i] })) }) }); } catch (e) { console.log("prove", e); }
         for (let i = 0; i < righe.length; i += 3) await tg(env, "sendMessage", { ...qui, text: righe.slice(i, i + 3).join("\n\n").slice(0, 4000) });
         return new Response("ok");
       } else testoNova = `🤖 Nova è ${(await novaAccesa(env)) ? "accesa" : "spenta"}. /nova prova (12 domande di prova) · /nova acceso · /nova spento`;
