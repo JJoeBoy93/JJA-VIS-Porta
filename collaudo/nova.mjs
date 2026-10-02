@@ -121,5 +121,14 @@ ok([...repo.keys()].some((k) => k.startsWith("nova-prove/") && de(repo.get(k)).p
 await bot("/nova spento");
 ok(de(repo.get("nova.json")).acceso === false, "/nova spento la spegne");
 
+
+// 2 ottobre notte: la bozza diceva «da PlayStation non si possono creare mappe». CHI_SONO ora sa come
+// si crea un'isola e ha la regola sul «non si può»: lo leggono la bozza e Nova. Se qualcuno le toglie, rosso.
+{ const { readFileSync } = await import("node:fs"); const testo = readFileSync(sorgente, "utf8");
+  const chi = testo.slice(testo.indexOf("const CHI_SONO"), testo.indexOf("const MODELLI_PREFERITI"));
+  ok(chi.includes("anche da PlayStation 4 e 5") && chi.includes("UEFN") && chi.includes("solo su PC"), "CHI_SONO sa come si crea un'isola Fortnite: anche da PlayStation; UEFN solo PC");
+  ok(chi.includes("non si puo' fare") && chi.includes("funziona solo su"), "CHI_SONO vieta di dire «non si può» su giochi e programmi se non è scritto lì");
+  ok(ai.length > 0 && ai.some(c => JSON.stringify(c.corpo).includes("anche da PlayStation 4 e 5")), "Nova riceve davvero queste righe quando risponde"); }
+
 console.log(errori ? `\nROSSO: ${errori}` : "\nVERDE");
 process.exit(errori ? 1 : 0);
