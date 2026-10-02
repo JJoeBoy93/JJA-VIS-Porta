@@ -61,6 +61,7 @@ ok(ai.length === 1 && ai[0].url.includes("/accounts/acc-jjavis/ai/run/@cf/google
 const c = ai[0].corpo;
 ok(c.response_format.type === "json_schema" && c.chat_template_kwargs.enable_thinking === false && c.max_completion_tokens <= 600, "schema, niente ragionamento, risposta corta (neuroni)");
 ok(c.messages[0].content.includes("BOTTEGA") && c.messages[0].content.includes("insegnante") && c.messages[1].content.includes("Lavoro: Insegnante"), "sa della Bottega e del lavoro di chi scrive");
+ok(!JSON.stringify(c).includes("Giovanni"), "il nome di chi scrive non va al modello");
 ok(r.d.subito && r.d.subito.testo.includes("interrogazioni") && r.d.subito.azione.servizio === "commissione" && r.d.subito.azione.tipo === "Strumento web", "la pagina riceve subito la risposta e l'azione per la Bottega");
 const salvata = [...repo.keys()].find((k) => k.startsWith("per-pagina/abcdef0123456789/") && k.endsWith("-n.json"));
 ok(salvata && de(repo.get(salvata)).auto === true, "la risposta resta per quando torna (per-pagina, «-n»)");

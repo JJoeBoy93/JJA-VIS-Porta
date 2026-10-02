@@ -263,7 +263,8 @@ async function novaAccesa(env) {
 export async function novaSubito(env, rec, fetchFn = fetch) {
   const chiSono = CHI_SONO.replace("rispondi per mail a chi ti ha scritto dalla tua pagina pubblica",
     "rispondi in chat a chi ti scrive dalla tua pagina pubblica");
-  const lui = [rec.nome && `Si chiama ${rec.nome}.`, rec.mestiere && `Lavoro: ${rec.mestiere}.`,
+  // il nome no: come per le bozze, l'IA vede il messaggio e il mestiere, mai chi e'
+  const lui = [rec.mestiere && `Lavoro: ${rec.mestiere}.`,
     rec.profilo && rec.profilo.tempo && `Il tempo glielo mangia: ${rec.profilo.tempo}.`].filter(Boolean).join(" ");
   const corpo = { messages: [
       { role: "system", content: chiSono + NOVA_REGOLE + (rec.nome_assistente ? `\nTi ha chiamato ${rec.nome_assistente}.` : "") },
