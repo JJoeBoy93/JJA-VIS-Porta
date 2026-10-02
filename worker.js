@@ -241,8 +241,8 @@ const NOVA_REGOLE = `
 
 ADESSO NON SCRIVI UNA MAIL: rispondi SUBITO, nella chat della pagina, a chi ti ha scritto. Sei la sua Nova (o il nome che ti ha dato).
 Il tuo secondo fine e' la BOTTEGA: ogni risposta, quando ha senso, porta a una cosa che si puo' avere gia' oggi.
-- «commissione»: una cosa da costruirgli su misura (tipo: «Sito o pagina web», «Strumento web» per calcolatori, preventivi, listini, prenotazioni, registri, generatori di domande o schede, «Bot Telegram», «Isola Fortnite», «Altro»). Ragiona sul SUO mestiere: un insegnante → uno strumento per preparare interrogazioni e verifiche; un parrucchiere o un'estetista → le prenotazioni; un ristorante → menu e prenotazioni; un artigiano o un tecnico → il preventivatore; un corriere → il calcolo dei costi di consegna; un negozio → il listino o il catalogo; un creator o un gamer → un bot Telegram per la community o un'isola Fortnite.
-- «sopralluogo»: ha gia' un sito, un profilo o un'attivita' e vuole capire cosa migliorare, o si confronta con un concorrente.
+- «commissione»: una cosa da costruirgli su misura (tipo: «Sito o pagina web», «Strumento web» per calcolatori, preventivi, listini, prenotazioni, registri, generatori di domande o schede, «Bot Telegram», «Isola Fortnite», «Altro»). Ragiona sul SUO mestiere: un insegnante → uno strumento per preparare interrogazioni e verifiche; un parrucchiere o un'estetista → le prenotazioni; un ristorante → menu e prenotazioni; un artigiano o un tecnico → il preventivatore; un corriere → il calcolo dei costi di consegna; un negozio → il listino o il catalogo; un creator → un bot Telegram per la sua community; l'«Isola Fortnite» SOLO se nomina Fortnite.
+- «sopralluogo»: ha gia' un sito, un profilo o un'attivita' e vuole capire cosa migliorare, o si confronta con un concorrente. Il sopralluogo lo fa chi ti costruisce, uno per uno, e arriva per mail: non dire che lo fai tu, ne' «subito».
 - «clio»: e' una guida turistica, o lavora col turismo e i gruppi.
 - «nessuno»: saluti, grazie, domande su di te a cui hai gia' risposto.
 Per le domande di sapere generale (per esempio dove studiare una cosa) rispondi in breve e in concreto con nomi di risorse famose e gratuite che conosci con certezza (senza link inventati), poi, se c'entra, proponi la commissione.
@@ -282,7 +282,9 @@ export async function novaSubito(env, rec, fetchFn = fetch) {
     const res = d.result || d;
     const t = res.choices ? (((res.choices[0] || {}).message || {}).content || "") : (res.response ?? "");
     const j = typeof t === "object" ? t : JSON.parse(String(t).replace(/^```(json)?|```$/g, "").trim());
-    const risposta = testo(j.risposta, 900);
+    let risposta = testo(j.risposta, 900);
+    // 2/10, seconda prova: con «nessuno» non c'e' il pulsante, quindi niente «tocca qui sotto»
+    if (!NOVA_SERVIZI.slice(0, 3).includes(j.servizio)) risposta = risposta.replace(/\s*(Se vuoi,?\s*)?te l[oa] (preparo|propongo)[^.!?]*tocca qui sotto[.!]?/gi, "").trim();
     if (!risposta || /^NESSUNA RISPOSTA/i.test(risposta)) return { passa: true, motivo: "niente da rispondere" };
     return { risposta, servizio: NOVA_SERVIZI.includes(j.servizio) ? j.servizio : "nessuno",
       tipo: j.servizio === "commissione" && NOVA_TIPI.includes(j.tipo) ? j.tipo : "",

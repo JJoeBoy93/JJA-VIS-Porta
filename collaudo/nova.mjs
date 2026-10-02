@@ -97,6 +97,9 @@ ok(r.d.subito && r.d.subito.azione === null, "servizio inventato dal modello: ni
 aiRisposta = { risposta: "Ciao!", servizio: "nessuno", tipo: "Sito o pagina web", bozza: "x", passa_a_jj: false };
 const n = await W.novaSubito(env, { domanda: "ciao", profilo: {} });
 ok(n.tipo === "" && n.bozza === "", "tipo e frase solo con la commissione (il modello li metteva anche con «nessuno»)");
+aiRisposta = { risposta: "Puoi iniziare con MDN Web Docs. Te lo preparo: tocca qui sotto.", servizio: "nessuno", tipo: "", bozza: "", passa_a_jj: false };
+const n2 = await W.novaSubito(env, { domanda: "dove studio css", profilo: {} });
+ok(n2.risposta === "Puoi iniziare con MDN Web Docs.", "senza servizio niente «tocca qui sotto» (sotto non c'è nessun pulsante)");
 
 console.log("── la pagina chiede se è accesa");
 repo.set("nova.json", b64({ acceso: true }));
