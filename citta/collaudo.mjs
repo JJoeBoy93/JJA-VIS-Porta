@@ -1,12 +1,12 @@
-// Collaudo della piazza contro workerd vero, il motore di Cloudflare in locale (5/10/2026, Athena).
-//   cd piazza && npx wrangler@4 dev --port 8799 --ip 127.0.0.1 --local     (in un altro terminale)
+// Collaudo del server della città contro workerd vero, il motore di Cloudflare in locale (5/10/2026, Athena).
+//   cd citta && npx wrangler@4 dev --port 8799 --ip 127.0.0.1 --local     (in un altro terminale)
 //   npm i ws@8 && node collaudo.mjs                                           → VERDE
-// Telefoni finti: origine estranea, soprannome, aspetto filtrato, posizioni, freno, chat (filtro, pausa, zitto), chi esce, ping, piazza piena.
+// Telefoni finti: origine estranea, soprannome, aspetto filtrato, posizioni, freno, chat (filtro, pausa, zitto), chi esce, ping, città piena.
 // Il filtro delle parole si prova anche da solo, su frasi vere (in fondo).
 // Controprova del 5/10: senza freno e senza controllo d'origine → ROSSO (3 prove).
 import WebSocket from "ws";
 import { pesante, soprannome, messaggio } from "./filtro.js";
-const PORTA_ = process.env.PIAZZA_PORTA || "8799";
+const PORTA_ = process.env.CITTA_PORTA || "8799";
 const URL_ = `ws://127.0.0.1:${PORTA_}/entra`, O = "https://jjoeboy93.github.io";
 let esiti = [];
 const prova = (n, ok, d = "") => { esiti.push(ok); console.log((ok ? "  ok  " : "  NO  ") + n + (ok ? "" : " — " + JSON.stringify(d))); };
@@ -26,7 +26,7 @@ prova("da un'origine estranea non si entra (403)", !estraneo.aperto && estraneo.
 const t1 = await telefono(), t2 = await telefono();
 prova("due telefoni entrano", t1.aperto && t2.aperto);
 t1.ws.send(JSON.stringify({ t: "ciao", a: A, p: { x: 0, z: 18 } })); await dorme(300);
-prova("senza soprannome non si entra: la piazza dice perché", t1.msg.some(m => m.t === "no" && m.perche === "soprannome") && !t1.msg.some(m => m.t === "tu"), t1.msg);
+prova("senza soprannome non si entra: il server dice perché", t1.msg.some(m => m.t === "no" && m.perche === "soprannome") && !t1.msg.some(m => m.t === "tu"), t1.msg);
 t1.ws.send(JSON.stringify({ t: "ciao", n: "str0nz0", a: A, p: { x: 0, z: 18 } })); await dorme(300);
 prova("un soprannome con parole pesanti non entra", !t1.msg.some(m => m.t === "tu"), t1.msg);
 t1.ws.send(JSON.stringify({ t: "ciao", n: "Ada", a: A, p: { x: 0, z: 18, r: 3.14, y: 0, s: 0, l: "" } })); await dorme(300);
@@ -48,7 +48,7 @@ for (let i = 0; i < 30; i++) t2.ws.send(JSON.stringify({ t: "qui", p: { x: i, z:
 await dorme(500);
 const passati = t1.msg.length - n0;
 prova("il freno: 30 messaggi in un colpo, ne passano al massimo 8", passati <= 8 && passati > 0, passati);
-// la chat della piazza
+// la chat della città
 await dorme(1100);
 const c0 = t1.msg.length, c2 = t2.msg.length;
 t1.ws.send(JSON.stringify({ t: "di", x: "Ciao a tutti, ci vediamo al Café" })); await dorme(300);
@@ -75,10 +75,10 @@ prova("chi esce sparisce dagli altri", t1.msg.some(m => m.t === "va" && m.id ===
 const pong = new Promise(ok => { t1.ws.once("message", d => ok(String(d))); setTimeout(() => ok(null), 1500); });
 t1.ws.send("ping");
 prova("«ping» → «pong»", (await pong) === "pong");
-// la piazza piena: 40 dentro, il 41° esce con 4001
+// la città piena: 40 dentro, il 41° esce con 4001
 const tanti = []; for (let i = 0; i < 38; i++) tanti.push(await telefono());
 const ultimo = await telefono(); const chiuso = await new Promise(ok => { ultimo.ws.on("close", c => ok(c)); setTimeout(() => ok(null), 3000); });
-prova("al 41° la piazza è piena: chiude con 4001", chiuso === 4001, chiuso);
+prova("al 41° la città è piena: chiude con 4001", chiuso === 4001, chiuso);
 tanti.forEach(t => t.ws.close()); t1.ws.close(); t3.ws.close(); await dorme(300);
 // il filtro da solo: le parole pesanti si vedono anche travestite, e le parole buone che le contengono passano
 const frasi = [["che c4zz0 dici", true], ["s t r o n z o", true], ["porco dio", true], ["ciao frocio", true], ["negro", true], ["il terrone", true],

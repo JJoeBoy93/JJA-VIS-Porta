@@ -1,4 +1,5 @@
-# Consegna della piazza di JJA-VIS (worker jjavis-piazza, cartella piazza/).
+# Consegna del server della città di JJA-VIS (worker jjavis-citta, cartella citta/): in città insieme agli altri.
+# JJ, 5/10: «non è una piazza... è la città».
 # Prima la prova contro workerd: se non è verde, non si consegna.
 # Va sull'account Cloudflare di JJA-VIS, non su quello di Hermes e Clio (JJ, 5/10:
 # «se mettiamo troppe cose insieme poi usano tutti gli stessi contatori»).
@@ -6,12 +7,12 @@
 #   CF_AI_ACCOUNT    l'ID dell'account JJA-VIS: c'è già, è quello di Nova
 # La prima volta l'account deve avere il suo sottodominio workers.dev (dashboard →
 # Workers & Pages): se manca, la consegna lo dice nell'errore.
-name: consegna piazza
+name: consegna città
 
 on:
   push:
     branches: [main]
-    paths: ["piazza/**", ".github/workflows/piazza.yml"]
+    paths: ["citta/**", ".github/workflows/citta.yml"]
   workflow_dispatch:
 
 jobs:
@@ -19,7 +20,7 @@ jobs:
     runs-on: ubuntu-24.04   # 5/10: con ubuntu-latest le macchine non arrivavano (annullate dopo 15 min)
     defaults:
       run:
-        working-directory: piazza
+        working-directory: citta
     steps:
       - uses: actions/checkout@v5
 
@@ -30,7 +31,7 @@ jobs:
           (npx wrangler dev --port 8799 --ip 127.0.0.1 --local > dev.log 2>&1 &)
           for i in $(seq 1 60); do sleep 2; curl -s http://127.0.0.1:8799/ > /dev/null && break; done
           node collaudo.mjs | tee prova.log
-          tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova della piazza non è verde: niente consegna"; exit 1; }
+          tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova del server della città non è verde: niente consegna"; exit 1; }
 
       - name: il sottodominio workers.dev dell'account
         # la prima consegna del 5/10 è caduta qui: l'account JJA-VIS non ne aveva uno. Se manca lo crea
@@ -58,12 +59,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_AI_ACCOUNT }}
         run: |
           set -o pipefail
-          # senza token la piazza non si consegna: lo dice forte nell'annotazione, ma non manda una mail di fallimento a ogni push
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::warning::piazza NON consegnata: manca JJAVIS_CF_TOKEN nei Secrets del repository (token dell'account JJA-VIS, modello «Edit Cloudflare Workers»). Messo il token: Actions → consegna piazza → Run workflow"; exit 0; fi
+          # senza token il server non si consegna: lo dice forte nell'annotazione, ma non manda una mail di fallimento a ogni push
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::warning::server della città NON consegnato: manca JJAVIS_CF_TOKEN nei Secrets del repository (token dell'account JJA-VIS, modello «Edit Cloudflare Workers»). Messo il token: Actions → consegna città → Run workflow"; exit 0; fi
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then echo "::error::manca CF_AI_ACCOUNT (l'ID dell'account JJA-VIS)"; exit 1; fi
           if npx --yes wrangler@4 deploy 2>&1 | tee consegna.log; then
-            # l'indirizzo vero della piazza: va in JJA-VIS/piazza.json, da cui la città lo legge
-            echo "::notice::piazza consegnata: $(grep -o 'https://jjavis-piazza[^ ]*workers.dev' consegna.log | head -1)"
+            # l'indirizzo vero del server: va in JJA-VIS/insieme.json, da cui la città lo legge
+            echo "::notice::città consegnata: $(grep -o 'https://jjavis-citta[^ ]*workers.dev' consegna.log | head -1)"
             echo "::notice::$(tail -c 500 consegna.log | tr '\n' '|')"
           else
             echo "::error::$(tail -c 900 consegna.log | tr '\n' '|')"

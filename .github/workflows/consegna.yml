@@ -17,7 +17,7 @@ name: consegna porta
 on:
   push:
     branches: [main]
-    paths-ignore: ["piazza/**", ".github/workflows/piazza.yml"]   # la piazza ha la sua consegna
+    paths-ignore: ["citta/**", ".github/workflows/citta.yml"]   # il server della città ha la sua consegna
   workflow_dispatch:
 
 jobs:

@@ -1,7 +1,7 @@
-// Il filtro della piazza: soprannomi e messaggi (JJ, 5/10: «il nickname sopra all'avatar, non il nome personale», «la chat
+// Il filtro della città insieme: soprannomi e messaggi (JJ, 5/10: «il nickname sopra all'avatar, non il nome personale», «la chat
 // tra persone indipendente da quella di Twitch»). È un primo filtro, non una moderazione: blocca le parole più pesanti
 // (bestemmie, insulti, offese per razza, orientamento o disabilità), i link e i numeri di telefono. Chi scrive cose
-// brutte lo silenzi tu, dal suo soprannome; chi insiste viene zittito dalla piazza per dieci minuti.
+// brutte lo silenzi tu, dal suo soprannome; chi insiste viene zittito dal server per dieci minuti.
 
 // le parole si confrontano «schiacciate»: minuscole, senza accenti, 4→a 3→e 1→i 0→o 5→s @→a $→s, senza spazi né segni,
 // lettere ripetute ridotte a una: così «c4zz0», «s t r o n z o» e «cazzzo» sono la stessa cosa
@@ -33,7 +33,7 @@ export function pesante(t) {
 }
 // un link o un indirizzo: niente, nemmeno spezzato
 export const link = t => /(https?:|www\.|\b[a-z0-9-]+\s*(\.|\(dot\)|\[dot\]| dot )\s*(com|it|net|org|io|ly|gg|me|tv|xyz|ru|co|app|link)\b|t\.me|discord\s*\.?\s*gg)/i.test(t);
-// un numero di telefono (7 cifre o più, anche con spazi o trattini): i dati personali non si scrivono in piazza
+// un numero di telefono (7 cifre o più, anche con spazi o trattini): i dati personali non si scrivono in chat
 export const telefono = t => /(\d[\s.\-\/]*){7,}/.test(t);
 
 // il soprannome: 3–16 tra lettere, numeri, spazio, _ . -; niente parole pesanti, niente link, niente numeri lunghi

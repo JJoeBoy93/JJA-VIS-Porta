@@ -1,4 +1,5 @@
-// La piazza di JJA-VIS: chi è in città vede gli altri.
+// Il server della città di JJA-VIS: chi è in città vede gli altri e ci scrive.
+// JJ, 5/10: «non è una piazza... è la città» (la piazza vera è quella tonda dell'albero).
 //
 // JJ, 5 ottobre 2026: «bisogna fare in modo che si possa entrare nella città
 // insieme ad altri, serve un server».
@@ -6,7 +7,7 @@
 // Un Durable Object solo («citta») tiene i WebSocket di chi è dentro. Passano
 // l'aspetto dell'avatar (skin, vestito, colori: parole e numeri da un elenco),
 // dove si cammina, il SOPRANNOME (mai il nome vero: JJ, 5/10) e i messaggi
-// della chat della piazza, che è sua e non quella di Twitch (JJ, 5/10).
+// della chat della città, che è sua e non quella di Twitch (JJ, 5/10).
 // Soprannomi e messaggi passano dal filtro (filtro.js): niente parole pesanti,
 // niente link, niente numeri di telefono. Niente si scrive su disco: i messaggi
 // arrivano a chi c'è in quel momento e basta; quando esci, di te non resta niente.
@@ -17,12 +18,12 @@
 // Objects, e ogni 20 messaggi in arrivo valgono una richiesta. Il telefono
 // manda al massimo 4 posizioni al secondo e solo quando si muove. Se il
 // gratuito finisce, Cloudflare rifiuta: la città resta in piedi e dice
-// «da solo, la piazza non risponde».
+// «da solo · il collegamento non risponde».
 import { DurableObject } from "cloudflare:workers";
 import { soprannome, messaggio } from "./filtro.js";
 
 const ORIGINE = "https://jjoeboy93.github.io";
-const MAX_DENTRO = 40;          // oltre, «la piazza è piena» (codice 4001)
+const MAX_DENTRO = 40;          // oltre, «la città è piena» (codice 4001)
 const MAX_AL_SECONDO = 8;       // oltre, i messaggi di quel telefono si buttano
 const MAX_MESSAGGIO = 1500;     // caratteri
 const PAUSA_CHAT = 1500;        // ms fra due messaggi della stessa persona
@@ -58,30 +59,30 @@ export function posto(p) {
 export default {
   async fetch(req, env) {
     const u = new URL(req.url);
-    const stanza = () => env.PIAZZA.get(env.PIAZZA.idFromName(STANZA));
+    const stanza = () => env.CITTA.get(env.CITTA.idFromName(STANZA));
     if (u.pathname === "/entra") {
       if (req.headers.get("Upgrade") !== "websocket") return new Response("qui si entra solo con un WebSocket", { status: 426 });
       if (req.headers.get("Origin") !== ORIGINE) return new Response("origine non ammessa", { status: 403 });
       return stanza().fetch(req);
     }
     if (u.pathname === "/") {
-      // si apre da un browser: dice se la piazza risponde e quanti sono dentro
+      // si apre da un browser: dice se il server risponde e quanti sono in città
       try {
-        const d = await (await stanza().fetch("https://piazza/conta")).json();
-        return Response.json({ piazza: "JJA-VIS", risponde: true, dentro: d.dentro, max: MAX_DENTRO },
+        const d = await (await stanza().fetch("https://citta/conta")).json();
+        return Response.json({ citta: "JJA-VIS", risponde: true, dentro: d.dentro, max: MAX_DENTRO },
           { headers: { "Access-Control-Allow-Origin": ORIGINE, "Cache-Control": "no-store" } });
       } catch (e) {
-        return Response.json({ piazza: "JJA-VIS", risponde: false, errore: String(e && e.message || e) }, { status: 503 });
+        return Response.json({ citta: "JJA-VIS", risponde: false, errore: String(e && e.message || e) }, { status: 503 });
       }
     }
     return new Response("niente qui", { status: 404 });
   },
 };
 
-export class Piazza extends DurableObject {
+export class Citta extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    // il telefono dice «ping» ogni 30 s per tenere viva la linea: risponde Cloudflare, la piazza non si sveglia
+    // il telefono dice «ping» ogni 30 s per tenere viva la linea: risponde Cloudflare, il server non si sveglia
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.freno = new Map();   // ws → [secondo, quanti]; si perde in letargo, e va bene così
   }
@@ -137,7 +138,7 @@ export class Piazza extends DurableObject {
       io.a = a; io.n = n; ws.serializeAttachment(io);
       this.a_tutti(ws, { t: "aspetto", id: io.id, n, a });
     } else if (m.t === "di") {
-      // la chat della piazza: va a tutti, anche a chi l'ha scritto (così vede che è passato), e non si salva da nessuna parte
+      // la chat della città: va a tutti, anche a chi l'ha scritto (così vede che è passato), e non si salva da nessuna parte
       const ora = Date.now();
       if (io.zitto && ora < io.zitto) { ws.send(JSON.stringify({ t: "no", perche: "zitto", fino: io.zitto })); return; }
       if (io.ultimoDi && ora - io.ultimoDi < PAUSA_CHAT) { ws.send(JSON.stringify({ t: "no", perche: "piano" })); return; }
