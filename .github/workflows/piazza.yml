@@ -16,7 +16,7 @@ on:
 
 jobs:
   consegna:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # 5/10: con ubuntu-latest le macchine non arrivavano (annullate dopo 15 min)
     defaults:
       run:
         working-directory: piazza
