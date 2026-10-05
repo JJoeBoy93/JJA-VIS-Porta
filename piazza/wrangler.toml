@@ -1,0 +1,17 @@
+# La piazza di JJA-VIS: chi è in città vede gli altri (JJ, 5 ottobre 2026).
+# Account di JJA-VIS (JJ, 5/10: contatori separati da Hermes e Clio), piano gratuito: i Durable Objects
+# del piano gratuito sono solo quelli con SQLite (new_sqlite_classes).
+# account_id: non qui. Lo passa la consegna (CLOUDFLARE_ACCOUNT_ID dal segreto CF_AI_ACCOUNT): è l account di JJA-VIS, non quello di Hermes e Clio (JJ, 5/10)
+name = "jjavis-piazza"
+main = "worker.js"
+compatibility_date = "2026-09-25"
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "PIAZZA"
+class_name = "Piazza"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Piazza"]

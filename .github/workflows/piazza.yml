@@ -1,0 +1,51 @@
+# Consegna della piazza di JJA-VIS (worker jjavis-piazza, cartella piazza/).
+# Prima la prova contro workerd: se non è verde, non si consegna.
+# Va sull'account Cloudflare di JJA-VIS, non su quello di Hermes e Clio (JJ, 5/10:
+# «se mettiamo troppe cose insieme poi usano tutti gli stessi contatori»).
+#   JJAVIS_CF_TOKEN  token dell'account JJA-VIS, modello «Edit Cloudflare Workers»   da mettere (JJ)
+#   CF_AI_ACCOUNT    l'ID dell'account JJA-VIS: c'è già, è quello di Nova
+# La prima volta l'account deve avere il suo sottodominio workers.dev (dashboard →
+# Workers & Pages): se manca, la consegna lo dice nell'errore.
+name: consegna piazza
+
+on:
+  push:
+    branches: [main]
+    paths: ["piazza/**", ".github/workflows/piazza.yml"]
+  workflow_dispatch:
+
+jobs:
+  consegna:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: piazza
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: la prova, contro workerd
+        run: |
+          set -o pipefail
+          npm i --no-save --silent wrangler@4 ws@8
+          (npx wrangler dev --port 8799 --ip 127.0.0.1 --local > dev.log 2>&1 &)
+          for i in $(seq 1 60); do sleep 2; curl -s http://127.0.0.1:8799/ > /dev/null && break; done
+          node collaudo.mjs | tee prova.log
+          tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova della piazza non è verde: niente consegna"; exit 1; }
+
+      - name: wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.JJAVIS_CF_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_AI_ACCOUNT }}
+        run: |
+          set -o pipefail
+          # senza token la piazza non si consegna: lo dice forte nell'annotazione, ma non manda una mail di fallimento a ogni push
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::warning::piazza NON consegnata: manca JJAVIS_CF_TOKEN nei Secrets del repository (token dell'account JJA-VIS, modello «Edit Cloudflare Workers»). Messo il token: Actions → consegna piazza → Run workflow"; exit 0; fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then echo "::error::manca CF_AI_ACCOUNT (l'ID dell'account JJA-VIS)"; exit 1; fi
+          if npx --yes wrangler@4 deploy 2>&1 | tee consegna.log; then
+            # l'indirizzo vero della piazza: va in JJA-VIS/piazza.json, da cui la città lo legge
+            echo "::notice::piazza consegnata: $(grep -o 'https://jjavis-piazza[^ ]*workers.dev' consegna.log | head -1)"
+            echo "::notice::$(tail -c 500 consegna.log | tr '\n' '|')"
+          else
+            echo "::error::$(tail -c 900 consegna.log | tr '\n' '|')"
+            exit 1
+          fi
