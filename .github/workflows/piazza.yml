@@ -32,6 +32,26 @@ jobs:
           node collaudo.mjs | tee prova.log
           tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova della piazza non è verde: niente consegna"; exit 1; }
 
+      - name: il sottodominio workers.dev dell'account
+        # la prima consegna del 5/10 è caduta qui: l'account JJA-VIS non ne aveva uno. Se manca lo crea
+        # (API «Create Subdomain», permesso Workers Scripts Write: è nel token). Prova i nomi in ordine
+        env:
+          T: ${{ secrets.JJAVIS_CF_TOKEN }}
+          A: ${{ secrets.CF_AI_ACCOUNT }}
+        run: |
+          if [ -z "$T" ] || [ -z "$A" ]; then echo "::warning::niente token o account: salto"; exit 0; fi
+          API="https://api.cloudflare.com/client/v4/accounts/$A/workers/subdomain"
+          leggi() { python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("result") or {}).get("subdomain") or "")'; }
+          S=$(curl -s -H "Authorization: Bearer $T" "$API" | leggi)
+          if [ -n "$S" ]; then echo "::notice::sottodominio dell'account: $S.workers.dev"; exit 0; fi
+          for N in jjavis jja-vis jjavis-citta; do
+            R=$(curl -s -X PUT -H "Authorization: Bearer $T" -H "Content-Type: application/json" --data "{\"subdomain\":\"$N\"}" "$API")
+            S=$(echo "$R" | leggi)
+            if [ -n "$S" ]; then echo "::notice::sottodominio creato: $S.workers.dev"; exit 0; fi
+            echo "::warning::$N non va: $(echo "$R" | head -c 300)"
+          done
+          echo "::error::nessun sottodominio creato: va scelto a mano nella dashboard (Workers & Pages)"; exit 1
+
       - name: wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.JJAVIS_CF_TOKEN }}
