@@ -21,6 +21,8 @@
 // «da solo · il collegamento non risponde».
 import { DurableObject } from "cloudflare:workers";
 import { soprannome, messaggio } from "./filtro.js";
+import { Conti, CORS, risposta } from "./conti.js";
+export { Conti };
 
 const ORIGINE = "https://jjoeboy93.github.io";
 const MAX_DENTRO = 40;          // oltre, «la città è piena» (codice 4001)
@@ -60,6 +62,12 @@ export default {
   async fetch(req, env) {
     const u = new URL(req.url);
     const stanza = () => env.CITTA.get(env.CITTA.idFromName(STANZA));
+    // gli account (JJ, 5/10): accedi con Google, gettoni e skin nel server. Un Durable Object solo, «conti», col suo database
+    if (u.pathname === "/conto" || u.pathname.startsWith("/conto/")) {
+      if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+      try { return await env.CONTI.get(env.CONTI.idFromName("conti")).fetch(req); }
+      catch (e) { return risposta({ no: "server", errore: String(e && e.message || e) }, 503); }
+    }
     if (u.pathname === "/entra") {
       if (req.headers.get("Upgrade") !== "websocket") return new Response("qui si entra solo con un WebSocket", { status: 426 });
       if (req.headers.get("Origin") !== ORIGINE) return new Response("origine non ammessa", { status: 403 });

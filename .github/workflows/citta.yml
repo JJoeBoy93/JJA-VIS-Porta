@@ -28,10 +28,14 @@ jobs:
         run: |
           set -o pipefail
           npm i --no-save --silent wrangler@4 ws@8
-          (npx wrangler dev --port 8799 --ip 127.0.0.1 --local > dev.log 2>&1 &)
+          # la chiave di prova firma i biglietti «di Google» finti: vale solo con LOCALE:1, che in produzione non c'è
+          PJ=$(node -e 'console.log(JSON.stringify(require("./prova-chiave.json").pubblica))')
+          (npx wrangler dev --port 8799 --ip 127.0.0.1 --local --var LOCALE:1 --var "PROVA_JWK:$PJ" --var JJAVIS_ADMIN:capo@prova.it > dev.log 2>&1 &)
           for i in $(seq 1 60); do sleep 2; curl -s http://127.0.0.1:8799/ > /dev/null && break; done
           node collaudo.mjs | tee prova.log
-          tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova del server della città non è verde: niente consegna"; exit 1; }
+          tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova del server della città non è verde: niente consegna — $(grep '^  NO' prova.log | head -3 | tr '\n' '|')"; exit 1; }
+          node collaudo-conti.mjs | tee conti.log
+          tail -1 conti.log | grep -qx VERDE || { echo "::error::la prova degli account non è verde: niente consegna — $(grep '^  NO' conti.log | head -3 | tr '\n' '|')"; exit 1; }
 
       - name: il sottodominio workers.dev dell'account
         # la prima consegna del 5/10 è caduta qui: l'account JJA-VIS non ne aveva uno. Se manca lo crea
@@ -57,6 +61,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.JJAVIS_CF_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_AI_ACCOUNT }}
+          ADMIN: ${{ secrets.JJAVIS_ADMIN }}
         run: |
           set -o pipefail
           # senza token il server non si consegna: lo dice forte nell'annotazione, ma non manda una mail di fallimento a ogni push
@@ -66,6 +71,10 @@ jobs:
             # l'indirizzo vero del server: va in JJA-VIS/insieme.json, da cui la città lo legge
             echo "::notice::città consegnata: $(grep -o 'https://jjavis-citta[^ ]*workers.dev' consegna.log | head -1)"
             echo "::notice::$(tail -c 500 consegna.log | tr '\n' '|')"
+            # la mail dell'amministratore (JJ): segreto del worker, mai nel codice (il repository è pubblico)
+            if [ -n "$ADMIN" ]; then
+              printf '%s' "$ADMIN" | npx --yes wrangler@4 secret put JJAVIS_ADMIN > segreto.log 2>&1 && echo "::notice::amministratore impostato" || echo "::error::JJAVIS_ADMIN non impostato: $(tail -c 300 segreto.log | tr '\n' '|')"
+            else echo "::warning::manca il segreto JJAVIS_ADMIN nel repository: nessun account è amministratore"; fi
           else
             echo "::error::$(tail -c 900 consegna.log | tr '\n' '|')"
             exit 1

@@ -12,6 +12,20 @@ preview_urls = false
 name = "CITTA"
 class_name = "Citta"
 
+[[durable_objects.bindings]]
+name = "CONTI"
+class_name = "Conti"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Citta"]
+
+# 5/10: gli account (accedi con Google), col loro database
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Conti"]
+
+[vars]
+# l'ID client di Google (progetto «JJA-VIS» di JJ): non è un segreto, sta anche nella pagina
+GOOGLE_CLIENT_ID = "644831505498-sb1lrkalu9maun2f8vcv2e7l3au31akm.apps.googleusercontent.com"
+# JJAVIS_ADMIN (la mail dell'amministratore) è un segreto: lo mette la consegna, dai Secrets del repository

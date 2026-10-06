@@ -1,0 +1,23 @@
+{
+ "nota": "SOLO PER IL COLLAUDO: firma biglietti Google finti. Il server la accetta solo se avviato con --var PROVA_JWK (wrangler dev): in produzione non c e",
+ "pubblica": {
+  "kty": "RSA",
+  "n": "1s2j7U4UljSPmspdIxktXoa5iDocVMlOdoBFnHw90Wlqj5j9Q8bn2IYY2GO1ITwaAjRcVlHyHdTv6C_iFjQ6quHeqSLxnWUMFgYKgX1T134sqSQsIjJSFZEUEYrkmxgxp0LDHqLBlM72GTli-DI5TNTZCP2pxvdx6h-2Myf0vzrub-z6tfI2n1MJWnjQ5k-Je3RJneaSkDK4CvVP6nWigtiFoq2Gg8MC65DwLJ3OVfEyLEzB-1uAxb6PxjMqp40P1f0rtwB21D3Rnq45ZHd3F3PirbY6w72Z6jOH2jeIfBelMmVdQBJcl2bJKsfN90IbNSq1xBdbRTyfL8FIeNl3ow",
+  "e": "AQAB",
+  "kid": "prova-1",
+  "alg": "RS256",
+  "use": "sig"
+ },
+ "privata": {
+  "kty": "RSA",
+  "n": "1s2j7U4UljSPmspdIxktXoa5iDocVMlOdoBFnHw90Wlqj5j9Q8bn2IYY2GO1ITwaAjRcVlHyHdTv6C_iFjQ6quHeqSLxnWUMFgYKgX1T134sqSQsIjJSFZEUEYrkmxgxp0LDHqLBlM72GTli-DI5TNTZCP2pxvdx6h-2Myf0vzrub-z6tfI2n1MJWnjQ5k-Je3RJneaSkDK4CvVP6nWigtiFoq2Gg8MC65DwLJ3OVfEyLEzB-1uAxb6PxjMqp40P1f0rtwB21D3Rnq45ZHd3F3PirbY6w72Z6jOH2jeIfBelMmVdQBJcl2bJKsfN90IbNSq1xBdbRTyfL8FIeNl3ow",
+  "e": "AQAB",
+  "d": "FVV1O4NuvgBYZupEV9EPVX0R_jqvR6h6t4BD6afZR-wtXje2p72glzuySgOVIMjkWGW06gnXfyj_7tKapNPpI8GtKKVE0_oOOj29W2EEK7nnW6ExFPBkgKnZEWj3DYRYoiEaWfeWPF5VyOmPL9FlKYFWUPNIom8_DB68LNaCE1_ray8EOudWjp4067-7LagiiimCt5MaqDGV1iF80p0e9kke2N91NNxtn4bS0zTwEnexrWEj7I598I8UBMWGvxbDBQ3E5FtDcHbr-wbrKUYNIWOWswSVFoCpN36YqT3Xjfl2FkXuzN1R4g-GjzzOJq9RH3J0vq1bb4ecj6B6ckIjaQ",
+  "p": "7Ri8SsmsxzCTvvxc_J08AsRBrm3tH0sxMm1j0n-Fvtmy21birCLoClNZTaZMHXx568Z_JrPaGNAyQjiwIrmsAiEbhR5s-FwmiTSc8EBzN0fdtkTCWFeWdnRXy0_qXXkSwF3_cVSA8DKlGU4FHY17T2XMS_btq39XEzJYFbNYwF8",
+  "q": "5-3i4Dk3zxXUvlqfO_HKUziDZST4EIoFVfVhO8-f3n4TzdnNNbC_0HC2V8HBnQzrQQGs_WuD-3wOdopsMvi22RcOzc2gXO5hwbXmaI7UNhQ6ke_D79SpucYtiX7-b-LYrzGcHZomYGwYYrS1QyJ97McqVSXZLGAbvX9HDo8L_z0",
+  "dp": "OxTd3tkQl_ZP6tiiJ0TbLmlPYLL90r1-_ezqYgrq_hrrieLFy1VLcz8_0qys7PAWxZ0KFE_e-i3vSDcuFQklhsZPQEXLq7vy0l_s96Vn0I-0_PV3ZGI3GT92nTBF25MPDCagP9Jp6vED2SFq_ulBoBBi708R_JlXzm3OK2IsrIs",
+  "dq": "GXoBJP5ECiRsxSgxO6V4wyF_FXo1IaP3qBSXRLmu5wLUbBVTvGUY_O2Uqhkninfj07U6anAIBHUBJbZY4lR9yWUGBEdlKTAqXtv7XlrqJrKcKHG9BThIGJcTY3omuuWhRcVeT8YiFw9oslcFXkWIrZzHIqlQrNY11eAITyoZeEU",
+  "qi": "J2WtcwMqxTFyAmFPPc9b6MCdAq03oDopIY3ep-YDXwV5AoI-Zc-pETStpaFRJUND8rCBjBFQI2it1pJiVx6PFtVxvyXo95d0bYmORxpygLsfqiBoLR40An20VrxdrgafhuAc0Vzg4G-EvvX3y6Mt8m0xGnmbXyfmIEoWvqY3log",
+  "kid": "prova-1"
+ }
+}
