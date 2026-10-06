@@ -2,7 +2,8 @@
 //   cd citta && npx wrangler@4 dev --port 8799 --ip 127.0.0.1 --local     (in un altro terminale)
 //   npm i ws@8 && node collaudo.mjs                                           → VERDE
 // Telefoni finti: origine estranea, soprannome, aspetto filtrato, posizioni, freno, chat (filtro, pausa, zitto), chi esce, ping, città piena.
-// Il filtro delle parole si prova anche da solo, su frasi vere (in fondo).
+// Il filtro delle parole si prova anche da solo, su frasi vere (in fondo). Il «segnala» (6/10) con Telegram e Brevo finti su 127.0.0.1:8790:
+//   wrangler dev ... --var TG_API:http://127.0.0.1:8790 --var BREVO_API:http://127.0.0.1:8790 --var TG_BOT_TOKEN:finto --var SEGNALAZIONI_CHAT:4242 --var BREVO_API_KEY:brevo-finta --var MITTENTE:jjavis@prova.it
 // Controprova del 5/10: senza freno e senza controllo d'origine → ROSSO (3 prove).
 import WebSocket from "ws";
 import { pesante, soprannome, messaggio } from "./filtro.js";
@@ -80,6 +81,31 @@ const tanti = []; for (let i = 0; i < 38; i++) tanti.push(await telefono());
 const ultimo = await telefono(); const chiuso = await new Promise(ok => { ultimo.ws.on("close", c => ok(c)); setTimeout(() => ok(null), 3000); });
 prova("al 41° la città è piena: chiude con 4001", chiuso === 4001, chiuso);
 tanti.forEach(t => t.ws.close()); t1.ws.close(); t3.ws.close(); await dorme(300);
+// il «segnala» (6/10): Telegram e Brevo finti su 127.0.0.1:8790 (wrangler dev --var TG_API / BREVO_API): niente parte davvero
+const { createServer } = await import("http");
+const arrivati = [];
+const finto = createServer((q, r) => { let b = ""; q.on("data", c => b += c); q.on("end", () => { arrivati.push({ via: q.url, corpo: JSON.parse(b || "{}"), chiave: q.headers["api-key"] });
+  r.setHeader("content-type", "application/json"); r.end(q.url.includes("sendMessage") ? '{"ok":true,"result":{}}' : '{"messageId":"x"}'); }); });
+await new Promise(ok => finto.listen(8790, "127.0.0.1", ok));
+const cattivo = await telefono(), buono = await telefono();
+cattivo.ws.send(JSON.stringify({ t: "ciao", n: "Cattivo99", a: A, p: { x: 1, z: 1 } }));
+buono.ws.send(JSON.stringify({ t: "ciao", n: "Buona", a: A, p: { x: 2, z: 2 } })); await dorme(400);
+const idC = buono.msg.find(m => m.t === "tu").altri.find(x => x.n === "Cattivo99").id;
+for (const x of ["ciao", "dammi il tuo indirizzo", "dove abiti?"]) { cattivo.ws.send(JSON.stringify({ t: "di", x })); await dorme(1600); }
+buono.ws.send(JSON.stringify({ t: "segnala", id: idC, motivo: "boh" })); await dorme(300);
+prova("un motivo che non esiste: la segnalazione non parte", buono.msg.slice(-1)[0].t === "segnalato" && buono.msg.slice(-1)[0].ok === false && !arrivati.length, buono.msg.slice(-1));
+buono.ws.send(JSON.stringify({ t: "segnala", id: idC, motivo: "molestie", nota: "mi chiede dove abito", visti: ["dove abiti?"] })); await dorme(800);
+const esito = buono.msg.filter(m => m.t === "segnalato").pop(), tg = arrivati.find(x => x.via.includes("/sendMessage")), ml = arrivati.find(x => x.via.includes("/v3/smtp/email"));
+prova("segnalare: chi segnala sa che è arrivata (Telegram e mail)", esito && esito.ok && esito.fatto.join() === "telegram,mail", esito);
+prova("su Telegram arriva a JJ: motivo, chi, da chi, la nota", tg && tg.corpo.chat_id === "4242" && /molestie/.test(tg.corpo.text) && /«Cattivo99»/.test(tg.corpo.text) && /«Buona»/.test(tg.corpo.text) && /mi chiede dove abito/.test(tg.corpo.text), tg && tg.corpo);
+prova("…con le sue ultime frasi prese dal SERVER, non solo quelle riferite", tg && /prese dal server:\n.*ciao\n.*dammi il tuo indirizzo\n.*dove abiti\?/.test(tg.corpo.text), tg && tg.corpo.text);
+prova("la mail va alla casella di JJA-VIS, con la chiave di Brevo", ml && ml.corpo.to[0].email === "jjavis@prova.it" && ml.chiave === "brevo-finta" && /Segnalazione: molestie/.test(ml.corpo.subject), ml && ml.corpo);
+prova("al segnalato non arriva niente", !cattivo.msg.some(m => m.t === "segnalato"));
+for (let i = 0; i < 3; i++) { buono.ws.send(JSON.stringify({ t: "segnala", id: idC, motivo: "spam" })); await dorme(300); }
+prova("più di 3 segnalazioni in dieci minuti: «troppe»", buono.msg.filter(m => m.t === "segnalato").pop().perche === "troppe", buono.msg.filter(m => m.t === "segnalato").slice(-2));
+buono.ws.send(JSON.stringify({ t: "segnala", id: "nessuno", motivo: "spam" })); await dorme(300);
+cattivo.ws.close(); buono.ws.close(); finto.close();
+
 // il filtro da solo: le parole pesanti si vedono anche travestite, e le parole buone che le contengono passano
 const frasi = [["che c4zz0 dici", true], ["s t r o n z o", true], ["porco dio", true], ["ciao frocio", true], ["negro", true], ["il terrone", true],
   ["Scazzottata in piazza", false], ["Dickens è bello", false], ["un negroni sbagliato", false], ["Cassazione", false], ["analisi del sangue", false], ["Mi piace la Torre", false]];

@@ -30,7 +30,9 @@ jobs:
           npm i --no-save --silent wrangler@4 ws@8
           # la chiave di prova firma i biglietti «di Google» finti: vale solo con LOCALE:1, che in produzione non c'è
           PJ=$(node -e 'console.log(JSON.stringify(require("./prova-chiave.json").pubblica))')
-          (npx wrangler dev --port 8799 --ip 127.0.0.1 --local --var LOCALE:1 --var "PROVA_JWK:$PJ" --var JJAVIS_ADMIN:capo@prova.it > dev.log 2>&1 &)
+          (npx wrangler dev --port 8799 --ip 127.0.0.1 --local --var LOCALE:1 --var "PROVA_JWK:$PJ" --var JJAVIS_ADMIN:capo@prova.it \
+            --var TG_API:http://127.0.0.1:8790 --var BREVO_API:http://127.0.0.1:8790 --var TG_BOT_TOKEN:finto --var SEGNALAZIONI_CHAT:4242 \
+            --var BREVO_API_KEY:brevo-finta --var MITTENTE:jjavis@prova.it > dev.log 2>&1 &)   # Telegram e Brevo finti: dal collaudo non parte niente
           for i in $(seq 1 60); do sleep 2; curl -s http://127.0.0.1:8799/ > /dev/null && break; done
           node collaudo.mjs | tee prova.log
           tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova del server della città non è verde: niente consegna — $(grep '^  NO' prova.log | head -3 | tr '\n' '|')"; exit 1; }
@@ -62,6 +64,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.JJAVIS_CF_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_AI_ACCOUNT }}
           ADMIN: ${{ secrets.JJAVIS_ADMIN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          SEGNALAZIONI_CHAT: ${{ secrets.TG_CHAT }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          MITTENTE: ${{ secrets.MITTENTE }}
         run: |
           set -o pipefail
           # senza token il server non si consegna: lo dice forte nell'annotazione, ma non manda una mail di fallimento a ogni push
@@ -75,6 +81,12 @@ jobs:
             if [ -n "$ADMIN" ]; then
               printf '%s' "$ADMIN" | npx --yes wrangler@4 secret put JJAVIS_ADMIN > segreto.log 2>&1 && echo "::notice::amministratore impostato" || echo "::error::JJAVIS_ADMIN non impostato: $(tail -c 300 segreto.log | tr '\n' '|')"
             else echo "::warning::manca il segreto JJAVIS_ADMIN nel repository: nessun account è amministratore"; fi
+            # il «segnala» (6/10): Telegram (il bot di JJA-VIS, la chat di JJ; domani un gruppo dello staff) e la casella di JJA-VIS via Brevo
+            for S in TG_BOT_TOKEN SEGNALAZIONI_CHAT BREVO_API_KEY MITTENTE; do
+              V="${!S}"; if [ -z "$V" ]; then echo "::warning::manca $S: le segnalazioni non arrivano per quella strada"; continue; fi
+              printf '%s' "$V" | npx --yes wrangler@4 secret put $S > segreto.log 2>&1 || echo "::error::$S non impostato: $(tail -c 300 segreto.log | tr '\n' '|')"
+            done
+            echo "::notice::segreti del segnala passati al server"
           else
             echo "::error::$(tail -c 900 consegna.log | tr '\n' '|')"
             exit 1
