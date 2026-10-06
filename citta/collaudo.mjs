@@ -19,16 +19,16 @@ const CH = JSON.parse(readFileSync(new URL("./prova-chiave.json", import.meta.ur
 const PRIV = await crypto.subtle.importKey("jwk", CH.privata, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
 const b64u = x => Buffer.from(x).toString("base64url");
 let numeroConto = 0;
-async function nuovoConto(mail) {
-  const ora = Math.floor(Date.now() / 1000), sub = "t" + (++numeroConto) + "-" + Date.now();
+async function nuovoConto(mail, subFisso) {
+  const ora = Math.floor(Date.now() / 1000), sub = subFisso || ("t" + (++numeroConto) + "-" + Date.now());
   const dati = { iss: "https://accounts.google.com", aud: "644831505498-sb1lrkalu9maun2f8vcv2e7l3au31akm.apps.googleusercontent.com", sub, email: mail || sub + "@prova.it", email_verified: true, name: "T", iat: ora, exp: ora + 600 };
   const t = b64u(JSON.stringify({ alg: "RS256", kid: "prova-1", typ: "JWT" })) + "." + b64u(JSON.stringify(dati));
   const cred = t + "." + b64u(new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", PRIV, new TextEncoder().encode(t))));
   const r = await (await fetch(`http://127.0.0.1:${PORTA_}/conto/google`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credential: cred, eta14: true }) })).json();
   return r.token;
 }
-function telefono(origin = O, { conto = true, mail } = {}) {
-  return new Promise(async ok => { const tok = conto ? await nuovoConto(mail) : null;
+function telefono(origin = O, { conto = true, mail, sub } = {}) {
+  return new Promise(async ok => { const tok = conto ? await nuovoConto(mail, sub) : null;
     const ws = new WebSocket(URL_, { origin }); const msg = [];
     const manda = ws.send.bind(ws);
     ws.send = d => { if (tok && typeof d === "string" && d.startsWith('{"t":"ciao"')) { const m = JSON.parse(d); if (!("tok" in m)) m.tok = tok; d = JSON.stringify(m); } manda(d); };
@@ -132,7 +132,7 @@ const falso = await telefono(O, { conto: false });
 falso.ws.send(JSON.stringify({ t: "ciao", n: "Furbo", a: A, p: { x: 0, z: 0 }, tok: "a".repeat(64) })); await dorme(400);
 prova("con un token inventato nemmeno", falso.msg.some(m => m.perche === "account") && !falso.msg.some(m => m.t === "tu"), falso.msg);
 senza.ws.close(); falso.ws.close();
-const re = await telefono(O, { mail: "capo@prova.it" }), uno = await telefono(), due = await telefono();
+const re = await telefono(O, { mail: "capo@prova.it" }), uno = await telefono(O, { sub: "molesto-1" }), due = await telefono();
 re.ws.send(JSON.stringify({ t: "ciao", n: "JJoe", a: A, p: { x: 0, z: 0 } })); await dorme(300);
 uno.ws.send(JSON.stringify({ t: "ciao", n: "Molesto", a: A, p: { x: 1, z: 0 } })); await dorme(300);
 due.ws.send(JSON.stringify({ t: "ciao", n: "Tranquillo", a: A, p: { x: 2, z: 0 } })); await dorme(300);
@@ -160,6 +160,25 @@ prova("bloccato: la sua sessione non vale più", !r1.conto, r1);
 const uno3 = await telefono(O, { conto: false });
 uno3.ws.send(JSON.stringify({ t: "ciao", n: "Molesto", a: A, p: { x: 1, z: 0 }, tok: uno.tok })); await dorme(400);
 prova("e con la vecchia sessione non rientra", !uno3.msg.some(m => m.t === "tu"), uno3.msg);
+prova("e nemmeno rifacendo l'accesso con Google", !(await nuovoConto(undefined, "molesto-1")));
+// lo sblocco (JJ, 6/10: «se mi blocco l'altro account senza il modo di sbloccarlo poi non posso più usarlo per provare»)
+due.ws.send(JSON.stringify({ t: "moderati" })); await dorme(300);
+prova("l'elenco dei bloccati non lo vede chi non è amministratore", due.msg.filter(m => m.t === "moderati").pop().ok === false);
+re.ws.send(JSON.stringify({ t: "moderati" })); await dorme(300);
+const el = re.msg.filter(m => m.t === "moderati").pop();
+const lui = el && el.elenco.find(x => x.uid === "g:molesto-1");
+prova("l'amministratore vede chi è bloccato, col soprannome", el && el.ok && lui && lui.bloccato === true, el);
+re.ws.send(JSON.stringify({ t: "modera", azione: "sblocca", uid: lui.uid, n: "Molesto" })); await dorme(300);
+prova("e lo sblocca", re.msg.filter(m => m.t === "moderato").pop().ok === true && re.msg.filter(m => m.t === "moderato").pop().azione === "sblocca");
+const torna = await telefono(O, { sub: "molesto-1" });
+torna.ws.send(JSON.stringify({ t: "ciao", n: "Molesto", a: A, p: { x: 1, z: 0 } })); await dorme(400);
+prova("sbloccato, rientra con Google e torna in città", !!torna.tok && torna.msg.some(m => m.t === "tu"), [torna.tok, torna.msg.slice(-1)]);
+torna.ws.close();
+const primaEl = re.msg.filter(m => m.t === "moderati").length;
+re.ws.send(JSON.stringify({ t: "moderati" }));
+for (let i = 0; i < 30 && re.msg.filter(m => m.t === "moderati").length === primaEl; i++) await dorme(100);   // la risposta NUOVA, non la vecchia
+const el2 = re.msg.filter(m => m.t === "moderati");
+prova("sbloccato, non è più nell'elenco", el2.length > primaEl && !el2.pop().elenco.some(x => x.uid === lui.uid), el2.slice(-1));   // per numero: i soprannomi si ripetono
 re.ws.send(JSON.stringify({ t: "modera", id: re.msg.find(m => m.t === "tu").id, azione: "blocca" })); await dorme(300);
 prova("l'amministratore non si blocca da solo", re.ws.readyState === 1 && re.msg.filter(m => m.t === "moderato").pop().ok === false);
 re.ws.close(); due.ws.close(); uno3.ws.close(); await dorme(300);

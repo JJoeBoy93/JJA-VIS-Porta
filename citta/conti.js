@@ -81,6 +81,11 @@ export class Conti extends DurableObject {
       if (!c) return risposta({ no: "account" }, 401);
       return risposta({ uid: c.uid, admin: this.admin(c.mail), soprannome: c.soprannome, bloccato: !!c.bloccato, zitto_fino: c.zitto_fino });
     }
+    if (via === "/interno/moderati") {   // chi è bloccato o zittito adesso: l'amministratore li vede e li può sbloccare (JJ, 6/10)
+      const elenco = this.sql.exec("SELECT uid, soprannome, nome, bloccato, zitto_fino FROM conti WHERE bloccato = 1 OR zitto_fino > ? ORDER BY visto DESC LIMIT 50", Date.now()).toArray()
+        .map(c => ({ uid: c.uid, soprannome: c.soprannome, nome: c.nome, bloccato: !!c.bloccato, zitto_fino: c.zitto_fino > Date.now() ? c.zitto_fino : 0 }));
+      return risposta({ elenco });
+    }
     const c = typeof corpo.uid === "string" ? this.conto(corpo.uid) : null;
     if (!c) return risposta({ no: "chi" }, 404);
     if (via === "/interno/soprannome") {

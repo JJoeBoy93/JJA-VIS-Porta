@@ -160,6 +160,10 @@ export class Citta extends DurableObject {
       if (n !== io.n && io.uid) await this.contiInterno("/interno/soprannome", { uid: io.uid, soprannome: n });
       io.a = a; io.n = n; ws.serializeAttachment(io);
       this.a_tutti(ws, { t: "aspetto", id: io.id, n, a });
+    } else if (m.t === "moderati") {   // l'elenco di chi è bloccato o zittito: solo per l'amministratore
+      if (!io.admin) { ws.send(JSON.stringify({ t: "moderati", ok: false, perche: "admin" })); return; }
+      const r = await this.contiInterno("/interno/moderati", {});
+      ws.send(JSON.stringify({ t: "moderati", ok: !!r.elenco, elenco: r.elenco || [] }));
     } else if (m.t === "modera") {
       await this.modera(ws, io, m);
     } else if (m.t === "segnala") {
@@ -193,7 +197,15 @@ export class Citta extends DurableObject {
   async modera(ws, io, m) {
     const rispondi = d => { try { ws.send(JSON.stringify({ t: "moderato", ...d })); } catch (_) {} };
     if (!io.admin) return rispondi({ ok: false, perche: "admin" });
-    if (!["zittisci", "blocca", "sblocca"].includes(m.azione) || typeof m.id !== "string") return rispondi({ ok: false, perche: "azione" });
+    if (!["zittisci", "blocca", "sblocca"].includes(m.azione)) return rispondi({ ok: false, perche: "azione" });
+    // sbloccare: chi è bloccato non è in città, quindi si sblocca per account (uid, dall'elenco), non per collegamento
+    if (m.azione === "sblocca") {
+      if (typeof m.uid !== "string") return rispondi({ ok: false, perche: "chi" });
+      const r = await this.contiInterno("/interno/modera", { uid: m.uid, azione: "sblocca" });
+      if (r.fatto) for (const x of this.dentro()) { const a = x.deserializeAttachment(); if (a && a.uid === m.uid && a.zitto) { a.zitto = 0; x.serializeAttachment(a); } }
+      return rispondi(r.fatto ? { ok: true, azione: "sblocca", n: m.n || "" } : { ok: false, perche: r.no || "conti" });
+    }
+    if (typeof m.id !== "string") return rispondi({ ok: false, perche: "azione" });
     let w = null, lui = null;
     for (const x of this.dentro()) { const a = x.deserializeAttachment(); if (a && a.id === m.id) { w = x; lui = a; break; } }
     if (!lui || !lui.uid) return rispondi({ ok: false, perche: "chi" });
