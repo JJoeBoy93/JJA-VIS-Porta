@@ -60,6 +60,8 @@ export class Conti extends DurableObject {
       gettoni INTEGER NOT NULL DEFAULT 100, skin TEXT NOT NULL DEFAULT '[]', portato INTEGER NOT NULL DEFAULT 0,
       giorno TEXT, vinti_oggi INTEGER NOT NULL DEFAULT 0, creato INTEGER NOT NULL, visto INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS sessioni(impronta TEXT PRIMARY KEY, uid TEXT NOT NULL, fino INTEGER NOT NULL)`);
+    // 6/10, la classifica dei giochi (JJ: «il gioco dei gettoni non mostra la classifica a fine gioco»): il record di ognuno
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS record(uid TEXT NOT NULL, gioco TEXT NOT NULL, punti INTEGER NOT NULL, quando INTEGER NOT NULL, PRIMARY KEY(uid, gioco))`);
     // 6/10, la moderazione: bloccato e zittito restano sull'account (una tabella già nata non prende colonne da CREATE: si aggiungono)
     const colonne = this.sql.exec("PRAGMA table_info(conti)").toArray().map(c => c.name);
     if (!colonne.includes("bloccato")) this.sql.exec("ALTER TABLE conti ADD COLUMN bloccato INTEGER NOT NULL DEFAULT 0");
@@ -68,6 +70,10 @@ export class Conti extends DurableObject {
   admin(mail) { const a = (this.env.JJAVIS_ADMIN || "").trim().toLowerCase(); return !!a && mail === a; }
   mostra(c) {   // quello che il telefono vede del suo account
     return { soprannome: c.soprannome, nome: c.nome, mail: c.mail, gettoni: c.gettoni, skin: JSON.parse(c.skin), portato: !!c.portato, admin: this.admin(c.mail) };
+  }
+  classifica(gioco) {
+    return this.sql.exec(`SELECT c.soprannome AS n, r.punti AS punti, r.quando AS quando FROM record r JOIN conti c ON c.uid = r.uid
+      WHERE r.gioco = ? AND c.bloccato = 0 AND c.soprannome IS NOT NULL ORDER BY r.punti DESC, r.quando ASC LIMIT 10`, gioco).toArray();
   }
   conto(uid) { return this.sql.exec("SELECT * FROM conti WHERE uid = ?", uid).toArray()[0] || null; }
   async impronta(t) { return esa(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t))); }
@@ -108,6 +114,11 @@ export class Conti extends DurableObject {
     let corpo = {};
     if (req.method === "POST") { try { corpo = await req.json(); } catch (_) { return risposta({ no: "corpo" }, 400); } if (!corpo || typeof corpo !== "object") corpo = {}; }
 
+    // la classifica: la legge chiunque (soprannome e punti, niente altro); i bloccati non ci sono
+    if (via === "/conto/classifica" && req.method === "GET") {
+      const gioco = parola(u.searchParams.get("gioco")) || "acchiappa";
+      return risposta({ gioco, classifica: this.classifica(gioco) });
+    }
     if (via === "/conto/google" && req.method === "POST") {
       const g = await verificaGoogle(corpo.credential, this.env);
       if (g.no) return risposta({ no: "google", perche: g.no }, 401);
@@ -171,13 +182,21 @@ export class Conti extends DurableObject {
       this.sql.exec("UPDATE conti SET gettoni = gettoni - ?, skin = ? WHERE uid = ?", prezzo, JSON.stringify(sk), uid);
       return aggiorna();
     }
+    if (via === "/conto/partita") {   // a fine partita: il record resta se è più alto. Tetto: in 25 secondi oltre 200 non si fa
+      const gioco = parola(corpo.gioco) || "acchiappa", punti = corpo.punti;
+      if (!Number.isInteger(punti) || punti < 0 || punti > 200) return risposta({ no: "punti" }, 400);
+      const prima = this.sql.exec("SELECT punti FROM record WHERE uid = ? AND gioco = ?", uid, gioco).toArray()[0];
+      const nuovo = !prima || punti > prima.punti;
+      if (nuovo) this.sql.exec("INSERT INTO record(uid, gioco, punti, quando) VALUES (?, ?, ?, ?) ON CONFLICT(uid, gioco) DO UPDATE SET punti = excluded.punti, quando = excluded.quando", uid, gioco, punti, Date.now());
+      return risposta({ record: nuovo ? punti : prima.punti, nuovoRecord: nuovo && punti > 0, classifica: this.classifica(gioco) });
+    }
     if (via === "/conto/soprannome") {
       const n = soprannomeOk(corpo.soprannome); if (!n) return risposta({ no: "soprannome" }, 400);
       this.sql.exec("UPDATE conti SET soprannome = ? WHERE uid = ?", n, uid); return aggiorna();
     }
     if (via === "/conto/esci") { this.sql.exec("DELETE FROM sessioni WHERE impronta = ?", imp); return risposta({ fatto: true }); }
     if (via === "/conto/elimina") {   // il diritto di cancellarsi: via l'account e tutte le sessioni, subito
-      this.sql.exec("DELETE FROM sessioni WHERE uid = ?", uid); this.sql.exec("DELETE FROM conti WHERE uid = ?", uid);
+      this.sql.exec("DELETE FROM sessioni WHERE uid = ?", uid); this.sql.exec("DELETE FROM record WHERE uid = ?", uid); this.sql.exec("DELETE FROM conti WHERE uid = ?", uid);
       return risposta({ fatto: true });
     }
     return risposta({ no: "via" }, 404);

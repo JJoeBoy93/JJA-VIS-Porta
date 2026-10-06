@@ -62,9 +62,17 @@ r = await chiama("/conto/spendi", { n: 5000 }, J); prova("l'amministratore spend
 r = await chiama("/conto/skin", { id: "oro", prezzo: 5000 }, J); prova("all'amministratore le skin non costano", r.conto.skin.includes("oro") && r.conto.gettoni === 100, r);
 r = await chiama("/conto", null, A2, "GET"); prova("e un utente qualsiasi resta un utente qualsiasi", r.conto.admin === false, r);
 
+// la classifica (6/10)
+r = await chiama("/conto/partita", { punti: 42 }, A2); prova("a fine partita il record resta, e torna la classifica", r.record === 42 && r.nuovoRecord && r.classifica[0].n === "Anna_93" && r.classifica[0].punti === 42, r);
+r = await chiama("/conto/partita", { punti: 30 }, A2); prova("una partita peggiore non abbassa il record", r.record === 42 && !r.nuovoRecord, r);
+r = await chiama("/conto/partita", { punti: 5000 }, A2); prova("punti impossibili: no", r.stato === 400, r);
+await chiama("/conto/soprannome", { soprannome: "Capo" }, J); await chiama("/conto/partita", { punti: 50 }, J);
+r = await chiama("/conto/classifica?gioco=acchiappa", null, null, "GET"); prova("la classifica la legge chiunque, in ordine, solo soprannome e punti", r.classifica.length === 2 && r.classifica[0].n === "Capo" && r.classifica[1].n === "Anna_93" && !("uid" in r.classifica[0]) && !("mail" in r.classifica[0]), r);
+
 // uscire, cancellarsi
 r = await chiama("/conto/esci", {}, A2); r = await chiama("/conto", null, A2, "GET"); prova("uscendo, quella sessione non vale più", r.stato === 401, r);
 r = await chiama("/conto/elimina", {}, A); r = await chiama("/conto", null, A, "GET"); prova("cancellando l'account, sparisce e la sessione non vale più", r.stato === 401, r);
+r = await chiama("/conto/classifica?gioco=acchiappa", null, null, "GET"); prova("e sparisce anche dalla classifica", !r.classifica.some(x => x.n === "Anna_93"), r);
 r = await entra(giusto("1", "anna@prova.it"), false); prova("e rientrando è davvero un account nuovo (chiede di nuovo l'età)", r.no === "eta", r);
 const pre = await fetch(B + "/conto/spendi", { method: "OPTIONS" }); prova("le chiamate dal browser della pagina sono ammesse (CORS)", pre.status === 204 && pre.headers.get("access-control-allow-origin") === "https://jjoeboy93.github.io", pre.status);
 
