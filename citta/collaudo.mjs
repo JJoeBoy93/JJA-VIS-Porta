@@ -6,16 +6,34 @@
 //   wrangler dev ... --var TG_API:http://127.0.0.1:8790 --var BREVO_API:http://127.0.0.1:8790 --var TG_BOT_TOKEN:finto --var SEGNALAZIONI_CHAT:4242 --var BREVO_API_KEY:brevo-finta --var MITTENTE:jjavis@prova.it
 // Controprova del 5/10: senza freno e senza controllo d'origine → ROSSO (3 prove).
 import WebSocket from "ws";
+import { readFileSync } from "fs";
 import { pesante, soprannome, messaggio } from "./filtro.js";
 const PORTA_ = process.env.CITTA_PORTA || "8799";
 const URL_ = `ws://127.0.0.1:${PORTA_}/entra`, O = "https://jjoeboy93.github.io";
 let esiti = [];
 const prova = (n, ok, d = "") => { esiti.push(ok); console.log((ok ? "  ok  " : "  NO  ") + n + (ok ? "" : " — " + JSON.stringify(d))); };
 const dorme = ms => new Promise(r => setTimeout(r, ms));
-function telefono(origin = O) {
-  return new Promise(ok => { const ws = new WebSocket(URL_, { origin }); const msg = [];
+// 6/10, JJ: «niente account, niente altri». Ogni telefono finto ha il suo account, fatto con un biglietto «di Google» di prova
+// (prova-chiave.json: il server lo accetta solo col --var LOCALE:1 del collaudo); il token va da solo nel «ciao»
+const CH = JSON.parse(readFileSync(new URL("./prova-chiave.json", import.meta.url)));
+const PRIV = await crypto.subtle.importKey("jwk", CH.privata, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+const b64u = x => Buffer.from(x).toString("base64url");
+let numeroConto = 0;
+async function nuovoConto(mail) {
+  const ora = Math.floor(Date.now() / 1000), sub = "t" + (++numeroConto) + "-" + Date.now();
+  const dati = { iss: "https://accounts.google.com", aud: "644831505498-sb1lrkalu9maun2f8vcv2e7l3au31akm.apps.googleusercontent.com", sub, email: mail || sub + "@prova.it", email_verified: true, name: "T", iat: ora, exp: ora + 600 };
+  const t = b64u(JSON.stringify({ alg: "RS256", kid: "prova-1", typ: "JWT" })) + "." + b64u(JSON.stringify(dati));
+  const cred = t + "." + b64u(new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", PRIV, new TextEncoder().encode(t))));
+  const r = await (await fetch(`http://127.0.0.1:${PORTA_}/conto/google`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credential: cred, eta14: true }) })).json();
+  return r.token;
+}
+function telefono(origin = O, { conto = true, mail } = {}) {
+  return new Promise(async ok => { const tok = conto ? await nuovoConto(mail) : null;
+    const ws = new WebSocket(URL_, { origin }); const msg = [];
+    const manda = ws.send.bind(ws);
+    ws.send = d => { if (tok && typeof d === "string" && d.startsWith('{"t":"ciao"')) { const m = JSON.parse(d); if (!("tok" in m)) m.tok = tok; d = JSON.stringify(m); } manda(d); };
     ws.on("message", d => { const s = String(d); if (s !== "pong") msg.push(JSON.parse(s)); });
-    ws.on("open", () => ok({ ws, msg, aperto: true }));
+    ws.on("open", () => ok({ ws, msg, aperto: true, tok }));
     ws.on("unexpected-response", (_, r) => ok({ ws, msg, aperto: false, stato: r.statusCode }));
     ws.on("error", () => {}); });
 }
@@ -105,6 +123,46 @@ for (let i = 0; i < 3; i++) { buono.ws.send(JSON.stringify({ t: "segnala", id: i
 prova("più di 3 segnalazioni in dieci minuti: «troppe»", buono.msg.filter(m => m.t === "segnalato").pop().perche === "troppe", buono.msg.filter(m => m.t === "segnalato").slice(-2));
 buono.ws.send(JSON.stringify({ t: "segnala", id: "nessuno", motivo: "spam" })); await dorme(300);
 cattivo.ws.close(); buono.ws.close(); finto.close();
+
+// niente account, niente altri; e l'amministratore che modera (6/10)
+const senza = await telefono(O, { conto: false });
+senza.ws.send(JSON.stringify({ t: "ciao", n: "Anonimo", a: A, p: { x: 0, z: 0 } })); await dorme(400);
+prova("senza account non si entra con gli altri: «account»", senza.msg.some(m => m.t === "no" && m.perche === "account") && !senza.msg.some(m => m.t === "tu"), senza.msg);
+const falso = await telefono(O, { conto: false });
+falso.ws.send(JSON.stringify({ t: "ciao", n: "Furbo", a: A, p: { x: 0, z: 0 }, tok: "a".repeat(64) })); await dorme(400);
+prova("con un token inventato nemmeno", falso.msg.some(m => m.perche === "account") && !falso.msg.some(m => m.t === "tu"), falso.msg);
+senza.ws.close(); falso.ws.close();
+const re = await telefono(O, { mail: "capo@prova.it" }), uno = await telefono(), due = await telefono();
+re.ws.send(JSON.stringify({ t: "ciao", n: "JJoe", a: A, p: { x: 0, z: 0 } })); await dorme(300);
+uno.ws.send(JSON.stringify({ t: "ciao", n: "Molesto", a: A, p: { x: 1, z: 0 } })); await dorme(300);
+due.ws.send(JSON.stringify({ t: "ciao", n: "Tranquillo", a: A, p: { x: 2, z: 0 } })); await dorme(300);
+const visto = due.msg.find(m => m.t === "tu").altri;
+prova("gli altri vedono chi è l'amministratore (la corona), e solo lui", visto.find(x => x.n === "JJoe").re === true && visto.find(x => x.n === "Molesto").re === false, visto);
+const idM = visto.find(x => x.n === "Molesto").id;
+const r0 = await (await fetch(`http://127.0.0.1:${PORTA_}/conto`, { headers: { Authorization: "Bearer " + uno.tok } })).json();
+prova("il soprannome scelto in città finisce nell'account", r0.conto && r0.conto.soprannome === "Molesto", r0);
+due.ws.send(JSON.stringify({ t: "modera", id: idM, azione: "blocca" })); await dorme(300);
+prova("chi non è amministratore non può moderare", due.msg.filter(m => m.t === "moderato").pop().perche === "admin" && uno.ws.readyState === 1, due.msg.slice(-1));
+re.ws.send(JSON.stringify({ t: "modera", id: idM, azione: "zittisci", minuti: 60 })); await dorme(400);
+prova("l'amministratore lo zittisce: lui lo sa", re.msg.filter(m => m.t === "moderato").pop().ok && uno.msg.some(m => m.t === "no" && m.perche === "zitto" && m.fino > Date.now() + 59 * 60000), [re.msg.slice(-1), uno.msg.slice(-1)]);
+uno.ws.send(JSON.stringify({ t: "di", x: "ciao a tutti" })); await dorme(300);
+prova("zittito non scrive", uno.msg.slice(-1)[0].perche === "zitto" && !due.msg.some(m => m.t === "di" && m.x === "ciao a tutti"));
+uno.ws.close(); await dorme(300);
+const uno2 = await new Promise(ok => { const ws = new WebSocket(URL_, { origin: O }); const msg = []; ws.on("message", d => { const x = String(d); if (x !== "pong") msg.push(JSON.parse(x)); }); ws.on("open", () => ok({ ws, msg })); ws.on("close", c => msg.push({ chiuso: c })); });
+uno2.ws.send(JSON.stringify({ t: "ciao", n: "Molesto", a: A, p: { x: 1, z: 0 }, tok: uno.tok })); await dorme(400);
+uno2.ws.send(JSON.stringify({ t: "di", x: "sono tornato" })); await dorme(300);
+prova("e rientrando resta zittito: è sull'account, non sul collegamento", uno2.msg.some(m => m.t === "tu") && uno2.msg.slice(-1)[0].perche === "zitto", uno2.msg.slice(-2));
+const idM2 = re.msg.filter(m => m.t === "arriva" && m.n === "Molesto").pop().id;
+re.ws.send(JSON.stringify({ t: "modera", id: idM2, azione: "blocca" })); await dorme(500);
+prova("l'amministratore lo blocca: fuori dalla città (4003)", uno2.msg.some(m => m.chiuso === 4003) && due.msg.some(m => m.t === "va" && m.id === idM2), uno2.msg.slice(-2));
+const r1 = await (await fetch(`http://127.0.0.1:${PORTA_}/conto`, { headers: { Authorization: "Bearer " + uno.tok } })).json();
+prova("bloccato: la sua sessione non vale più", !r1.conto, r1);
+const uno3 = await telefono(O, { conto: false });
+uno3.ws.send(JSON.stringify({ t: "ciao", n: "Molesto", a: A, p: { x: 1, z: 0 }, tok: uno.tok })); await dorme(400);
+prova("e con la vecchia sessione non rientra", !uno3.msg.some(m => m.t === "tu"), uno3.msg);
+re.ws.send(JSON.stringify({ t: "modera", id: re.msg.find(m => m.t === "tu").id, azione: "blocca" })); await dorme(300);
+prova("l'amministratore non si blocca da solo", re.ws.readyState === 1 && re.msg.filter(m => m.t === "moderato").pop().ok === false);
+re.ws.close(); due.ws.close(); uno3.ws.close(); await dorme(300);
 
 // il filtro da solo: le parole pesanti si vedono anche travestite, e le parole buone che le contengono passano
 const frasi = [["che c4zz0 dici", true], ["s t r o n z o", true], ["porco dio", true], ["ciao frocio", true], ["negro", true], ["il terrone", true],

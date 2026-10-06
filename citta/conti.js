@@ -60,6 +60,10 @@ export class Conti extends DurableObject {
       gettoni INTEGER NOT NULL DEFAULT 100, skin TEXT NOT NULL DEFAULT '[]', portato INTEGER NOT NULL DEFAULT 0,
       giorno TEXT, vinti_oggi INTEGER NOT NULL DEFAULT 0, creato INTEGER NOT NULL, visto INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS sessioni(impronta TEXT PRIMARY KEY, uid TEXT NOT NULL, fino INTEGER NOT NULL)`);
+    // 6/10, la moderazione: bloccato e zittito restano sull'account (una tabella già nata non prende colonne da CREATE: si aggiungono)
+    const colonne = this.sql.exec("PRAGMA table_info(conti)").toArray().map(c => c.name);
+    if (!colonne.includes("bloccato")) this.sql.exec("ALTER TABLE conti ADD COLUMN bloccato INTEGER NOT NULL DEFAULT 0");
+    if (!colonne.includes("zitto_fino")) this.sql.exec("ALTER TABLE conti ADD COLUMN zitto_fino INTEGER NOT NULL DEFAULT 0");
   }
   admin(mail) { const a = (this.env.JJAVIS_ADMIN || "").trim().toLowerCase(); return !!a && mail === a; }
   mostra(c) {   // quello che il telefono vede del suo account
@@ -68,8 +72,34 @@ export class Conti extends DurableObject {
   conto(uid) { return this.sql.exec("SELECT * FROM conti WHERE uid = ?", uid).toArray()[0] || null; }
   async impronta(t) { return esa(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t))); }
 
+  // le vie interne: le chiama solo il server della città, col suo stub. Dal mondo non si arriva (il worker passa solo /conto)
+  async interno(via, corpo) {
+    if (via === "/interno/chi") {   // chi c'è dietro questo token: per entrare in città con gli altri
+      if (typeof corpo.token !== "string" || !/^[0-9a-f]{64}$/.test(corpo.token)) return risposta({ no: "account" }, 401);
+      const s = this.sql.exec("SELECT * FROM sessioni WHERE impronta = ?", await this.impronta(corpo.token)).toArray()[0];
+      const c = s && s.fino >= Date.now() ? this.conto(s.uid) : null;
+      if (!c) return risposta({ no: "account" }, 401);
+      return risposta({ uid: c.uid, admin: this.admin(c.mail), soprannome: c.soprannome, bloccato: !!c.bloccato, zitto_fino: c.zitto_fino });
+    }
+    const c = typeof corpo.uid === "string" ? this.conto(corpo.uid) : null;
+    if (!c) return risposta({ no: "chi" }, 404);
+    if (via === "/interno/soprannome") {
+      const n = soprannomeOk(corpo.soprannome); if (!n) return risposta({ no: "soprannome" }, 400);
+      this.sql.exec("UPDATE conti SET soprannome = ? WHERE uid = ?", n, c.uid); return risposta({ fatto: true, soprannome: n });
+    }
+    if (via === "/interno/modera") {   // lo chiede l'amministratore dalla città
+      if (this.admin(c.mail)) return risposta({ no: "admin" }, 400);   // l'amministratore non si blocca da solo
+      if (corpo.azione === "zittisci") { const fino = Date.now() + Math.max(1, Math.min(7 * 24 * 60, corpo.minuti | 0 || 60)) * 60000; this.sql.exec("UPDATE conti SET zitto_fino = ? WHERE uid = ?", fino, c.uid); return risposta({ fatto: true, fino }); }
+      if (corpo.azione === "blocca") { this.sql.exec("UPDATE conti SET bloccato = 1 WHERE uid = ?", c.uid); this.sql.exec("DELETE FROM sessioni WHERE uid = ?", c.uid); return risposta({ fatto: true }); }
+      if (corpo.azione === "sblocca") { this.sql.exec("UPDATE conti SET bloccato = 0, zitto_fino = 0 WHERE uid = ?", c.uid); return risposta({ fatto: true }); }
+      return risposta({ no: "azione" }, 400);
+    }
+    return risposta({ no: "via" }, 404);
+  }
+
   async fetch(req) {
     const u = new URL(req.url), via = u.pathname;
+    if (via.startsWith("/interno/")) { let corpo = {}; try { corpo = await req.json(); } catch (_) {} return this.interno(via, corpo || {}); }
     let corpo = {};
     if (req.method === "POST") { try { corpo = await req.json(); } catch (_) { return risposta({ no: "corpo" }, 400); } if (!corpo || typeof corpo !== "object") corpo = {}; }
 
@@ -81,7 +111,10 @@ export class Conti extends DurableObject {
       if (!c) {
         if (corpo.eta14 !== true) return risposta({ no: "eta" }, 400);   // un account nuovo solo con «ho almeno 14 anni»
         this.sql.exec("INSERT INTO conti(uid, mail, nome, creato, visto) VALUES (?, ?, ?, ?, ?)", uid, g.mail, g.nome, ora, ora);
-      } else this.sql.exec("UPDATE conti SET mail = ?, nome = ?, visto = ? WHERE uid = ?", g.mail, g.nome, ora, uid);
+      } else {
+        if (c.bloccato) return risposta({ no: "bloccato" }, 403);   // bloccato dall'amministratore: non rientra
+        this.sql.exec("UPDATE conti SET mail = ?, nome = ?, visto = ? WHERE uid = ?", g.mail, g.nome, ora, uid);
+      }
       const t = esa(crypto.getRandomValues(new Uint8Array(32)).buffer);
       this.sql.exec("DELETE FROM sessioni WHERE fino < ?", ora);
       this.sql.exec("INSERT INTO sessioni(impronta, uid, fino) VALUES (?, ?, ?)", await this.impronta(t), uid, ora + DURATA_SESSIONE);

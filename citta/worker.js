@@ -129,14 +129,23 @@ export class Citta extends DurableObject {
     const io = ws.deserializeAttachment() || {};
     if (m.t === "ciao") {
       const a = aspetto(m.a); if (!a) return;
-      const n = soprannome(m.n);
+      // JJ, 6/10: «niente account, niente altri». Il token dell'account dice chi c'è dietro il soprannome
+      const chi = await this.chi(m.tok);
+      if (!chi) { ws.send(JSON.stringify({ t: "no", perche: "account" })); return; }
+      if (chi.bloccato) { ws.send(JSON.stringify({ t: "no", perche: "bloccato" })); try { ws.close(4003, "bloccato"); } catch (_) {} return; }
+      // il soprannome: quello che il telefono propone, se è buono, diventa quello dell'account; se no vale quello dell'account
+      let n = soprannome(m.n);
+      if (n && n !== chi.soprannome) await this.contiInterno("/interno/soprannome", { uid: chi.uid, soprannome: n });
+      if (!n) n = soprannome(chi.soprannome || "");
       if (!n) { ws.send(JSON.stringify({ t: "no", perche: "soprannome" })); return; }   // senza un soprannome buono non si entra
       const primaVolta = !io.a;
-      io.a = a; io.n = n; io.p = posto(m.p); ws.serializeAttachment(io);
+      io.a = a; io.n = n; io.p = posto(m.p); io.uid = chi.uid; io.admin = !!chi.admin;
+      if (chi.zitto_fino > Date.now()) io.zitto = chi.zitto_fino;   // zittito resta zittito anche se rientra
+      ws.serializeAttachment(io);
       const altri = [];
-      for (const w of this.dentro()) { if (w === ws) continue; const x = w.deserializeAttachment(); if (x && x.a) altri.push({ id: x.id, n: x.n, a: x.a, p: x.p }); }
-      ws.send(JSON.stringify({ t: "tu", id: io.id, n, altri, max: MAX_DENTRO }));
-      this.a_tutti(ws, primaVolta ? { t: "arriva", id: io.id, n, a, p: io.p } : { t: "aspetto", id: io.id, n, a });
+      for (const w of this.dentro()) { if (w === ws) continue; const x = w.deserializeAttachment(); if (x && x.a) altri.push({ id: x.id, n: x.n, a: x.a, p: x.p, re: !!x.admin }); }
+      ws.send(JSON.stringify({ t: "tu", id: io.id, n, altri, max: MAX_DENTRO, re: io.admin }));
+      this.a_tutti(ws, primaVolta ? { t: "arriva", id: io.id, n, a, p: io.p, re: io.admin } : { t: "aspetto", id: io.id, n, a, re: io.admin });
       return;
     }
     if (!io.a) return;   // prima si saluta
@@ -148,8 +157,11 @@ export class Citta extends DurableObject {
       const a = aspetto(m.a); if (!a) return;
       const n = m.n === undefined ? io.n : soprannome(m.n);
       if (!n) { ws.send(JSON.stringify({ t: "no", perche: "soprannome" })); return; }
+      if (n !== io.n && io.uid) await this.contiInterno("/interno/soprannome", { uid: io.uid, soprannome: n });
       io.a = a; io.n = n; ws.serializeAttachment(io);
       this.a_tutti(ws, { t: "aspetto", id: io.id, n, a });
+    } else if (m.t === "modera") {
+      await this.modera(ws, io, m);
     } else if (m.t === "segnala") {
       await this.segnala(ws, io, m);
     } else if (m.t === "di") {
@@ -166,6 +178,30 @@ export class Citta extends DurableObject {
       const d = JSON.stringify({ t: "di", id: io.id, n: io.n, x: r.testo, ora });
       for (const w of this.dentro()) { try { w.send(d); } catch (_) {} }
     }
+  }
+
+  async contiInterno(via, corpo) {
+    try { const r = await this.env.CONTI.get(this.env.CONTI.idFromName("conti")).fetch("https://interno" + via, { method: "POST", body: JSON.stringify(corpo) }); return { stato: r.status, ...(await r.json()) }; }
+    catch (e) { return { stato: 503, no: "conti", errore: String(e && e.message || e) }; }
+  }
+  async chi(tok) {
+    if (typeof tok !== "string" || !/^[0-9a-f]{64}$/.test(tok)) return null;
+    const r = await this.contiInterno("/interno/chi", { token: tok });
+    return r.uid ? r : null;
+  }
+  // l'amministratore (JJ) dalla città: zittisci, blocca, sblocca. Resta sull'account, non sul collegamento
+  async modera(ws, io, m) {
+    const rispondi = d => { try { ws.send(JSON.stringify({ t: "moderato", ...d })); } catch (_) {} };
+    if (!io.admin) return rispondi({ ok: false, perche: "admin" });
+    if (!["zittisci", "blocca", "sblocca"].includes(m.azione) || typeof m.id !== "string") return rispondi({ ok: false, perche: "azione" });
+    let w = null, lui = null;
+    for (const x of this.dentro()) { const a = x.deserializeAttachment(); if (a && a.id === m.id) { w = x; lui = a; break; } }
+    if (!lui || !lui.uid) return rispondi({ ok: false, perche: "chi" });
+    const r = await this.contiInterno("/interno/modera", { uid: lui.uid, azione: m.azione, minuti: m.minuti });
+    if (!r.fatto) return rispondi({ ok: false, perche: r.no || "conti" });
+    if (m.azione === "zittisci") { lui.zitto = r.fino; w.serializeAttachment(lui); try { w.send(JSON.stringify({ t: "no", perche: "zitto", fino: r.fino })); } catch (_) {} }
+    if (m.azione === "blocca") { try { w.send(JSON.stringify({ t: "no", perche: "bloccato" })); w.close(4003, "bloccato"); } catch (_) {} this.a_tutti(w, { t: "va", id: lui.id }); }
+    rispondi({ ok: true, azione: m.azione, n: lui.n, fino: r.fino });
   }
 
   async segnala(ws, io, m) {
