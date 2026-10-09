@@ -32,7 +32,7 @@ jobs:
           PJ=$(node -e 'console.log(JSON.stringify(require("./prova-chiave.json").pubblica))')
           (npx wrangler dev --port 8799 --ip 127.0.0.1 --local --var LOCALE:1 --var "PROVA_JWK:$PJ" --var JJAVIS_ADMIN:capo@prova.it \
             --var TG_API:http://127.0.0.1:8790 --var BREVO_API:http://127.0.0.1:8790 --var TG_BOT_TOKEN:finto --var SEGNALAZIONI_CHAT:4242 \
-            --var BREVO_API_KEY:brevo-finta --var MITTENTE:jjavis@prova.it > dev.log 2>&1 &)   # Telegram e Brevo finti: dal collaudo non parte niente
+            --var BREVO_API_KEY:brevo-finta --var MITTENTE:jjavis@prova.it --var ASSENTE_SECONDI:3 > dev.log 2>&1 &)   # Telegram e Brevo finti: dal collaudo non parte niente
           for i in $(seq 1 60); do sleep 2; curl -s http://127.0.0.1:8799/ > /dev/null && break; done
           node collaudo.mjs | tee prova.log
           tail -1 prova.log | grep -qx VERDE || { echo "::error::la prova del server della città non è verde: niente consegna — $(grep '^  NO' prova.log | head -3 | tr '\n' '|')"; exit 1; }

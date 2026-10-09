@@ -27,13 +27,14 @@ async function nuovoConto(mail, subFisso) {
   const r = await (await fetch(`http://127.0.0.1:${PORTA_}/conto/google`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credential: cred, eta14: true }) })).json();
   return r.token;
 }
-function telefono(origin = O, { conto = true, mail, sub } = {}) {
+function telefono(origin = O, { conto = true, mail, sub, muto = false } = {}) {
   return new Promise(async ok => { const tok = conto ? await nuovoConto(mail, sub) : null;
     const ws = new WebSocket(URL_, { origin }); const msg = [];
     const manda = ws.send.bind(ws);
     ws.send = d => { if (tok && typeof d === "string" && d.startsWith('{"t":"ciao"')) { const m = JSON.parse(d); if (!("tok" in m)) m.tok = tok; d = JSON.stringify(m); } manda(d); };
     ws.on("message", d => { const s = String(d); if (s !== "pong") msg.push(JSON.parse(s)); });
-    ws.on("open", () => ok({ ws, msg, aperto: true, tok }));
+    ws.on("open", () => { if (!muto) { const t = setInterval(() => { if (ws.readyState === 1) manda("ping"); }, 1000); ws.on("close", () => clearInterval(t)); }   // come la città vera, che pinga
+      ok({ ws, msg, aperto: true, tok }); });
     ws.on("unexpected-response", (_, r) => ok({ ws, msg, aperto: false, stato: r.statusCode }));
     ws.on("error", () => {}); });
 }
@@ -182,6 +183,23 @@ prova("sbloccato, non è più nell'elenco", el2.length > primaEl && !el2.pop().e
 re.ws.send(JSON.stringify({ t: "modera", id: re.msg.find(m => m.t === "tu").id, azione: "blocca" })); await dorme(300);
 prova("l'amministratore non si blocca da solo", re.ws.readyState === 1 && re.msg.filter(m => m.t === "moderato").pop().ok === false);
 re.ws.close(); due.ws.close(); uno3.ws.close(); await dorme(300);
+
+// l'appello e i fantasmi (9/10): collaudo con --var ASSENTE_SECONDI:3
+const f1 = await telefono(O, { muto: true }), f2 = await telefono();
+f1.ws.send(JSON.stringify({ t: "ciao", n: "Fantasma", a: A, p: { x: 0, z: 0 } })); await dorme(300);
+f2.ws.send(JSON.stringify({ t: "ciao", n: "Vivo", a: A, p: { x: 1, z: 0 } })); await dorme(300);
+f2.ws.send(JSON.stringify({ t: "elenco" })); await dorme(300);
+let el3 = f2.msg.filter(m => m.t === "elenco").pop();
+prova("l'appello: chi chiede l'elenco riceve chi c'è, col soprannome", el3 && el3.altri.some(x => x.n === "Fantasma"), el3);
+const chiusoF = new Promise(ok => { f1.ws.on("close", c => ok(c)); setTimeout(() => ok(null), 8000); });
+for (let i = 0; i < 5; i++) { await dorme(1000); f2.ws.send("ping"); }   // il vivo pinga, il fantasma tace
+f2.ws.send(JSON.stringify({ t: "elenco" })); await dorme(400);
+prova("chi tace troppo (né messaggi né ping) viene chiuso: 4000 «assente»", (await chiusoF) === 4000);
+el3 = f2.msg.filter(m => m.t === "elenco").pop();
+prova("…sparisce dall'elenco, e gli altri ricevono «va»", !el3.altri.some(x => x.n === "Fantasma") && f2.msg.some(m => m.t === "va"), el3);
+const ctl = await (await fetch(`http://127.0.0.1:${PORTA_}/`)).json();
+prova("la pagina di controllo dice chi c'è e da quanto tace", Array.isArray(ctl.chi) && ctl.chi.some(x => x.n === "Vivo" && x.silenzio_s < 5), ctl);
+f2.ws.close(); await dorme(300);
 
 // il filtro da solo: le parole pesanti si vedono anche travestite, e le parole buone che le contengono passano
 const frasi = [["che c4zz0 dici", true], ["s t r o n z o", true], ["porco dio", true], ["ciao frocio", true], ["negro", true], ["il terrone", true],

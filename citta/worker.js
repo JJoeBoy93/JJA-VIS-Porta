@@ -31,6 +31,9 @@ const MAX_MESSAGGIO = 1500;     // caratteri
 const PAUSA_CHAT = 1500;        // ms fra due messaggi della stessa persona
 const ZITTO_PER = 10 * 60 * 1000; // chi prova tre volte parole pesanti tace per dieci minuti
 const STANZA = "citta";
+// 9/10, JJ: «quando uno entra per vederlo devo andare da solo e poi ritornare». L'appello: il telefono chiede l'elenco ogni 20 s
+// e si corregge da solo; i fantasmi (nessun messaggio e nessun ping da un minuto e mezzo) si chiudono
+const ASSENTE_DOPO = 90 * 1000;
 // il «segnala» (JJ, 6/10: «fai anche il segnala e arriva a me all'inizio, poi più avanti quando cresciamo ... potrei prendere
 // dello staff»). Arriva su Telegram (il bot di JJA-VIS, chat SEGNALAZIONI_CHAT: oggi JJ, domani un gruppo dello staff) e come
 // mail alla casella di JJA-VIS (MITTENTE, via Brevo), che resta come archivio.
@@ -82,7 +85,7 @@ export default {
       // si apre da un browser: dice se il server risponde e quanti sono in città
       try {
         const d = await (await stanza().fetch("https://citta/conta")).json();
-        return Response.json({ citta: "JJA-VIS", risponde: true, dentro: d.dentro, max: MAX_DENTRO },
+        return Response.json({ citta: "JJA-VIS", risponde: true, dentro: d.dentro, max: MAX_DENTRO, chi: d.chi },
           { headers: { "Access-Control-Allow-Origin": ORIGINE, "Cache-Control": "no-store" } });
       } catch (e) {
         return Response.json({ citta: "JJA-VIS", risponde: false, errore: String(e && e.message || e) }, { status: 503 });
@@ -104,17 +107,38 @@ export class Citta extends DurableObject {
 
   async fetch(req) {
     const u = new URL(req.url);
-    if (u.pathname === "/conta") return Response.json({ dentro: this.dentro().length });
+    if (u.pathname === "/conta") {   // la pagina di controllo: chi risulta collegato, e da quanto non si fa sentire (solo soprannomi)
+      const ora = Date.now();
+      return Response.json({ dentro: this.dentro().length, chi: this.dentro().map(w => { const a = w.deserializeAttachment() || {};
+        return { n: a.n || "(senza saluto)", silenzio_s: Math.round((ora - this.ultimo(w, a)) / 1000) }; }) });
+    }
     const [client, server] = Object.values(new WebSocketPair());
     if (this.dentro().length >= MAX_DENTRO) {
       server.accept(); server.close(4001, "piena");
       return new Response(null, { status: 101, webSocket: client });
     }
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ id: crypto.randomUUID().slice(0, 8), a: null, p: null });
+    server.serializeAttachment({ id: crypto.randomUUID().slice(0, 8), a: null, p: null, visto: Date.now() });
+    if (!(await this.ctx.storage.getAlarm())) await this.ctx.storage.setAlarm(Date.now() + 60000);   // il giro dei fantasmi
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  ultimo(w, a) {   // l'ultima volta che quel telefono si è fatto sentire: un messaggio, o il «ping» (risposto da Cloudflare anche nel sonno)
+    let t = (a && a.visto) || 0;
+    try { const p = this.ctx.getWebSocketAutoResponseTimestamp(w); if (p) t = Math.max(t, +p); } catch (_) {}
+    return t;
+  }
+  pulisci() {
+    const ora = Date.now(), limite = (+this.env.ASSENTE_SECONDI || 0) * 1000 || ASSENTE_DOPO;
+    for (const w of this.dentro()) { const a = w.deserializeAttachment() || {};
+      if (ora - this.ultimo(w, a) > limite) { try { w.close(4000, "assente"); } catch (_) {} if (a.a) this.a_tutti(w, { t: "va", id: a.id }); } }
+  }
+  async alarm() { this.pulisci(); if (this.dentro().length) await this.ctx.storage.setAlarm(Date.now() + 60000); }
+  elenco(ws) {
+    const altri = [];
+    for (const w of this.dentro()) { if (w === ws) continue; const x = w.deserializeAttachment(); if (x && x.a) altri.push({ id: x.id, n: x.n, a: x.a, p: x.p, re: !!x.admin }); }
+    return altri;
+  }
   a_tutti(da, msg) {
     const s = JSON.stringify(msg);
     for (const w of this.dentro()) if (w !== da) { try { w.send(s); } catch (_) {} }
@@ -127,6 +151,11 @@ export class Citta extends DurableObject {
     let m; try { m = JSON.parse(raw); } catch (_) { return; }
     if (!m || typeof m !== "object") return;
     const io = ws.deserializeAttachment() || {};
+    io.visto = Date.now();
+    if (m.t === "elenco") {   // l'appello
+      if (!io.a) return; ws.serializeAttachment(io); this.pulisci();
+      ws.send(JSON.stringify({ t: "elenco", altri: this.elenco(ws) })); return;
+    }
     if (m.t === "ciao") {
       const a = aspetto(m.a); if (!a) return;
       // JJ, 6/10: «niente account, niente altri». Il token dell'account dice chi c'è dietro il soprannome
@@ -142,9 +171,8 @@ export class Citta extends DurableObject {
       io.a = a; io.n = n; io.p = posto(m.p); io.uid = chi.uid; io.admin = !!chi.admin;
       if (chi.zitto_fino > Date.now()) io.zitto = chi.zitto_fino;   // zittito resta zittito anche se rientra
       ws.serializeAttachment(io);
-      const altri = [];
-      for (const w of this.dentro()) { if (w === ws) continue; const x = w.deserializeAttachment(); if (x && x.a) altri.push({ id: x.id, n: x.n, a: x.a, p: x.p, re: !!x.admin }); }
-      ws.send(JSON.stringify({ t: "tu", id: io.id, n, altri, max: MAX_DENTRO, re: io.admin }));
+      this.pulisci();
+      ws.send(JSON.stringify({ t: "tu", id: io.id, n, altri: this.elenco(ws), max: MAX_DENTRO, re: io.admin }));
       this.a_tutti(ws, primaVolta ? { t: "arriva", id: io.id, n, a, p: io.p, re: io.admin } : { t: "aspetto", id: io.id, n, a, re: io.admin });
       return;
     }
