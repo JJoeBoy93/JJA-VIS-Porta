@@ -69,6 +69,31 @@ r = await chiama("/conto/partita", { punti: 5000 }, A2); prova("punti impossibil
 await chiama("/conto/soprannome", { soprannome: "Capo" }, J); await chiama("/conto/partita", { punti: 50 }, J);
 r = await chiama("/conto/classifica?gioco=acchiappa", null, null, "GET"); prova("la classifica la legge chiunque, in ordine, solo soprannome e punti", r.classifica.length === 2 && r.classifica[0].n === "Capo" && r.classifica[1].n === "Anna_93" && !("uid" in r.classifica[0]) && !("mail" in r.classifica[0]), r);
 
+// entrare con la mail (6/10: «serve il metodo per chi non ha Google»): Brevo finto su 127.0.0.1:8790, il codice si legge dalla mail
+const { createServer } = await import("http");
+const posta = [];
+const brevo = createServer((q, rr) => { let b = ""; q.on("data", c => b += c); q.on("end", () => { posta.push(JSON.parse(b || "{}")); rr.setHeader("content-type", "application/json"); rr.end('{"messageId":"x"}'); }); });
+await new Promise(ok => brevo.listen(8790, "127.0.0.1", ok));
+const codiceDi = m => { const x = posta.filter(p => p.to && p.to[0].email === m).pop(); return x && (/(\d{6})/.exec(x.subject) || [])[1]; };
+r = await chiama("/conto/mail/codice", { mail: "non è una mail" }); prova("una mail che non è una mail: no", r.stato === 400, r);
+r = await chiama("/conto/mail/codice", { mail: "Gino@Prova.it" }); const c1 = codiceDi("gino@prova.it");
+prova("il codice parte per mail (6 cifre), dalla casella di JJA-VIS", r.fatto && /^\d{6}$/.test(c1 || "") && posta.slice(-1)[0].sender.email === "jjavis@prova.it", [r, posta.slice(-1)]);
+r = await chiama("/conto/mail/codice", { mail: "gino@prova.it" }); prova("un altro codice subito dopo: no, fra un minuto", r.stato === 429 && r.no === "presto", r);
+r = await chiama("/conto/mail/entra", { mail: "gino@prova.it", codice: c1 === "000000" ? "111111" : "000000", eta14: true }); prova("un codice sbagliato non entra, e dice quanti tentativi restano", r.stato === 401 && r.no === "codice" && r.restano === 4, r);
+r = await chiama("/conto/mail/entra", { mail: "gino@prova.it", codice: c1, eta14: false }); prova("account nuovo senza «ho almeno 14 anni»: no, e il codice resta buono", r.stato === 400 && r.no === "eta", r);
+r = await chiama("/conto/mail/entra", { mail: "gino@prova.it", codice: c1, eta14: true }); const G = r.token;
+prova("col codice giusto si entra: nasce l'account, coi suoi 100 gettoni", /^[0-9a-f]{64}$/.test(G || "") && r.nuovo && r.conto.gettoni === 100 && r.conto.mail === "gino@prova.it", r);
+r = await chiama("/conto/mail/entra", { mail: "gino@prova.it", codice: c1, eta14: true }); prova("lo stesso codice non vale due volte", r.stato === 401, r);
+await chiama("/conto/spendi", { n: 30 }, G);
+r = await entra(giusto("777", "gino@prova.it")); prova("una mail, un account: entrando con Google con la stessa mail ritrovi lo stesso account", !r.nuovo && r.conto.gettoni === 70, r);
+r = await chiama("/conto/mail/codice", { mail: "capo@prova.it" }); await new Promise(ok => setTimeout(ok, 50));
+r = await chiama("/conto/mail/entra", { mail: "capo@prova.it", codice: codiceDi("capo@prova.it"), eta14: true }); prova("l'amministratore è amministratore anche entrando con la mail", r.conto && r.conto.admin === true, r);
+for (let i = 0; i < 5; i++) await chiama("/conto/mail/entra", { mail: "zoe@prova.it", codice: "123456", eta14: true });
+r = await chiama("/conto/mail/codice", { mail: "zoe@prova.it" }); const cz = codiceDi("zoe@prova.it");
+for (let i = 0; i < 5; i++) await chiama("/conto/mail/entra", { mail: "zoe@prova.it", codice: cz === "123456" ? "654321" : "123456", eta14: true });
+r = await chiama("/conto/mail/entra", { mail: "zoe@prova.it", codice: cz, eta14: true }); prova("dopo 5 codici sbagliati anche quello giusto non vale più (niente tentativi a caso)", r.stato === 401 && r.no === "scaduto", r);
+brevo.close();
+
 // uscire, cancellarsi
 r = await chiama("/conto/esci", {}, A2); r = await chiama("/conto", null, A2, "GET"); prova("uscendo, quella sessione non vale più", r.stato === 401, r);
 r = await chiama("/conto/elimina", {}, A); r = await chiama("/conto", null, A, "GET"); prova("cancellando l'account, sparisce e la sessione non vale più", r.stato === 401, r);

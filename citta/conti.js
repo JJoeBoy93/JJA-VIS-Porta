@@ -17,6 +17,7 @@ const MAX_VINTI_COLPO = 100, MAX_VINTI_GIORNO = 1000, MAX_SPESA = 5000;
 const b64url = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), c => c.charCodeAt(0));
 const testo = u8 => new TextDecoder().decode(u8);
 const esa = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+const mailOk = v => { if (typeof v !== "string") return null; const m = v.trim().toLowerCase(); return m.length <= 120 && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(m) ? m : null; };
 const parola = v => (typeof v === "string" && /^[a-z0-9-]{1,24}$/.test(v)) ? v : null;
 
 let chiaviInMemoria = null, chiaviFino = 0;
@@ -62,6 +63,9 @@ export class Conti extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS sessioni(impronta TEXT PRIMARY KEY, uid TEXT NOT NULL, fino INTEGER NOT NULL)`);
     // 6/10, la classifica dei giochi (JJ: «il gioco dei gettoni non mostra la classifica a fine gioco»): il record di ognuno
     this.sql.exec(`CREATE TABLE IF NOT EXISTS record(uid TEXT NOT NULL, gioco TEXT NOT NULL, punti INTEGER NOT NULL, quando INTEGER NOT NULL, PRIMARY KEY(uid, gioco))`);
+    // 6/10, entrare con la mail (JJ: «serve il metodo per chi non ha Google»): un codice di 6 cifre, valido 10 minuti, 5 tentativi
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS codici(mail TEXT PRIMARY KEY, impronta TEXT NOT NULL, fino INTEGER NOT NULL, tentativi INTEGER NOT NULL DEFAULT 0,
+      ultimo INTEGER NOT NULL, giorno TEXT, mandati_oggi INTEGER NOT NULL DEFAULT 0)`);
     // 6/10, la moderazione: bloccato e zittito restano sull'account (una tabella già nata non prende colonne da CREATE: si aggiungono)
     const colonne = this.sql.exec("PRAGMA table_info(conti)").toArray().map(c => c.name);
     if (!colonne.includes("bloccato")) this.sql.exec("ALTER TABLE conti ADD COLUMN bloccato INTEGER NOT NULL DEFAULT 0");
@@ -74,6 +78,13 @@ export class Conti extends DurableObject {
   classifica(gioco) {
     return this.sql.exec(`SELECT c.soprannome AS n, r.punti AS punti, r.quando AS quando FROM record r JOIN conti c ON c.uid = r.uid
       WHERE r.gioco = ? AND c.bloccato = 0 AND c.soprannome IS NOT NULL ORDER BY r.punti DESC, r.quando ASC LIMIT 10`, gioco).toArray();
+  }
+  perMail(mail) { return this.sql.exec("SELECT * FROM conti WHERE mail = ? ORDER BY creato ASC LIMIT 1", mail).toArray()[0] || null; }
+  async sessione(uid) {
+    const t = esa(crypto.getRandomValues(new Uint8Array(32)).buffer), ora = Date.now();
+    this.sql.exec("DELETE FROM sessioni WHERE fino < ?", ora);
+    this.sql.exec("INSERT INTO sessioni(impronta, uid, fino) VALUES (?, ?, ?)", await this.impronta(t), uid, ora + DURATA_SESSIONE);
+    return t;
   }
   conto(uid) { return this.sql.exec("SELECT * FROM conti WHERE uid = ?", uid).toArray()[0] || null; }
   async impronta(t) { return esa(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t))); }
@@ -122,8 +133,9 @@ export class Conti extends DurableObject {
     if (via === "/conto/google" && req.method === "POST") {
       const g = await verificaGoogle(corpo.credential, this.env);
       if (g.no) return risposta({ no: "google", perche: g.no }, 401);
-      const uid = "g:" + g.sub, ora = Date.now();
-      let c = this.conto(uid);
+      const ora = Date.now();
+      let uid = "g:" + g.sub, c = this.conto(uid);
+      if (!c) { const stessa = this.perMail(g.mail); if (stessa) { uid = stessa.uid; c = stessa; } }   // una mail, un account: anche se è nato col codice
       if (!c) {
         if (corpo.eta14 !== true) return risposta({ no: "eta" }, 400);   // un account nuovo solo con «ho almeno 14 anni»
         this.sql.exec("INSERT INTO conti(uid, mail, nome, creato, visto) VALUES (?, ?, ?, ?, ?)", uid, g.mail, g.nome, ora, ora);
@@ -131,10 +143,47 @@ export class Conti extends DurableObject {
         if (c.bloccato) return risposta({ no: "bloccato" }, 403);   // bloccato dall'amministratore: non rientra
         this.sql.exec("UPDATE conti SET mail = ?, nome = ?, visto = ? WHERE uid = ?", g.mail, g.nome, ora, uid);
       }
-      const t = esa(crypto.getRandomValues(new Uint8Array(32)).buffer);
-      this.sql.exec("DELETE FROM sessioni WHERE fino < ?", ora);
-      this.sql.exec("INSERT INTO sessioni(impronta, uid, fino) VALUES (?, ?, ?)", await this.impronta(t), uid, ora + DURATA_SESSIONE);
-      return risposta({ token: t, conto: this.mostra(this.conto(uid)), nuovo: !c });
+      return risposta({ token: await this.sessione(uid), conto: this.mostra(this.conto(uid)), nuovo: !c });
+    }
+    if (via === "/conto/mail/codice" && req.method === "POST") {   // manda il codice
+      const mail = mailOk(corpo.mail); if (!mail) return risposta({ no: "mail" }, 400);
+      const ora = Date.now(), oggi = new Date(ora).toISOString().slice(0, 10);
+      const prima = this.sql.exec("SELECT * FROM codici WHERE mail = ?", mail).toArray()[0];
+      if (prima && ora - prima.ultimo < 60000) return risposta({ no: "presto", fra: Math.ceil((60000 - (ora - prima.ultimo)) / 1000) }, 429);
+      const mandati = prima && prima.giorno === oggi ? prima.mandati_oggi : 0;
+      if (mandati >= 5) return risposta({ no: "troppi" }, 429);
+      const esistente = this.perMail(mail); if (esistente && esistente.bloccato) return risposta({ no: "bloccato" }, 403);
+      const codice = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+      try {
+        if (!this.env.BREVO_API_KEY || !this.env.MITTENTE) throw new Error("Brevo non configurato");
+        const r = await fetch(`${this.env.BREVO_API || "https://api.brevo.com"}/v3/smtp/email`, { method: "POST",
+          headers: { "api-key": this.env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ sender: { name: "JJA-VIS", email: this.env.MITTENTE }, to: [{ email: mail }], subject: `Il tuo codice JJA-VIS: ${codice}`,
+            textContent: `Il tuo codice per entrare in JJA-VIS è ${codice}.\n\nVale 10 minuti. Se non l'hai chiesto tu, ignora questa mail: senza il codice nessuno entra.` }) });
+        if (!r.ok) throw new Error("Brevo " + r.status);
+      } catch (e) { return risposta({ no: "invio", errore: String(e.message || e) }, 502); }   // un guasto si dice: il codice non è partito
+      this.sql.exec(`INSERT INTO codici(mail, impronta, fino, tentativi, ultimo, giorno, mandati_oggi) VALUES (?, ?, ?, 0, ?, ?, ?)
+        ON CONFLICT(mail) DO UPDATE SET impronta = excluded.impronta, fino = excluded.fino, tentativi = 0, ultimo = excluded.ultimo, giorno = excluded.giorno, mandati_oggi = excluded.mandati_oggi`,
+        mail, await this.impronta(mail + ":" + codice), ora + 10 * 60000, ora, oggi, mandati + 1);
+      return risposta({ fatto: true });
+    }
+    if (via === "/conto/mail/entra" && req.method === "POST") {   // il codice giusto apre l'account di quella mail (o lo crea)
+      const mail = mailOk(corpo.mail), codice = typeof corpo.codice === "string" ? corpo.codice.replace(/\D/g, "") : "";
+      if (!mail || codice.length !== 6) return risposta({ no: "codice" }, 400);
+      const k = this.sql.exec("SELECT * FROM codici WHERE mail = ?", mail).toArray()[0], ora = Date.now();
+      if (!k || k.fino < ora || k.tentativi >= 5) return risposta({ no: "scaduto" }, 401);
+      if (await this.impronta(mail + ":" + codice) !== k.impronta) {
+        this.sql.exec("UPDATE codici SET tentativi = tentativi + 1 WHERE mail = ?", mail);
+        return risposta({ no: "codice", restano: 4 - k.tentativi }, 401);
+      }
+      let c = this.perMail(mail);
+      if (c && c.bloccato) return risposta({ no: "bloccato" }, 403);
+      if (!c && corpo.eta14 !== true) return risposta({ no: "eta" }, 400);   // il codice resta buono: si spunta la casella e si riprova
+      this.sql.exec("DELETE FROM codici WHERE mail = ?", mail);
+      const nuovo = !c;
+      if (!c) { const uid = "m:" + (await this.impronta(mail)).slice(0, 24); this.sql.exec("INSERT INTO conti(uid, mail, nome, creato, visto) VALUES (?, ?, ?, ?, ?)", uid, mail, "", ora, ora); c = this.conto(uid); }
+      else this.sql.exec("UPDATE conti SET visto = ? WHERE uid = ?", ora, c.uid);
+      return risposta({ token: await this.sessione(c.uid), conto: this.mostra(this.conto(c.uid)), nuovo });
     }
 
     // da qui serve la sessione
