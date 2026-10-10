@@ -40,6 +40,13 @@ const ASSENTE_DOPO = 90 * 1000;
 const MOTIVI = { insulti: "insulti o offese", molestie: "molestie", sessuale: "contenuti sessuali", odio: "odio o discriminazione", spam: "spam o pubblicità", minore: "riguarda un minore", altro: "altro" };
 const MAX_SEGNALAZIONI = 3, FINESTRA_SEGNALAZIONI = 10 * 60 * 1000, FRASI_TENUTE = 4;
 
+// moderare da Telegram (piano del 9/10, punto 7): sotto la segnalazione ci sono i tasti; li riceve la porta (è lei il webhook
+// del bot) e li gira qui su /modera-tg. Le due parti si riconoscono con una firma HMAC del corpo fatta col token del bot, che
+// hanno tutte e due: nessun segreto nuovo da mettere
+export async function firma(chiave, testo) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(chiave || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return [...new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(testo)))].map(b => b.toString(16).padStart(2, "0")).join("");
+}
 const parola = v => (typeof v === "string" && /^[a-z0-9-]{1,24}$/.test(v)) ? v : null;
 const intero = (v, min, max) => (Number.isInteger(v) && v >= min && v <= max) ? v : null;
 const numero = (v, lim) => (typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= lim) ? Math.round(v * 100) / 100 : null;
@@ -76,6 +83,12 @@ export default {
       try { return await env.CONTI.get(env.CONTI.idFromName("conti")).fetch(req); }
       catch (e) { return risposta({ no: "server", errore: String(e && e.message || e) }, 503); }
     }
+    if (u.pathname === "/modera-tg" && req.method === "POST") {
+      const corpo = await req.text();
+      if (!env.TG_BOT_TOKEN || req.headers.get("X-Firma") !== await firma(env.TG_BOT_TOKEN, corpo)) return new Response("firma", { status: 403 });
+      try { return await stanza().fetch(new Request("https://citta/modera-tg", { method: "POST", body: corpo })); }
+      catch (e) { return Response.json({ ok: false, perche: "server", errore: String(e && e.message || e) }, { status: 503 }); }
+    }
     if (u.pathname === "/entra") {
       if (req.headers.get("Upgrade") !== "websocket") return new Response("qui si entra solo con un WebSocket", { status: 426 });
       if (req.headers.get("Origin") !== ORIGINE) return new Response("origine non ammessa", { status: 403 });
@@ -111,6 +124,10 @@ export class Citta extends DurableObject {
       const ora = Date.now();
       return Response.json({ dentro: this.dentro().length, chi: this.dentro().map(w => { const a = w.deserializeAttachment() || {};
         return { n: a.n || "(senza saluto)", silenzio_s: Math.round((ora - this.ultimo(w, a)) / 1000) }; }) });
+    }
+    if (u.pathname === "/modera-tg") {
+      let m = {}; try { m = await req.json(); } catch (_) {}
+      return Response.json(await this.moderaConto(m));
     }
     const [client, server] = Object.values(new WebSocketPair());
     if (this.dentro().length >= MAX_DENTRO) {
@@ -244,6 +261,18 @@ export class Citta extends DurableObject {
     rispondi({ ok: true, azione: m.azione, n: lui.n, fino: r.fino });
   }
 
+  // da Telegram: zittisci o blocca per account (uid), anche se in quel momento non è in città
+  async moderaConto(m) {
+    if (!m || typeof m.uid !== "string" || !["zittisci", "blocca"].includes(m.azione)) return { ok: false, perche: "azione" };
+    const r = await this.contiInterno("/interno/modera", { uid: m.uid, azione: m.azione, minuti: m.minuti });
+    if (!r.fatto) return { ok: false, perche: r.no || "conti" };
+    let n = null, dentro = 0;
+    for (const w of this.dentro()) { const a = w.deserializeAttachment(); if (!a || a.uid !== m.uid) continue; n = a.n; dentro++;
+      if (m.azione === "zittisci") { a.zitto = r.fino; w.serializeAttachment(a); try { w.send(JSON.stringify({ t: "no", perche: "zitto", fino: r.fino })); } catch (_) {} }
+      if (m.azione === "blocca") { try { w.send(JSON.stringify({ t: "no", perche: "bloccato" })); w.close(4003, "bloccato"); } catch (_) {} this.a_tutti(w, { t: "va", id: a.id }); } }
+    return { ok: true, azione: m.azione, n, fino: r.fino, dentro: dentro > 0 };
+  }
+
   async segnala(ws, io, m) {
     const rispondi = d => { try { ws.send(JSON.stringify({ t: "segnalato", ...d })); } catch (_) {} };
     const ora = Date.now();
@@ -270,7 +299,10 @@ export class Citta extends DurableObject {
     try {
       if (!this.env.TG_BOT_TOKEN || !this.env.SEGNALAZIONI_CHAT) throw new Error("Telegram non configurato");
       const r = await fetch(`${this.env.TG_API || "https://api.telegram.org"}/bot${this.env.TG_BOT_TOKEN}/sendMessage`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: this.env.SEGNALAZIONI_CHAT, text: righe.slice(0, 4000) }) });
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: this.env.SEGNALAZIONI_CHAT, text: righe.slice(0, 4000),
+          ...(lui && lui.uid ? { reply_markup: { inline_keyboard: [   // si modera da qui (la porta riceve i tasti): per account, non per collegamento
+            [{ text: "🔇 Zittisci 1 ora", callback_data: `cz:60:${lui.uid}`.slice(0, 64) }, { text: "🔇 1 giorno", callback_data: `cz:1440:${lui.uid}`.slice(0, 64) }],
+            [{ text: "⛔ Blocca", callback_data: `cb:0:${lui.uid}`.slice(0, 64) }]] } } : {}) }) });
       const d = await r.json().catch(() => ({})); if (!d.ok) throw new Error("Telegram: " + (d.description || r.status));
       fatto.push("telegram");
     } catch (e) { errori.push(String(e.message || e)); }

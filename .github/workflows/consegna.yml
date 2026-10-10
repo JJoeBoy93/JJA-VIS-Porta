@@ -26,6 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: "le prove della porta (tutte finte, non parte niente di vero)"
+        # 10/10: le prove c'erano ma la consegna non le faceva girare. Ora se una è rossa la porta non si consegna
+        run: |
+          rossi=""
+          for f in collaudo/*.mjs; do node "$f" > prova.log 2>&1 || rossi="$rossi $f: $(grep -m2 '❌\|NO ' prova.log | tr '\n' '|' | cut -c1-200)"; done
+          if [ -n "$rossi" ]; then echo "::error::prove rosse, niente consegna —$rossi"; exit 1; fi
+          echo "::notice::prove della porta tutte verdi"
+
       - name: wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

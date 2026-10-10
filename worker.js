@@ -408,6 +408,12 @@ async function salvaBozza(env, id, dati, sha) {
 }
 
 // ─── Telegram, il bot di JJA-VIS ───
+// la firma per il server della città (citta/worker.js, firma): HMAC-SHA256 del corpo, chiave il token del bot
+async function firmaCitta(chiave, testo) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(chiave || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return [...new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(testo)))].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function tg(env, metodo, corpo) {
   if (!env.TG_BOT_TOKEN) throw new Error("manca TG_BOT_TOKEN");
   const res = await fetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/${metodo}`, {
@@ -608,6 +614,28 @@ async function telegram(req, env) {
       const q = u.callback_query;
       if (String(q.from && q.from.id) !== String(env.TG_CHAT)) {
         await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "non sei tu" });
+        return new Response("ok");
+      }
+      // moderare la città da Telegram (10/10): i tasti sotto la segnalazione. La porta è il webhook del bot, il server della
+      // città sta su un altro account Cloudflare: si gira la richiesta a /modera-tg, firmata col token del bot (ce l'hanno tutti e due)
+      const mod = String(q.data || "").match(/^(cz|cb):(\d+):(.+)$/);
+      if (mod) {
+        await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "un attimo…" }).catch(() => {});
+        const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
+        let esito;
+        try {
+          const corpo = JSON.stringify({ uid: mod[3], azione: mod[1] === "cz" ? "zittisci" : "blocca", minuti: +mod[2] || undefined });
+          const r = await fetch(`${env.CITTA_URL || "https://jjavis-citta.jjavis.workers.dev"}/modera-tg`, { method: "POST",
+            headers: { "Content-Type": "application/json", "X-Firma": await firmaCitta(env.TG_BOT_TOKEN, corpo) }, body: corpo });
+          const d = await r.json().catch(() => null);
+          if (!d || !d.ok) throw new Error(d && d.perche ? d.perche : `il server della città risponde ${r.status}`);
+          const chi = d.n ? `«${d.n}»` : "il segnalato";
+          esito = mod[1] === "cz"
+            ? `🔇 ${chi} zittito fino alle ${new Date(d.fino).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" })}${+mod[2] >= 1440 ? " di domani" : ""}${d.dentro ? "" : " (ora non è in città: vale quando rientra)"}`
+            : `⛔ ${chi} bloccato${d.dentro ? ": è uscito dalla città" : " (ora non è in città: non potrà rientrare)"}`;
+        } catch (e) { esito = `NON fatto — ${e.message || e}`; }
+        await tg(env, "sendMessage", { ...qui, text: esito, reply_to_message_id: q.message.message_id });
+        if (!esito.startsWith("NON")) await tg(env, "editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
         return new Response("ok");
       }
       const [azione, id, mezzoTasto] = String(q.data || "").split(":");

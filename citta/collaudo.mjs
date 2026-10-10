@@ -123,6 +123,20 @@ prova("al segnalato non arriva niente", !cattivo.msg.some(m => m.t === "segnalat
 for (let i = 0; i < 3; i++) { buono.ws.send(JSON.stringify({ t: "segnala", id: idC, motivo: "spam" })); await dorme(300); }
 prova("più di 3 segnalazioni in dieci minuti: «troppe»", buono.msg.filter(m => m.t === "segnalato").pop().perche === "troppe", buono.msg.filter(m => m.t === "segnalato").slice(-2));
 buono.ws.send(JSON.stringify({ t: "segnala", id: "nessuno", motivo: "spam" })); await dorme(300);
+// moderare da Telegram (10/10): sotto la segnalazione i tasti, e /modera-tg con la firma fatta col token del bot («finto» qui)
+const tasti = tg && tg.corpo.reply_markup && tg.corpo.reply_markup.inline_keyboard.flat();
+prova("sotto la segnalazione su Telegram: Zittisci 1 ora, 1 giorno, Blocca — per l'account del segnalato", tasti && tasti.length === 3 && tasti.every(t => /^c[zb]:\d+:g:/.test(t.callback_data) && t.callback_data.length <= 64), tasti);
+const { createHmac } = await import("crypto"); const firma = async (k, t) => createHmac("sha256", k).update(t).digest("hex");   // la stessa del server
+const manda = async (corpo, f) => { const c = JSON.stringify(corpo); const r = await fetch(`http://127.0.0.1:${PORTA_}/modera-tg`, { method: "POST", headers: { "X-Firma": f === undefined ? await firma("finto", c) : f }, body: c }); return { stato: r.status, d: await r.json().catch(() => null) }; };
+const uidC = tasti && tasti[0].callback_data.split(":").slice(2).join(":");
+const m1 = await manda({ uid: uidC, azione: "zittisci", minuti: 60 }, "f".repeat(64));
+prova("senza la firma giusta non si modera (403)", m1.stato === 403 && !cattivo.msg.some(m => m.t === "no" && m.perche === "zitto"), m1);
+const m2 = await manda({ uid: uidC, azione: "zittisci", minuti: 60 }); await dorme(300);
+prova("con la firma: zittito per un'ora, e lui lo sa", m2.stato === 200 && m2.d.ok && m2.d.n === "Cattivo99" && m2.d.dentro && cattivo.msg.some(m => m.t === "no" && m.perche === "zitto" && m.fino > Date.now() + 59 * 60000), [m2, cattivo.msg.slice(-1)]);
+const m3 = await manda({ uid: uidC, azione: "blocca" }); await dorme(400);
+prova("e bloccato: esce dalla città, gli altri lo vedono andare", m3.d && m3.d.ok && cattivo.ws.readyState !== 1 && buono.msg.some(m => m.t === "va" && m.id === idC), [m3, cattivo.ws.readyState]);
+const m4 = await manda({ uid: uidC, azione: "rubagettoni" });
+prova("un'azione che non esiste non fa niente", m4.d && m4.d.ok === false, m4);
 cattivo.ws.close(); buono.ws.close(); finto.close();
 
 // niente account, niente altri; e l'amministratore che modera (6/10)
