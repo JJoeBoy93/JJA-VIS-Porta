@@ -101,7 +101,8 @@ export default {
   async scheduled(evento, env, ctx) {
     env = conGruppo(env);
     if (evento.cron === "0 18 * * *") ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e)));
-    else ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
+    else { ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
+           ctx.waitUntil(spedisciUscita(env).catch((e) => console.log("posta in uscita", e))); }
   },
   async fetch(req, env, ctx) {
     env = conGruppo(env);
@@ -573,6 +574,66 @@ async function invia(env, id, testoDiJJ, conMail) {
                               quando_inviata: new Date().toISOString() }, sha);
   await segnaAttesa(env, id, false).catch((e) => console.log("attesa", e));
   return `inviata (${fatto.join(" + ")})`;
+}
+
+// ══ LA POSTA CHE PARTE DA SOLA ══ — 11/10, JJ: «tu e Jarvis dovete produrre a prescindere da quello che faccio io o non
+// faccio, sono una persona e mi dimentico ... voi siete macchine non potete dimenticare». Athena o JARVIS mettono una lettera
+// in uscita/<id>.json (JJA-VIS-Voci) e ogni ora la porta la spedisce, SENZA aspettare JJ, ma solo a chi ci ha dato il permesso:
+// «fonte» è il file della sua risposta, e lì devono esserci la stessa mail e consenso: true (la spunta «JJA-VIS può scrivermi a
+// questa mail»). Mai due lettere alla stessa mail in 3 giorni; mai a chi è in cancellati.json. Partita: va in inviate/, e a JJ
+// arriva una riga su Telegram per sapere (non per approvare). Se non parte, resta in uscita col perché, e lo si dice una volta
+const USCITA_MAX = 5, USCITA_GIORNI = 3;
+async function spedisciUscita(env) {
+  if (!env.GH_TOKEN || !env.BREVO_API_KEY || !env.MITTENTE) return "manca GH_TOKEN, BREVO_API_KEY o MITTENTE";
+  let elenco = [];
+  try { elenco = await gh(env, "GET", "uscita"); } catch (e) { if (String(e.message).includes("404")) return "niente in uscita"; throw e; }
+  let cancellati = [];
+  try { cancellati = deb64((await gh(env, "GET", "cancellati.json")).content).map((m) => String(m).toLowerCase()); } catch (_) {}
+  let recenti = [];
+  try { recenti = (await gh(env, "GET", "inviate")).map((f) => f.name); } catch (_) {}
+  const esiti = []; let n = 0;
+  for (const f of elenco.filter((f) => f.name.endsWith(".json"))) {
+    if (n >= USCITA_MAX) break;
+    const file = await gh(env, "GET", `uscita/${f.name}`); const L = deb64(file.content);
+    if (L.errore_detto) continue;   // già fermata: resta lì finché qualcuno non la sistema
+    let perche = null;
+    const mail = String(L.a || "").trim().toLowerCase();
+    if (!mail || !L.testo || !L.oggetto || !L.fonte) perche = "manca a, oggetto, testo o fonte";
+    else if (cancellati.includes(mail)) perche = "ha chiesto di non ricevere più mail";
+    else {
+      let fonte = null; try { fonte = deb64((await gh(env, "GET", L.fonte)).content); } catch (_) {}
+      if (!fonte) perche = `la fonte ${L.fonte} non c'è`;
+      else if (String(fonte.mail || "").trim().toLowerCase() !== mail || fonte.consenso !== true) perche = "nella fonte non c'è il consenso per questa mail";
+      else {
+        const giorni = await ultimaA(env, recenti, mail);
+        if (giorni !== null && giorni < USCITA_GIORNI) perche = `gli abbiamo già scritto ${giorni.toFixed(1)} giorni fa`;
+      }
+    }
+    if (perche) {
+      await gh(env, "PUT", `uscita/${f.name}`, { message: `uscita ${f.name}: ferma`, content: b64({ ...L, errore: perche, errore_detto: true }), sha: file.sha });
+      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `📭 Una lettera NON è partita (${L.nome || "?"}): ${perche}. Resta in uscita/${f.name}.` }).catch(() => {});
+      esiti.push(`${f.name}: ferma (${perche})`); continue;
+    }
+    const piede = "\n\n—\nTi scrivo perché hai lasciato questa mail nella pagina di JJA-VIS. Per non ricevere altre mail, rispondi con «cancellami».";
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
+      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ sender: { name: L.firma || "JJA-VIS", email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: "JJA-VIS" },
+        to: [{ email: L.a, ...(L.nome ? { name: L.nome } : {}) }], subject: L.oggetto, textContent: L.testo.trim() + piede }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { esiti.push(`${f.name}: Brevo ${res.status}`); continue; }   // si riprova all'ora dopo
+    await gh(env, "PUT", `inviate/${f.name}`, { message: `inviata ${f.name}`, content: b64({ ...L, inviata: new Date().toISOString(), brevo: d.messageId || null }) });
+    await gh(env, "DELETE", `uscita/${f.name}`, { message: `partita ${f.name}`, sha: file.sha });
+    await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `📤 Partita a ${L.nome || L.a}: «${L.oggetto}». Scritta da ${L.scritta_da || "?"}${L.perche ? " — " + L.perche : ""}.` }).catch(() => {});
+    recenti.push(f.name); esiti.push(`${f.name}: partita`); n++;
+  }
+  return esiti.join(" · ") || "niente da spedire";
+}
+// quanti giorni fa abbiamo scritto a questa mail (dalle lettere in inviate/), o null
+async function ultimaA(env, nomi, mail) {
+  let meno = null;
+  for (const nome of nomi.slice(-60)) { try { const L = deb64((await gh(env, "GET", `inviate/${nome}`)).content);
+    if (String(L.a || "").trim().toLowerCase() === mail && L.inviata) { const g = (Date.now() - Date.parse(L.inviata)) / 864e5; meno = meno === null ? g : Math.min(meno, g); } } catch (_) {} }
+  return meno;
 }
 
 async function scarta(env, id) {
