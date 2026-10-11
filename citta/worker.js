@@ -22,6 +22,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { soprannome, messaggio } from "./filtro.js";
 import { Conti, CORS, risposta } from "./conti.js";
+import { prezzoDi } from "./listino.js";
 export { Conti };
 
 const ORIGINE = "https://jjoeboy93.github.io";
@@ -184,6 +185,9 @@ export class Citta extends DurableObject {
       if (n && n !== chi.soprannome) await this.contiInterno("/interno/soprannome", { uid: chi.uid, soprannome: n });
       if (!n) n = soprannome(chi.soprannome || "");
       if (!n) { ws.send(JSON.stringify({ t: "no", perche: "soprannome" })); return; }   // senza un soprannome buono non si entra
+      // la skin: solo una che hai (o gratis). Una skin a pagamento non comprata non la vedono gli altri: vedono la Classica,
+      // e il telefono lo sa (11/10, JJ: «non ci devono essere modi se non usando gettoni»)
+      if (!this.puoi(a.skin, chi.skin, chi.admin)) { ws.send(JSON.stringify({ t: "no", perche: "skin", skin: a.skin })); a.skin = "classica"; }
       const primaVolta = !io.a;
       io.a = a; io.n = n; io.p = posto(m.p); io.uid = chi.uid; io.admin = !!chi.admin;
       if (chi.zitto_fino > Date.now()) io.zitto = chi.zitto_fino;   // zittito resta zittito anche se rientra
@@ -203,6 +207,10 @@ export class Citta extends DurableObject {
       const n = m.n === undefined ? io.n : soprannome(m.n);
       if (!n) { ws.send(JSON.stringify({ t: "no", perche: "soprannome" })); return; }
       if (n !== io.n && io.uid) await this.contiInterno("/interno/soprannome", { uid: io.uid, soprannome: n });
+      if (a.skin !== (io.a && io.a.skin) && !io.admin && prezzoDi(a.skin) !== 0) {   // una skin nuova: si chiede all'account se è tua (puoi averla appena comprata)
+        const r = await this.contiInterno("/interno/skin", { uid: io.uid });
+        if (!this.puoi(a.skin, r.skin, r.admin)) { ws.send(JSON.stringify({ t: "no", perche: "skin", skin: a.skin })); a.skin = "classica"; }
+      }
       io.a = a; io.n = n; ws.serializeAttachment(io);
       this.a_tutti(ws, { t: "aspetto", id: io.id, n, a });
     } else if (m.t === "moderati") {   // l'elenco di chi è bloccato o zittito: solo per l'amministratore
@@ -229,6 +237,7 @@ export class Citta extends DurableObject {
     }
   }
 
+  puoi(skin, mie, admin) { const p = prezzoDi(skin); return p === 0 || (p !== null && (admin || (Array.isArray(mie) && mie.includes(skin)))); }
   async contiInterno(via, corpo) {
     try { const r = await this.env.CONTI.get(this.env.CONTI.idFromName("conti")).fetch("https://interno" + via, { method: "POST", body: JSON.stringify(corpo) }); return { stato: r.status, ...(await r.json()) }; }
     catch (e) { return { stato: 503, no: "conti", errore: String(e && e.message || e) }; }

@@ -152,8 +152,23 @@ re.ws.send(JSON.stringify({ t: "ciao", n: "JJoe", a: A, p: { x: 0, z: 0 } })); a
 uno.ws.send(JSON.stringify({ t: "ciao", n: "Molesto", a: A, p: { x: 1, z: 0 } })); await dorme(300);
 due.ws.send(JSON.stringify({ t: "ciao", n: "Tranquillo", a: A, p: { x: 2, z: 0 } })); await dorme(300);
 const visto = due.msg.find(m => m.t === "tu").altri;
+{ const furbo = await telefono(); furbo.ws.send(JSON.stringify({ t: "ciao", n: "Furbetto", a: { ...A, skin: "cavaliere" }, p: { x: 3, z: 0 } })); await dorme(400);
+  const arrF = due.msg.find(m => m.t === "arriva" && m.n === "Furbetto");
+  prova("entrare con una skin a pagamento non comprata: si entra, ma con la Classica, e il telefono lo sa", furbo.msg.some(m => m.t === "no" && m.perche === "skin") && arrF && arrF.a.skin === "classica", [furbo.msg, arrF]);
+  furbo.ws.close(); await dorme(200); }
 prova("gli altri vedono chi è l'amministratore (la corona), e solo lui", visto.find(x => x.n === "JJoe").re === true && visto.find(x => x.n === "Molesto").re === false, visto);
 const idM = visto.find(x => x.n === "Molesto").id;
+// le skin (11/10, JJ: «non ci devono essere modi se non usando gettoni»): una a pagamento che non hai, gli altri non la vedono
+const k0 = due.msg.length, u0 = uno.msg.length;
+uno.ws.send(JSON.stringify({ t: "aspetto", a: { ...A, skin: "dio-athena" } })); await dorme(400);
+const vistaU = due.msg.slice(k0).find(m => m.t === "aspetto" && m.id === idM);
+prova("una skin da 2000 non comprata: chi la indossa riceve «no, skin», gli altri vedono la Classica", uno.msg.slice(u0).some(m => m.t === "no" && m.perche === "skin") && vistaU && vistaU.a.skin === "classica", [uno.msg.slice(u0), vistaU]);
+const k1 = due.msg.length; re.ws.send(JSON.stringify({ t: "aspetto", a: { ...A, skin: "dio-zeus" } })); await dorme(400);
+const vistaR = due.msg.slice(k1).find(m => m.t === "aspetto");
+prova("l'amministratore indossa anche gli dèi (le skin non gli costano)", vistaR && vistaR.a.skin === "dio-zeus", vistaR);
+const k2 = due.msg.length; uno.ws.send(JSON.stringify({ t: "aspetto", a: { ...A, skin: "classica", vestito: "cuoco" } })); await dorme(400);
+const vistaG = due.msg.slice(k2).find(m => m.t === "aspetto" && m.id === idM);
+prova("una skin gratis passa sempre", vistaG && vistaG.a.skin === "classica" && vistaG.a.vestito === "cuoco", vistaG);
 const r0 = await (await fetch(`http://127.0.0.1:${PORTA_}/conto`, { headers: { Authorization: "Bearer " + uno.tok } })).json();
 prova("il soprannome scelto in città finisce nell'account", r0.conto && r0.conto.soprannome === "Molesto", r0);
 due.ws.send(JSON.stringify({ t: "modera", id: idM, azione: "blocca" })); await dorme(300);

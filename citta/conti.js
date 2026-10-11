@@ -7,6 +7,7 @@
 // nostro ID client, iss = accounts.google.com, non scaduto; e la mail deve essere verificata.
 import { DurableObject } from "cloudflare:workers";
 import { soprannome as soprannomeOk } from "./filtro.js";
+import { prezzoDi } from "./listino.js";
 
 const CHIAVI_GOOGLE = "https://www.googleapis.com/oauth2/v3/certs";
 const EMITTENTI = new Set(["accounts.google.com", "https://accounts.google.com"]);
@@ -96,7 +97,12 @@ export class Conti extends DurableObject {
       const s = this.sql.exec("SELECT * FROM sessioni WHERE impronta = ?", await this.impronta(corpo.token)).toArray()[0];
       const c = s && s.fino >= Date.now() ? this.conto(s.uid) : null;
       if (!c) return risposta({ no: "account" }, 401);
-      return risposta({ uid: c.uid, admin: this.admin(c.mail), soprannome: c.soprannome, bloccato: !!c.bloccato, zitto_fino: c.zitto_fino });
+      return risposta({ uid: c.uid, admin: this.admin(c.mail), soprannome: c.soprannome, bloccato: !!c.bloccato, zitto_fino: c.zitto_fino, skin: JSON.parse(c.skin) });
+    }
+    if (via === "/interno/skin") {   // le skin di un account, per chi cambia aspetto in città (11/10: si indossa solo quello che si ha)
+      const c = typeof corpo.uid === "string" ? this.conto(corpo.uid) : null;
+      if (!c) return risposta({ no: "account" }, 404);
+      return risposta({ skin: JSON.parse(c.skin), admin: this.admin(c.mail) });
     }
     if (via === "/interno/moderati") {   // chi è bloccato o zittito adesso: l'amministratore li vede e li può sbloccare (JJ, 6/10)
       const elenco = this.sql.exec("SELECT uid, soprannome, nome, bloccato, zitto_fino FROM conti WHERE bloccato = 1 OR zitto_fino > ? ORDER BY visto DESC LIMIT 50", Date.now()).toArray()
@@ -202,8 +208,16 @@ export class Conti extends DurableObject {
 
     if (via === "/conto/porta") {   // la prima volta: gettoni e skin che il telefono aveva già
       if (c.portato) return aggiorna();
-      const n = Number.isInteger(corpo.gettoni) ? Math.max(0, Math.min(MAX_PORTATI, corpo.gettoni)) : 0;
-      const sk = new Set(JSON.parse(c.skin)); (Array.isArray(corpo.skin) ? corpo.skin : []).slice(0, 50).map(parola).filter(Boolean).forEach(x => sk.add(x));
+      // le skin del telefono le aveva comprate coi gettoni del telefono, che il server non può controllare: entrano solo quelle
+      // gratis. Quelle a pagamento tornano in gettoni al loro prezzo, dentro lo stesso tetto di 1000 (11/10: «non ci devono
+      // essere modi se non usando gettoni»; prima il telefono poteva dire di avere qualsiasi skin, anche quelle da 2000)
+      let n = Number.isInteger(corpo.gettoni) ? Math.max(0, corpo.gettoni) : 0;
+      const sk = new Set(JSON.parse(c.skin));
+      for (const id of new Set((Array.isArray(corpo.skin) ? corpo.skin : []).slice(0, 50).map(parola).filter(Boolean))) {
+        const p = prezzoDi(id); if (p === null || sk.has(id)) continue;
+        if (p === 0) sk.add(id); else n += p;
+      }
+      n = Math.min(MAX_PORTATI, n);
       this.sql.exec("UPDATE conti SET gettoni = MAX(gettoni, ?), skin = ?, portato = 1 WHERE uid = ?", n, JSON.stringify([...sk]), uid);
       return aggiorna();
     }
@@ -222,8 +236,9 @@ export class Conti extends DurableObject {
       return risposta({ conto: this.mostra(this.conto(uid)), dati: dai });
     }
     if (via === "/conto/skin") {   // sbloccare una skin: paga qui, una volta; all'amministratore non costa
-      const id = parola(corpo.id), prezzo = corpo.prezzo;
-      if (!id || !Number.isInteger(prezzo) || prezzo < 0 || prezzo > MAX_SPESA) return risposta({ no: "skin" }, 400);
+      // il prezzo lo dice il listino, mai il telefono (11/10): quello che arriva in «prezzo» non si guarda nemmeno
+      const id = parola(corpo.id), prezzo = prezzoDi(id);
+      if (!id || prezzo === null) return risposta({ no: "skin" }, 400);
       const sk = JSON.parse(c.skin); if (sk.includes(id)) return aggiorna();
       sk.push(id);
       if (admin || prezzo === 0) { this.sql.exec("UPDATE conti SET skin = ? WHERE uid = ?", JSON.stringify(sk), uid); return aggiorna(); }

@@ -38,28 +38,32 @@ r = await entra(giusto("1", "Anna@Prova.it")); const A = r.token;
 prova("con un biglietto buono nasce l'account: 100 gettoni, non amministratore, mail in minuscolo", r.stato === 200 && /^[0-9a-f]{64}$/.test(A) && r.nuovo && r.conto.gettoni === 100 && !r.conto.admin && r.conto.mail === "anna@prova.it", r);
 r = await chiama("/conto", null, A, "GET"); prova("con la sessione si legge l'account", r.conto && r.conto.gettoni === 100, r);
 r = await chiama("/conto", null, "0".repeat(64), "GET"); prova("una sessione inventata non legge niente", r.stato === 401, r);
-r = await chiama("/conto/porta", { gettoni: 261, skin: ["cavaliere", "<script>", "base"] }, A);
-prova("la prima volta il telefono porta i suoi gettoni e le sue skin (le strane si buttano)", r.conto.gettoni === 261 && r.conto.skin.join() === "cavaliere,base" && r.conto.portato, r);
-r = await chiama("/conto/porta", { gettoni: 999, skin: ["altra"] }, A); prova("la seconda volta no", r.conto.gettoni === 261 && !r.conto.skin.includes("altra"), r);
-r = await chiama("/conto/spendi", { n: 61 }, A); prova("spendere scala i gettoni", r.conto && r.conto.gettoni === 200, r);
-r = await chiama("/conto/spendi", { n: 500 }, A); prova("più di quelli che hai: no, e dice quanti ne hai", r.stato === 409 && r.no === "pochi" && r.conto.gettoni === 200, r);
+r = await chiama("/conto/porta", { gettoni: 261, skin: ["cavaliere", "<script>", "base", "inventata"] }, A);
+// 11/10: le skin a pagamento del telefono non entrano gratis: tornano in gettoni al loro prezzo, sempre dentro il tetto di 1000
+prova("la prima volta il telefono porta i gettoni; le skin a pagamento diventano gettoni (tetto 1000), le strane e le inventate si buttano", r.conto.gettoni === 1000 && r.conto.skin.join() === "base" && r.conto.portato, r);
+r = await chiama("/conto/porta", { gettoni: 999, skin: ["classica"] }, A); prova("la seconda volta no", r.conto.gettoni === 1000 && !r.conto.skin.includes("classica"), r);
+r = await chiama("/conto/spendi", { n: 61 }, A); prova("spendere scala i gettoni", r.conto && r.conto.gettoni === 939, r);
+r = await chiama("/conto/spendi", { n: 2000 }, A); prova("più di quelli che hai: no, e dice quanti ne hai", r.stato === 409 && r.no === "pochi" && r.conto.gettoni === 939, r);
 r = await chiama("/conto/spendi", { n: -5 }, A); prova("spendere un numero negativo: no", r.stato === 400, r);
 r = await chiama("/conto/guadagna", { n: 1000 }, A); prova("vincere più di 100 in un colpo: no", r.stato === 400, r);
 let tot = 0; for (let i = 0; i < 12; i++) { r = await chiama("/conto/guadagna", { n: 100 }, A); tot += r.dati; }
-prova("vincere: al massimo 1000 al giorno", tot === 1000 && r.conto.gettoni === 1200, [tot, r.conto && r.conto.gettoni]);
-r = await chiama("/conto/skin", { id: "neon", prezzo: 300 }, A); prova("sbloccare una skin: costa e resta tua", r.conto.gettoni === 900 && r.conto.skin.includes("neon"), r);
-r = await chiama("/conto/skin", { id: "neon", prezzo: 300 }, A); prova("risbloccarla non costa di nuovo", r.conto.gettoni === 900, r);
-r = await chiama("/conto/skin", { id: "oro", prezzo: 5000 }, A); prova("una skin che non puoi pagare non arriva", r.stato === 409 && !r.conto.skin.includes("oro"), r);
+prova("vincere: al massimo 1000 al giorno", tot === 1000 && r.conto.gettoni === 1939, [tot, r.conto && r.conto.gettoni]);
+// il prezzo lo decide il listino del server (11/10, JJ: «chiudi assolutamente il buco dell'acquisto gratis»)
+r = await chiama("/conto/skin", { id: "dio-athena", prezzo: 0 }, A); prova("una skin da 2000 col prezzo «0» detto dal telefono: no, costa 2000 e non bastano", r.stato === 409 && r.no === "pochi" && !r.conto.skin.includes("dio-athena") && r.conto.gettoni === 1939, r);
+r = await chiama("/conto/skin", { id: "avventuriera", prezzo: 1 }, A); prova("sbloccare una skin: costa il prezzo del listino (1500, non quello detto dal telefono) e resta tua", r.conto && r.conto.gettoni === 439 && r.conto.skin.includes("avventuriera"), r);
+r = await chiama("/conto/skin", { id: "avventuriera", prezzo: 1500 }, A); prova("risbloccarla non costa di nuovo", r.conto.gettoni === 439, r);
+r = await chiama("/conto/skin", { id: "neon", prezzo: 0 }, A); prova("una skin che non è nel listino non si compra, nemmeno gratis", r.stato === 400 && r.no === "skin", r);
+r = await chiama("/conto/skin", { id: "cavaliere" }, A); prova("una skin che non puoi pagare non arriva", r.stato === 409 && !r.conto.skin.includes("cavaliere"), r);
 r = await chiama("/conto/soprannome", { soprannome: "str0nz0" }, A); prova("soprannome col filtro: le parolacce no", r.stato === 400, r);
 r = await chiama("/conto/soprannome", { soprannome: "Anna_93" }, A); prova("soprannome buono: resta nell'account", r.conto.soprannome === "Anna_93", r);
-r = await entra(giusto("1", "anna@prova.it")); prova("rientrando con Google ritrovi tutto (non è un account nuovo)", !r.nuovo && r.conto.gettoni === 900 && r.conto.soprannome === "Anna_93", r);
+r = await entra(giusto("1", "anna@prova.it")); prova("rientrando con Google ritrovi tutto (non è un account nuovo)", !r.nuovo && r.conto.gettoni === 439 && r.conto.soprannome === "Anna_93", r);
 const A2 = r.token;
 
 // l'amministratore (JJ): può tutto senza gettoni
 r = await entra(giusto("99", "Capo@Prova.it")); const J = r.token;
 prova("la mail dell'amministratore entra come amministratore", r.conto.admin === true, r);
 r = await chiama("/conto/spendi", { n: 5000 }, J); prova("l'amministratore spende 5000 e i gettoni restano 100", r.stato === 200 && r.conto.gettoni === 100, r);
-r = await chiama("/conto/skin", { id: "oro", prezzo: 5000 }, J); prova("all'amministratore le skin non costano", r.conto.skin.includes("oro") && r.conto.gettoni === 100, r);
+r = await chiama("/conto/skin", { id: "dio-zeus", prezzo: 5000 }, J); prova("all'amministratore le skin non costano", r.conto.skin.includes("dio-zeus") && r.conto.gettoni === 100, r);
 r = await chiama("/conto", null, A2, "GET"); prova("e un utente qualsiasi resta un utente qualsiasi", r.conto.admin === false, r);
 
 // la classifica (6/10)
