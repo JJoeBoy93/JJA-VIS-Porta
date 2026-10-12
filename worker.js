@@ -661,7 +661,12 @@ async function postaInArrivo(req, env) {
   const da = String((m && m.da) || "").trim().toLowerCase();
   if (!m || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(da)) return new Response(JSON.stringify({ no: "mail" }), { status: 400 });
   const J = (o) => new Response(JSON.stringify(o), { headers: { "Content-Type": "application/json" } });
-  if (env.MITTENTE && da === String(env.MITTENTE).toLowerCase()) return J({ ignora: "è nostra" });
+  // le NOSTRE mail (segnalazioni della città, codici d'accesso, copie): Brevo, mandando da una Gmail, riscrive il mittente su un
+  // indirizzo suo (…brevosend.com), quindi il confronto con MITTENTE non basta (12/10: la segnalazione di prova del 9/10 è arrivata
+  // a JJ come «ha risposto»). Nostre = da MITTENTE, da un indirizzo di Brevo, o col nome che comincia con «JJA-VIS»
+  const nomeDa = String((m && m.nome) || "").trim();
+  if ((env.MITTENTE && da === String(env.MITTENTE).toLowerCase()) || /(^|\.)(brevosend\.com|sendinblue\.com|brevo\.com)$/.test(da.split("@")[1] || "")
+      || /^JJA-VIS\b/i.test(nomeDa)) return J({ ignora: "è nostra" });
   const testo = soloRisposta(m.testo), oggetto = String(m.oggetto || "").slice(0, 200), nome = String(m.nome || "").slice(0, 80);
   // «cancellami»: si cancella subito, si risponde che è fatto, JJ lo sa
   if (/\bcancellami\b/i.test(testo.split("\n").slice(0, 3).join(" "))) {
