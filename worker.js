@@ -149,6 +149,7 @@ export default {
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
     if (req.method === "POST" && url.pathname === "/preventivo") return richiestaPreventivo(req, env, ctx, origine);
     if (req.method === "GET" && url.pathname === "/prenota") return paginaPrenota(url, env, origine);
+    if (req.method === "GET" && url.pathname === "/traccia") return tracciaPubblica(url, env, origine);
     if (req.method === "POST" && url.pathname === "/prenota") return prenota(req, env, origine);
     if (req.method !== "POST" || url.pathname !== "/risposta") return risposta({ errore: "non c'e' niente qui" }, 404, origine);
     if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
@@ -766,6 +767,70 @@ async function dovePosta(env, chi) {
   try { const u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); return doveUtente(env, u); } catch (_) { return { chat_id: env.TG_CHAT }; }
 }
 
+// ══ IL TRACCIAMENTO DI ATHENA TRASPORTI — 12 ottobre ══ JJ: «così un cliente sa sempre dov'è il suo pacco, non intendo con il GPS,
+// ma in magazzino / preso in carico / in consegna / consegnato». Ogni spedizione ha un codice (AT-XXXXX) e un file spedizioni/<codice>.json
+// nell'archivio. JJ cambia lo stato da Telegram con un tocco; se il contatto è una mail, il cliente riceve una mail a ogni stato;
+// se è un telefono, a JJ arriva il link WhatsApp già scritto. La pagina pubblica (sito di Athena, traccia.html) chiede /traccia?c=:
+// risponde SOLO codice, stati e ore, e il comune se c'è — mai nome, via o contatto (chi indovina un codice non scopre chi è il cliente)
+const STATI_SPED = {
+  presa: { e: "📥", t: "Presa in carico", c: "La tua spedizione è stata presa in carico da Athena Trasporti." },
+  magazzino: { e: "🏬", t: "In magazzino", c: "La tua spedizione è nel nostro magazzino, pronta per partire." },
+  consegna: { e: "🚚", t: "In consegna", c: "La tua spedizione è in consegna oggi." },
+  assente: { e: "🔔", t: "Destinatario assente", c: "Siamo passati ma non c'era nessuno: ti contattiamo per la prossima consegna." },
+  consegnata: { e: "✅", t: "Consegnata", c: "La tua spedizione è stata consegnata." },
+};
+const URL_TRACCIA = "https://jjoeboy93.github.io/athena-trasporti/traccia.html";
+const nuovoCodice = () => "AT-" + [...crypto.getRandomValues(new Uint8Array(5))].map((b) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[b % 32]).join("");
+const oraBella = (iso) => { const r = oraRoma(new Date(iso)); return `${r.slice(8, 10)}/${r.slice(5, 7)} ${r.slice(11, 16)}`; };
+async function nuovaSpedizione(env, { nome, indirizzo, contatto }) {
+  const codice = nuovoCodice(), ora = new Date().toISOString();
+  const comune = (indirizzo.split(",").pop() || "").trim().slice(0, 40);
+  const d = { codice, nome: nome.slice(0, 80), indirizzo: indirizzo.slice(0, 160), contatto: contatto.slice(0, 80), comune: indirizzo.includes(",") ? comune : "",
+              creata: ora, stati: [{ s: "presa", quando: ora }], mail: [] };
+  await gh(env, "PUT", `spedizioni/${codice}.json`, { message: `spedizione ${codice}`, content: b64(d) });
+  d.mail = (await avvisaCliente(env, d, "presa")) ? ["presa"] : [];
+  if (d.mail.length) { const f = await gh(env, "GET", `spedizioni/${codice}.json`); await gh(env, "PUT", `spedizioni/${codice}.json`, { message: `spedizione ${codice}: mail`, content: b64(d), sha: f.sha }); }
+  return d;
+}
+async function statoSpedizione(env, codice, stato) {
+  if (!STATI_SPED[stato]) throw new Error("stato sconosciuto");
+  const f = await gh(env, "GET", `spedizioni/${codice}.json`); const d = deb64(f.content);
+  if (d.stati.at(-1).s === stato) return { d };   // toccato due volte: niente doppioni, niente seconda mail
+  d.stati.push({ s: stato, quando: new Date().toISOString() });
+  const mail = await avvisaCliente(env, d, stato); if (mail) d.mail = [...(d.mail || []), stato];
+  await gh(env, "PUT", `spedizioni/${codice}.json`, { message: `spedizione ${codice}: ${stato}`, content: b64(d), sha: f.sha });
+  return { d, mail };
+}
+async function avvisaCliente(env, d, stato) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.contatto) || !env.BREVO_API_KEY || !env.MITTENTE) return false;
+  const S = STATI_SPED[stato], link = `${URL_TRACCIA}?c=${d.codice}`;
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ sender: { name: "Athena Trasporti", email: env.MITTENTE }, replyTo: { email: MAIL_ATHENA, name: "Athena Trasporti" },
+      to: [{ email: d.contatto, ...(d.nome ? { name: d.nome } : {}) }], subject: `${S.e} ${S.t} — spedizione ${d.codice}`,
+      textContent: `Ciao${d.nome ? " " + d.nome.split(" ")[0] : ""},\n\n${S.c}\n\nSegui la spedizione: ${link}\nCodice: ${d.codice}\n\nPer qualsiasi cosa: 377 594 7995 (anche WhatsApp).\nAthena Trasporti — Limbiate (MB)` }) });
+  if (!res.ok) throw new Error(`Brevo ${res.status}`);
+  return true;
+}
+function testoSpedizione(d) {
+  const link = `${URL_TRACCIA}?c=${d.codice}`;
+  const tel = (d.contatto.match(/\d[\d\s]{7,}/) || [""])[0].replace(/\s/g, "");
+  const ultimo = STATI_SPED[d.stati.at(-1).s];
+  return [`📦 ${d.codice} — ${d.nome}`, d.indirizzo ? `📍 ${d.indirizzo}` : "", d.contatto ? `👤 ${d.contatto}` : "", "",
+    ...d.stati.map((x) => `${STATI_SPED[x.s].e} ${oraBella(x.quando)} ${STATI_SPED[x.s].t}${(d.mail || []).includes(x.s) ? " ✉️" : ""}`), "",
+    `🔗 Per il cliente: ${link}`,
+    tel ? `💬 WhatsApp già scritto: ${linkWa(tel.startsWith("39") ? tel : "39" + tel, `Ciao${d.nome ? " " + d.nome.split(" ")[0] : ""}, ${ultimo.c.charAt(0).toLowerCase() + ultimo.c.slice(1)} Segui qui: ${link}`)}` : ""].filter((x, i, a) => x !== "" || (a[i - 1] !== "" && i > 0)).join("\n");
+}
+function tastiSpedizione(d) {
+  const ora = d.stati.at(-1).s; const t = (k) => ({ text: `${STATI_SPED[k].e} ${STATI_SPED[k].t}${ora === k ? " ✓" : ""}`, callback_data: `sp:${k}:${d.codice}` });
+  return { inline_keyboard: [[t("magazzino"), t("consegna")], [t("assente"), t("consegnata")]] };
+}
+async function tracciaPubblica(url, env, origine) {
+  const c = String(url.searchParams.get("c") || "").trim().toUpperCase();
+  if (!/^AT-[A-Z0-9]{5}$/.test(c)) return risposta({ no: "codice" }, 400, origine);
+  let d; try { d = deb64((await gh(env, "GET", `spedizioni/${c}.json`)).content); } catch (_) { return risposta({ no: "non trovata" }, 404, origine); }
+  return risposta({ codice: d.codice, comune: d.comune || "", stati: d.stati.map((x) => ({ s: x.s, stato: STATI_SPED[x.s].t, emoji: STATI_SPED[x.s].e, quando: x.quando })) }, 200, origine);
+}
+
 // ══ ATLAS — 12 ottobre ══ JJ prova JJA-VIS con Jessica, sua moglie («per vedere come si comporta con un utente vero»). Atlas
 // segna gli impegni che gli scrivono per mail e li ricorda da solo: alle 7 il programma del giorno, e un'ora prima di quelli
 // con l'ora. Tutto in atlas.json nell'archivio: { mail: { nome, turni: [{chi, testo, quando}], impegni: [{id, cosa, giorno,
@@ -974,6 +1039,14 @@ async function telegram(req, env) {
         await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "non sei tu" });
         return new Response("ok");
       }
+      // il tracciamento delle spedizioni di Athena Trasporti (12/10): un tasto per stato
+      const sp = String(q.data || "").match(/^sp:([a-z]+):(AT-[A-Z0-9]{5})$/);
+      if (sp) {
+        let esito; try { esito = await statoSpedizione(env, sp[2], sp[1]); } catch (e) { esito = { errore: e.message || String(e) }; }
+        await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: esito.errore ? `⚠️ ${esito.errore}`.slice(0, 190) : `${STATI_SPED[sp[1]].e} ${STATI_SPED[sp[1]].t}${esito.mail ? " · mail mandata" : ""}` }).catch(() => {});
+        if (esito.d) await tg(env, "editMessageText", { chat_id: q.message.chat.id, message_id: q.message.message_id, text: testoSpedizione(esito.d), disable_web_page_preview: true, reply_markup: tastiSpedizione(esito.d) }).catch(() => {});
+        return new Response("ok");
+      }
       // moderare la città da Telegram (10/10): i tasti sotto la segnalazione. La porta è il webhook del bot, il server della
       // città sta su un altro account Cloudflare: si gira la richiesta a /modera-tg, firmata col token del bot (ce l'hanno tutti e due)
       const mod = String(q.data || "").match(/^(cz|cb):(\d+):(.+)$/);
@@ -1062,6 +1135,20 @@ async function telegram(req, env) {
     await impostaComandi(env);
     if (m.text && /^\/(menu|aiuto|start|comandi)\b/.test(m.text)) {
       await tg(env, "sendMessage", { ...qui, text: RIEPILOGO, reply_markup: { inline_keyboard: TASTI_MENU } });
+      return new Response("ok");
+    }
+    // /sped Nome | indirizzo | mail o telefono: una spedizione nuova da tracciare (JJ, 12/10: «un mio servizio di tracking non
+    // l'ho ancora creato... in magazzino / preso in carico / in consegna / consegnato»)
+    if (m.text && /^\/sped\b/.test(m.text)) {
+      const pezzi = m.text.replace(/^\/sped\S*\s*/, "").split("|").map((x) => x.trim());
+      if (!pezzi[0]) {
+        await tg(env, "sendMessage", { ...qui, text: "📦 Una spedizione nuova:\n/sped Nome | indirizzo | mail o telefono\n\nL'indirizzo e il contatto sono facoltativi. Ti do il codice, il link da dare al cliente e i tasti per gli stati: a ogni tocco, se c'è la mail, gli scrivo io." });
+        return new Response("ok");
+      }
+      try {
+        const d = await nuovaSpedizione(env, { nome: pezzi[0], indirizzo: pezzi[1] || "", contatto: pezzi[2] || "" });
+        await tg(env, "sendMessage", { ...qui, text: testoSpedizione(d), disable_web_page_preview: true, reply_markup: tastiSpedizione(d) });
+      } catch (e) { await tg(env, "sendMessage", { ...qui, text: `⚠️ La spedizione non è stata creata: ${e.message || e}` }); }
       return new Response("ok");
     }
     // /invito [mail]: la prova degli inviti di Atlas (JJ, 12/10: «fai la prova con me, mandami un invito»). Due inviti: uno con
@@ -2075,6 +2162,7 @@ export const COMANDI = [
   ["novita", "Una novità sulla pagina: /novita Titolo | due righe"],
   ["posta", "Come collegare la Gmail di JJA-VIS: le risposte alle lettere le legge e risponde da solo"],
   ["invito", "Prova degli inviti del calendario di Atlas: /invito (alla Gmail di JJA-VIS) o /invito tua@mail"],
+  ["sped", "Athena Trasporti: una spedizione da tracciare (/sped Nome | indirizzo | mail o telefono)"],
 ];
 const RIEPILOGO = [
   "📋 I COMANDI DI JJA-VIS",
@@ -2102,6 +2190,7 @@ const RIEPILOGO = [
   "💬 RISPONDERE ALLE PERSONE",
   "↩️ rispondi a un messaggio col # → la risposta va a quella persona",
   "/invito — prova degli inviti del calendario di Atlas (o /invito tua@mail)",
+  "/sped — Athena Trasporti: spedizione da tracciare, coi tasti degli stati e il link per il cliente",
   "/posta — collegare la Gmail di JJA-VIS: chi risponde alle lettere riceve risposta da JJA-VIS da solo; a te solo prezzi e decisioni",
   "",
   "/menu — questo elenco. Lo trovi sempre anche nel tasto «Menu» accanto al messaggio.",
