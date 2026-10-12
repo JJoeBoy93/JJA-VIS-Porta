@@ -16,12 +16,15 @@ const ok = (c, m, d) => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c || d ==
 const env = { GH_TOKEN: "g", TG_BOT_TOKEN: "bot", TG_CHAT: "42", BREVO_API_KEY: "b", MITTENTE: "jjavis@prova.it", ANTHROPIC_API_KEY: "a" };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
 let repo, mandate, tgMsg, claudeDice, claudeChiamate, claudeVisto;
-const nuovo = () => { repo = {}; mandate = []; tgMsg = []; claudeChiamate = 0; claudeVisto = ""; claudeDice = "Ciao Jessica, certo: ti spiego meglio.\nJJA-VIS"; };
+const J_ = (o) => JSON.stringify(o);
+const nuovo = () => { repo = {}; mandate = []; tgMsg = []; claudeChiamate = 0; claudeVisto = ""; claudeModello = "";
+  claudeDice = J_({ risposta: "Ciao Jessica, segnato.\nAtlas", nuovi: [{ cosa: "ricordare a Jacopo il parrucchiere", giorno: "2026-10-14", ora: "18:00" }], tolti: [], per_jj: null }); };
+let claudeModello = "";
 globalThis.fetch = async (url, o = {}) => {
   const u = new URL(String(url)); const j = (s, b) => new Response(JSON.stringify(b), { status: s });
   if (u.host === "api.telegram.org") { tgMsg.push(JSON.parse(o.body || "{}")); return j(200, { ok: true, result: { message_id: 1 } }); }
   if (u.host === "api.brevo.com") { mandate.push(JSON.parse(o.body)); return j(201, { messageId: "m" + mandate.length }); }
-  if (u.host === "api.anthropic.com") { claudeChiamate++; claudeVisto = JSON.parse(o.body).messages[0].content; return j(200, { content: [{ type: "text", text: claudeDice }] }); }
+  if (u.host === "api.anthropic.com") { claudeChiamate++; const b_ = JSON.parse(o.body); claudeVisto = b_.messages[0].content; claudeModello = b_.model; return j(200, { content: [{ type: "text", text: claudeDice }] }); }
   if (u.host === "api.github.com") {
     const p = decodeURIComponent(u.pathname.split("/contents/")[1] || ""); const m = o.method || "GET";
     if (m === "GET") { if (repo[p]) return j(200, { content: b64(repo[p]), sha: "s" + p });
@@ -46,18 +49,25 @@ nuovo(); let r = await posta(daJessica("ciao"), "sbagliata"); ok(r.stato === 403
 console.log("── risponde a una nostra lettera: JJA-VIS risponde da solo");
 nuovo(); repo["inviate/1.json"] = lettera;
 r = await posta(daJessica("Mi interessa, puoi spiegarmi meglio come funziona?\n\nIl giorno sab 11 ott 2026 JJA-VIS <jjavis@prova.it> ha scritto:\n> Ciao Jessica, ti scrivo per le scadenze\n> del tuo studio"));
-ok(r.stato === 200 && r.rispondi === claudeDice, "lo script riceve la risposta da mandare da Gmail", r);
+ok(r.stato === 200 && r.rispondi === "Ciao Jessica, segnato.\nAtlas", "lo script riceve la risposta da mandare da Gmail", r);
+ok(/sonnet/.test(claudeModello), "Atlas risponde con Sonnet, non Haiku", claudeModello);
+ok(repo["atlas.json"]["jessica@p.it"].impegni[0].cosa === "ricordare a Jacopo il parrucchiere" && repo["atlas.json"]["jessica@p.it"].impegni[0].ora === "18:00", "l'impegno è segnato in atlas.json", repo["atlas.json"]);
 ok(claudeVisto.includes("Le tue scadenze") && claudeVisto.includes("spiegarmi meglio") && !claudeVisto.includes("> Ciao Jessica"), "Claude vede la nostra lettera e la sua risposta, senza la citazione sotto", claudeVisto.slice(0, 300));
-ok(tgMsg.length === 1 && /🤖 Jessica Rossi ha risposto e JJA-VIS gli ha risposto da solo/.test(tgMsg[0].text) && !tgMsg[0].reply_markup, "a JJ una riga per sapere, senza tasti", tgMsg);
+ok(tgMsg.length === 1 && /🤖 Jessica Rossi ha risposto e Atlas gli ha risposto da solo/.test(tgMsg[0].text) && /📌 Segnati: 2026-10-14 18:00/.test(tgMsg[0].text) && !tgMsg[0].reply_markup, "a JJ una riga per sapere, con gli impegni segnati, senza tasti", tgMsg);
+// la seconda mail: Atlas vede la conversazione e gli impegni già segnati (prima vedeva solo l'ultima mail e richiedeva cose già dette)
+claudeDice = J_({ risposta: "Ok.\nAtlas", nuovi: [], tolti: [], per_jj: null });
+r = await posta(daJessica("e preferisco le email"));
+ok(/LEI: Mi interessa, puoi spiegarmi meglio/.test(claudeVisto) && /TU: Ciao Jessica, segnato/.test(claudeVisto) && /alle 18:00: ricordare a Jacopo il parrucchiere/.test(claudeVisto) && /OGGI è /.test(claudeVisto),
+   "la seconda volta Atlas vede tutta la conversazione, gli impegni e la data di oggi", claudeVisto.slice(0, 600));
 const b = Object.entries(repo).find(([k]) => k.startsWith("bozze/"));
 ok(b && b[1].stato === "inviata" && b[1].via.join() === "gmail" && b[1].a === "jessica@p.it", "resta scritta in bozze/ come inviata da Gmail", b);
 
 console.log("── prezzi, date, accordi: a JJ, con la proposta");
-nuovo(); repo["inviate/1.json"] = lettera; claudeDice = "PER JJ: chiede un prezzo\nCiao Jessica, il prezzo te lo dice chi mi costruisce entro domani.";
+nuovo(); repo["inviate/1.json"] = lettera; claudeDice = J_({ risposta: "Ciao Jessica, il prezzo te lo dice chi mi costruisce entro domani.", nuovi: [], tolti: [], per_jj: "chiede un prezzo" });
 r = await posta(daJessica("Quanto costa?"));
 ok(r.stato === 200 && r.attesa && !r.rispondi, "lo script non risponde: la mail aspetta JJ", r);
 const t = tgMsg[0] || {};
-ok(/🙋 Serve te: chiede un prezzo/.test(t.text) && /Proposta di JJA-VIS:\nCiao Jessica/.test(t.text) && !/PER JJ/.test(t.text.split("Proposta")[1]) && t.reply_markup.inline_keyboard[0][0].callback_data === `invia:${r.attesa}`, "a JJ: il motivo, la proposta pulita e Invia", t);
+ok(/🙋 Serve te: chiede un prezzo/.test(t.text) && /Proposta di Atlas:\nCiao Jessica/.test(t.text) && !/PER JJ/.test(t.text.split("Proposta")[1]) && t.reply_markup.inline_keyboard[0][0].callback_data === `invia:${r.attesa}`, "a JJ: il motivo, la proposta pulita e Invia", t);
 // JJ tocca Invia: parte da Brevo con Re: <oggetto>
 const segreto = createHmac("sha256", "x").digest("hex");   // non serve: si chiama invia dal tasto
 const { createHash } = await import("node:crypto");
@@ -81,5 +91,26 @@ ok(r.ignora && !tgMsg.length, "anche col nome «JJA-VIS» (i codici d'accesso)",
 nuovo(); repo["inviate/1.json"] = lettera; repo["posta-auto.json"] = { "jessica@p.it": [1, 2, 3].map((h) => new Date(Date.now() - h * 36e5).toISOString()) };
 r = await posta(daJessica("ancora una domanda")); ok(r.attesa && /già 3 risposte da solo in 24 ore/.test(tgMsg[0].text), "dopo 3 risposte da solo in 24 ore, la quarta va a JJ", tgMsg[0]);
 nuovo(); r = await posta({ da: "non-una-mail", testo: "x" }); ok(r.stato === 400, "una mail che non è una mail: 400", r);
+
+console.log("── i promemoria di Atlas");
+const { atlasPromemoria } = await import(join(dir, "worker.mjs"));
+nuovo(); repo["atlas.json"] = { "jessica@p.it": { nome: "Jessica Crippa", turni: [], riepilogo: "", impegni: [
+  { id: "a1", cosa: "ricordare a Jacopo il parrucchiere", giorno: "2026-10-14", ora: "18:00", avvisato: false },
+  { id: "a2", cosa: "comprare il giubbotto per Athena", giorno: "2026-10-14", ora: null, avvisato: false },
+  { id: "a3", cosa: "vecchio", giorno: "2026-10-01", ora: null, avvisato: false } ] } };
+await atlasPromemoria(env, new Date("2026-10-14T04:07:00Z"));   // 06:07 a Roma (ora legale, +2): ancora niente
+ok(mandate.length === 0, "alle 6 di Roma non parte niente", mandate);
+await atlasPromemoria(env, new Date("2026-10-14T05:07:00Z"));   // 07:07 a Roma
+ok(mandate.length === 1 && /programma di oggi, mercoledì 14\/10/.test(mandate[0].subject) && /18:00 ricordare a Jacopo/.test(mandate[0].textContent) && /giubbotto/.test(mandate[0].textContent) && mandate[0].sender.name === "Atlas · JJA-VIS",
+   "alle 7 di Roma il programma del giorno, con e senza ora", mandate);
+ok(!repo["atlas.json"]["jessica@p.it"].impegni.some((x) => x.id === "a3"), "gli impegni vecchi di giorni si tolgono", repo["atlas.json"]);
+await atlasPromemoria(env, new Date("2026-10-14T06:07:00Z")); ok(mandate.length === 1, "il programma parte una volta sola al giorno", mandate.length);
+await atlasPromemoria(env, new Date("2026-10-14T15:07:00Z"));   // 17:07 a Roma: un'ora prima delle 18
+ok(mandate.length === 2 && /⏰ Alle 18:00: ricordare a Jacopo il parrucchiere/.test(mandate[1].subject), "alle 17:07 di Roma il promemoria delle 18", mandate[1]);
+await atlasPromemoria(env, new Date("2026-10-14T15:30:00Z")); ok(mandate.length === 2, "il promemoria parte una volta sola", mandate.length);
+ok(tgMsg.some((t) => /Atlas ha mandato/.test(t.text)), "JJ sa cosa ha mandato Atlas", tgMsg);
+nuovo(); repo["atlas.json"] = { "x@p.it": { nome: "", turni: [], riepilogo: "", impegni: [{ id: "b", cosa: "y", giorno: "2026-12-10", ora: "09:00", avvisato: false }] } };
+await atlasPromemoria(env, new Date("2026-12-10T07:07:00Z"));   // 08:07 a Roma d'inverno (+1): un'ora prima delle 9
+ok(mandate.some((m) => /Alle 09:00/.test(m.subject)), "d'inverno (ora solare) il promemoria parte all'ora giusta", mandate.map((m) => m.subject));
 
 console.log(errori ? `\n${errori} prove rosse` : "\nVERDE"); process.exit(errori ? 1 : 0);
