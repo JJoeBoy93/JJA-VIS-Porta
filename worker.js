@@ -683,7 +683,7 @@ async function postaInArrivo(req, env) {
   try {
     const nomi = (await gh(env, "GET", "inviate")).map((f) => f.name).filter((n) => n.endsWith(".json")).sort().reverse();
     for (const n of nomi.slice(0, 30)) { const L = deb64((await gh(env, "GET", `inviate/${n}`)).content);
-      if (String(L.a || "").toLowerCase() === da) { lettera = { oggetto: L.oggetto, testo: L.testo, nome: L.nome }; break; } }
+      if (String(L.a || "").toLowerCase() === da) { lettera = { oggetto: L.oggetto, testo: L.testo, nome: L.nome, fonte: L.fonte }; break; } }
   } catch (_) {}
   const id = nuovoId();
   const rec = { id, a: da, nome: nome || (lettera && lettera.nome) || "", domanda: testo, da_dove: "posta", oggetto: oggetto || (lettera && lettera.oggetto) || "",
@@ -696,6 +696,11 @@ async function postaInArrivo(req, env) {
   // una volta ha promesso il calendario del telefono, che non fa. Chi scrive a caso (non a una nostra lettera e senza una
   // conversazione già aperta) va a JJ senza chiamare Claude (JJ, 25/9: «se mi scrivono a caso non devo pagare»).
   const A = await atlasLeggi(env); const filo = A.dati[da];
+  // dove si scrive a JJ: nell'argomento di quella persona nel gruppo dei Profili (JJ, 12/10: «non dovrebbe metterlo nel thread
+  // di Jessica invece che nel bot?»), come le domande della pagina. Il profilo si trova dalla lettera: fonte → risposta al
+  // sondaggio → chi → utenti/<chi>.json; il codice si tiene in atlas.json
+  const chi = (filo && filo.chi) || await chiDaLettera(env, lettera);
+  const qui = await dovePosta(env, chi);
   let esito = null, errore = null;
   if (!lettera && !filo) errore = "non risponde a una nostra lettera";
   else try { esito = await atlasRisponde(env, da, rec, filo, lettera); } catch (e) { errore = `Atlas non è riuscito (${e.message || e})`; }
@@ -704,7 +709,7 @@ async function postaInArrivo(req, env) {
   // la conversazione e gli impegni si aggiornano sempre, anche quando decide JJ
   let segnati = [];
   if (esito) segnati = await atlasAggiorna(env, da, (f) => {
-    f.nome = f.nome || rec.nome;
+    f.nome = f.nome || rec.nome; if (chi) f.chi = chi;
     if (!f.turni.length && lettera) f.turni.push({ chi: "noi", testo: `[la lettera «${lettera.oggetto}»] ${String(lettera.testo || "").slice(0, 1500)}`, quando: lettera.quando || "" });
     f.turni.push({ chi: "lei", testo, quando: rec.quando });
     if (!perJJ) f.turni.push({ chi: "noi", testo: testoBozza, quando: new Date().toISOString() });
@@ -720,7 +725,7 @@ async function postaInArrivo(req, env) {
     const proposta = testoBozza;
     await salvaBozza(env, id, { ...rec, bozza: proposta, stato: proposta ? "bozza" : "nuova", di_jj: false });
     await segnaAttesa(env, id, true).catch(() => {});
-    await tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+    await tg(env, "sendMessage", { ...qui,
       text: `✉️ ${rec.nome || da} ha risposto  #${id}\n${rec.contesto}\n«${testo.slice(0, 1500)}»\n\n🙋 Serve te: ${motivo}${elenco}\n` +
             (proposta ? `\n✍️ Proposta di Atlas:\n${proposta}\n\nPer cambiarla, rispondi a questo messaggio col testo giusto: parte quello.` : "\nRispondi a questo messaggio col tuo testo: parte quello.").slice(0, 3900),
       reply_markup: proposta ? tastiInvio(rec, id, false) : { inline_keyboard: [[{ text: "✍️ Bozza", callback_data: `bozza:${id}` }, { text: "🗑 Ignora", callback_data: `scarta:${id}` }]] } }).catch(() => {});
@@ -729,9 +734,18 @@ async function postaInArrivo(req, env) {
   await salvaBozza(env, id, { ...rec, bozza: testoBozza, stato: "inviata", inviato: testoBozza, di_jj: false, via: ["gmail"], quando_inviata: new Date().toISOString() });
   auto[da] = [...recenti, new Date().toISOString()];
   await gh(env, "PUT", "posta-auto.json", { message: "posta: risposta da sola", content: b64(auto), ...(autoSha ? { sha: autoSha } : {}) }).catch(() => {});
-  await tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+  await tg(env, "sendMessage", { ...qui,
     text: `🤖 ${rec.nome || da} ha risposto e Atlas gli ha risposto da solo  #${id}\n«${testo.slice(0, 600)}»\n\n↩️ ${testoBozza.slice(0, 1500)}${elenco}` }).catch(() => {});
   return J({ rispondi: testoBozza });
+}
+
+async function chiDaLettera(env, lettera) {
+  if (!lettera || !lettera.fonte) return null;
+  try { return deb64((await gh(env, "GET", lettera.fonte)).content).chi || null; } catch (_) { return null; }
+}
+async function dovePosta(env, chi) {
+  if (!env.TG_GRUPPO || !chi) return { chat_id: env.TG_CHAT };
+  try { const u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); return doveUtente(env, u); } catch (_) { return { chat_id: env.TG_CHAT }; }
 }
 
 // ══ ATLAS — 12 ottobre ══ JJ prova JJA-VIS con Jessica, sua moglie («per vedere come si comporta con un utente vero»). Atlas
@@ -821,19 +835,20 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     if (h >= 7 && f.riepilogo !== oggi && diOggi.length) {
       const righe = diOggi.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n");
       await atlasMail(env, mail, f.nome, `📋 Il tuo programma di oggi, ${giornoBello(oggi)}`, `Buongiorno${f.nome ? " " + f.nome.split(" ")[0] : ""}! Oggi:\n\n${righe}\n\nTi riscrivo un'ora prima di quelli con l'ora.\nAtlas`);
-      f.riepilogo = oggi; cambiato = true; fatti.push(`📋 ${f.nome || mail}: programma di oggi (${diOggi.length})`);
+      f.riepilogo = oggi; cambiato = true; fatti.push([mail, `📋 ${f.nome || mail}: programma di oggi (${diOggi.length})`]);
     }
     for (const x of f.impegni) {
       if (x.avvisato || !x.ora) continue;
       const quando = daRoma(x.giorno, x.ora).getTime();
       if (adesso.getTime() >= quando - 65 * 60000 && adesso.getTime() < quando) {
         await atlasMail(env, mail, f.nome, `⏰ Alle ${x.ora}: ${x.cosa}`, `Tra poco, alle ${x.ora}: ${x.cosa}.\nAtlas`);
-        x.avvisato = true; cambiato = true; fatti.push(`⏰ ${f.nome || mail}: ${x.ora} ${x.cosa}`);
+        x.avvisato = true; cambiato = true; fatti.push([mail, `⏰ ${f.nome || mail}: ${x.ora} ${x.cosa}`]);
       }
     }
   }
   if (cambiato) await gh(env, "PUT", "atlas.json", { message: "atlas: promemoria", content: b64(A.dati), sha: A.sha });
-  if (fatti.length) await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `🗓 Atlas ha mandato:\n${fatti.join("\n")}` }).catch(() => {});
+  for (const [mail, righe] of Object.entries(fatti.reduce((o, [m, r]) => ((o[m] = o[m] || []).push(r), o), {})))
+    await tg(env, "sendMessage", { ...(await dovePosta(env, A.dati[mail].chi)), text: `🗓 Atlas ha mandato:\n${righe.join("\n")}` }).catch(() => {});
 }
 
 

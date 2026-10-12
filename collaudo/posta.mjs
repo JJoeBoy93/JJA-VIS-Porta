@@ -92,6 +92,17 @@ nuovo(); repo["inviate/1.json"] = lettera; repo["posta-auto.json"] = { "jessica@
 r = await posta(daJessica("ancora una domanda")); ok(r.attesa && /già 3 risposte da solo in 24 ore/.test(tgMsg[0].text), "dopo 3 risposte da solo in 24 ore, la quarta va a JJ", tgMsg[0]);
 nuovo(); r = await posta({ da: "non-una-mail", testo: "x" }); ok(r.stato === 400, "una mail che non è una mail: 400", r);
 
+console.log("── nell'argomento della persona (12/10: «non dovrebbe metterlo nel thread di Jessica?»)");
+{ const envG = { ...env, TG_GRUPPO: "-1009" };
+  nuovo(); repo["inviate/1.json"] = { ...lettera, fonte: "risposte/x.json" }; repo["risposte/x.json"] = { chi: "7b0479", mail: "jessica@p.it" }; repo["utenti/7b0479.json"] = { chi: "7b0479", thread: 26 };
+  r = await W.fetch(new Request("https://x/posta", { method: "POST", headers: { "X-Posta": CHIAVE, "Content-Type": "application/json" }, body: JSON.stringify(daJessica("segna anche la spesa giovedì")) }), envG, { waitUntil() {} });
+  ok(tgMsg.length === 1 && String(tgMsg[0].chat_id).endsWith("1009") && tgMsg[0].message_thread_id === 26, "la risposta di Jessica arriva nel suo argomento del gruppo, non nella chat del bot", tgMsg);
+  ok(repo["atlas.json"]["jessica@p.it"].chi === "7b0479", "il codice del profilo resta in atlas.json, per i promemoria", repo["atlas.json"]);
+  const { atlasPromemoria: ap } = await import(join(dir, "worker.mjs")); tgMsg = [];
+  repo["atlas.json"]["jessica@p.it"].impegni = [{ id: "z", cosa: "spesa", giorno: "2026-10-15", ora: null, avvisato: false }];
+  await ap(envG, new Date("2026-10-15T05:07:00Z"));
+  ok(tgMsg.length === 1 && tgMsg[0].message_thread_id === 26 && /Atlas ha mandato/.test(tgMsg[0].text), "anche «Atlas ha mandato» va nel suo argomento", tgMsg); }
+
 console.log("── i promemoria di Atlas");
 const { atlasPromemoria } = await import(join(dir, "worker.mjs"));
 nuovo(); repo["atlas.json"] = { "jessica@p.it": { nome: "Jessica Crippa", turni: [], riepilogo: "", impegni: [
