@@ -24,7 +24,7 @@ globalThis.fetch = async (url, o = {}) => {
   const u = new URL(String(url)); const j = (s, b) => new Response(JSON.stringify(b), { status: s });
   if (u.host === "api.telegram.org") { tgMsg.push(JSON.parse(o.body || "{}")); return j(200, { ok: true, result: { message_id: 1 } }); }
   if (u.host === "api.brevo.com") { mandate.push(JSON.parse(o.body)); return j(201, { messageId: "m" + mandate.length }); }
-  if (u.host === "api.anthropic.com") { claudeChiamate++; const b_ = JSON.parse(o.body); claudeVisto = b_.messages[0].content; claudeModello = b_.model; return j(200, { content: [{ type: "text", text: claudeDice }] }); }
+  if (u.host === "api.anthropic.com") { claudeChiamate++; const b_ = JSON.parse(o.body); claudeVisto = b_.messages[0].content; claudeModello = b_.model; return j(200, { model: b_.model, usage: { input_tokens: 4000, output_tokens: 400 }, content: [{ type: "text", text: claudeDice }] }); }
   if (u.host === "api.github.com") {
     const p = decodeURIComponent(u.pathname.split("/contents/")[1] || ""); const m = o.method || "GET";
     if (m === "GET") { if (repo[p]) return j(200, { content: b64(repo[p]), sha: "s" + p });
@@ -102,6 +102,16 @@ console.log("── nell'argomento della persona (12/10: «non dovrebbe metterlo
   repo["atlas.json"]["jessica@p.it"].impegni = [{ id: "z", cosa: "spesa", giorno: "2026-10-15", ora: null, avvisato: false }];
   await ap(envG, new Date("2026-10-15T05:07:00Z"));
   ok(tgMsg.length === 1 && tgMsg[0].message_thread_id === 26 && /Atlas ha mandato/.test(tgMsg[0].text), "anche «Atlas ha mandato» va nel suo argomento", tgMsg); }
+
+console.log("── quanto costa (12/10: «ogni risposta che manda in autonomia pago 15 centesimi?»)");
+nuovo(); repo["inviate/1.json"] = lettera; r = await posta(daJessica("segna la spesa giovedì"));
+ok(/💶 questa risposta ≈ 1\.8 cent di \$/.test(tgMsg[0].text) && Math.abs(Object.values(repo["spesa-ia.json"].giorni)[0] - 0.018) < 1e-9, "Sonnet, 4.000 token in entrata e 400 in uscita: 1,8 cent, detto a JJ e contato", [tgMsg[0].text.slice(-120), repo["spesa-ia.json"]]);
+const oggi_ = new Date().toISOString().slice(0, 10);
+nuovo(); repo["inviate/1.json"] = lettera; repo["spesa-ia.json"] = { giorni: { [oggi_]: 0.5 }, mesi: { [oggi_.slice(0, 7)]: 0.5 } };
+r = await posta(daJessica("e la torta?"));
+ok(r.attesa && claudeChiamate === 0 && /tetto di spesa di Atlas raggiunto/.test(tgMsg[0].text), "oltre 0,50 $ al giorno niente Claude: la mail va a JJ", [claudeChiamate, tgMsg[0] && tgMsg[0].text.slice(0, 200)]);
+nuovo(); repo["inviate/1.json"] = lettera; repo["spesa-ia.json"] = { giorni: {}, mesi: { [oggi_.slice(0, 7)]: 3 } };
+r = await posta(daJessica("e la torta?")); ok(r.attesa && claudeChiamate === 0, "oltre 3 $ al mese, idem", claudeChiamate);
 
 console.log("── i promemoria di Atlas");
 const { atlasPromemoria } = await import(join(dir, "worker.mjs"));
