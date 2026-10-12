@@ -1064,6 +1064,20 @@ async function telegram(req, env) {
       await tg(env, "sendMessage", { ...qui, text: RIEPILOGO, reply_markup: { inline_keyboard: TASTI_MENU } });
       return new Response("ok");
     }
+    // /invito [mail]: la prova degli inviti di Atlas (JJ, 12/10: «fai la prova con me, mandami un invito»). Due inviti: uno con
+    // l'ora (domani alle 9) e uno di tutto il giorno (dopodomani); alla Gmail di JJA-VIS, o alla mail scritta dopo il comando
+    if (m.text && /^\/invito\b/.test(m.text)) {
+      const a = (m.text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/) || [env.MITTENTE])[0];
+      const oggi = oraRoma().slice(0, 10), piu = (n) => new Date(Date.UTC(+oggi.slice(0, 4), +oggi.slice(5, 7) - 1, +oggi.slice(8, 10) + n)).toISOString().slice(0, 10);
+      const prove = [{ id: "prova1", cosa: "Prova di Atlas: impegno con l'ora", giorno: piu(1), ora: "09:00" }, { id: "prova2", cosa: "Prova di Atlas: impegno di tutto il giorno", giorno: piu(2), ora: null }];
+      try {
+        await atlasMail(env, a, "", "📅 Prova: 2 impegni da mettere nel tuo calendario",
+          `Questa è una prova degli inviti di Atlas. Apri gli allegati uno alla volta e tocca «Aggiungi»:\n\n${prove.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : " (tutto il giorno)"}: ${x.cosa}`).join("\n")}\n\nAtlas`,
+          prove.map((x) => ({ name: `atlas-${x.giorno}-${x.id}.ics`, content: btoa(String.fromCharCode(...new TextEncoder().encode(icsImpegno(x)))) })));
+        await tg(env, "sendMessage", { ...qui, text: `📅 Mandata a ${a}: due inviti (domani alle 9, dopodomani tutto il giorno). Aprila e tocca gli allegati.` });
+      } catch (e) { await tg(env, "sendMessage", { ...qui, text: `⚠️ L'invito non è partito: ${e.message || e}` }); }
+      return new Response("ok");
+    }
     if (m.text && /^\/posta\b/.test(m.text)) {
       await tg(env, "sendMessage", { ...qui, disable_web_page_preview: true, text: [
         "✉️ LA POSTA IN ARRIVO DI JJA-VIS", "",
@@ -2060,6 +2074,7 @@ export const COMANDI = [
   ["togli", "Togli un video: /togli 2 (senza numero li elenca)"],
   ["novita", "Una novità sulla pagina: /novita Titolo | due righe"],
   ["posta", "Come collegare la Gmail di JJA-VIS: le risposte alle lettere le legge e risponde da solo"],
+  ["invito", "Prova degli inviti del calendario di Atlas: /invito (alla Gmail di JJA-VIS) o /invito tua@mail"],
 ];
 const RIEPILOGO = [
   "📋 I COMANDI DI JJA-VIS",
@@ -2086,6 +2101,7 @@ const RIEPILOGO = [
   "",
   "💬 RISPONDERE ALLE PERSONE",
   "↩️ rispondi a un messaggio col # → la risposta va a quella persona",
+  "/invito — prova degli inviti del calendario di Atlas (o /invito tua@mail)",
   "/posta — collegare la Gmail di JJA-VIS: chi risponde alle lettere riceve risposta da JJA-VIS da solo; a te solo prezzi e decisioni",
   "",
   "/menu — questo elenco. Lo trovi sempre anche nel tasto «Menu» accanto al messaggio.",

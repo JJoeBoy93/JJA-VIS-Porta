@@ -163,4 +163,14 @@ const sera = mandate.find((m) => /🌙 Domani, mercoledì 14\/10/.test(m.subject
 ok(sera && /18:00 ricordare a Jacopo/.test(sera.textContent) && /giubbotto/.test(sera.textContent), "alle 20 della sera prima: quelli di domani", mandate.map((m) => m.subject));
 const n2 = mandate.length; await atlasPromemoria(env, new Date("2026-10-13T19:07:00Z")); ok(mandate.length === n2, "la sera prima una volta sola", mandate.length - n2);
 
+console.log("── /invito, la prova di JJ");
+nuovo();
+await W.fetch(new Request("https://x/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": tok, "Content-Type": "application/json" },
+  body: JSON.stringify({ message: { message_id: 9, from: { id: 42 }, chat: { id: 42, type: "private" }, text: "/invito jj@prova.it" } }) }), env, { waitUntil() {} });
+ok(mandate.length === 1 && mandate[0].to[0].email === "jj@prova.it" && mandate[0].attachment.length === 2 && /Mandata a jj@prova\.it/.test((tgMsg.at(-1) || {}).text || ""), "/invito manda due inviti alla mail scritta, e lo dice", [mandate, tgMsg.at(-1)]);
+nuovo();
+await W.fetch(new Request("https://x/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": tok, "Content-Type": "application/json" },
+  body: JSON.stringify({ message: { message_id: 9, from: { id: 42 }, chat: { id: 42, type: "private" }, text: "/invito" } }) }), env, { waitUntil() {} });
+ok(mandate.length === 1 && mandate[0].to[0].email === "jjavis@prova.it", "senza mail, alla Gmail di JJA-VIS", mandate.map((m) => m.to));
+
 console.log(errori ? `\n${errori} prove rosse` : "\nVERDE"); process.exit(errori ? 1 : 0);
