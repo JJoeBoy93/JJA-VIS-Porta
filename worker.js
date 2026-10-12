@@ -898,7 +898,7 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     // la sera prima (lo promette la lettera: «il giorno prima e la mattina stessa»)
     const domani = new Date(Date.UTC(+oggi.slice(0, 4), +oggi.slice(5, 7) - 1, +oggi.slice(8, 10) + 1)).toISOString().slice(0, 10);
     const diDomani = f.impegni.filter((x) => x.giorno === domani).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
-    if (h >= 20 && f.serale !== oggi && diDomani.length) {
+    if (h >= 20 && h < 22 && f.serale !== oggi && diDomani.length) {   // fino alle 22: dopo, si aspetta la mattina
       await atlasMail(env, mail, f.nome, `🌙 Domani, ${giornoBello(domani)}`, `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, domani hai:\n\n${diDomani.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n")}\n\nBuona serata.\nAtlas`);
       f.serale = oggi; cambiato = true; fatti.push([mail, `🌙 ${f.nome || mail}: quelli di domani (${diDomani.length})`]);
     }
