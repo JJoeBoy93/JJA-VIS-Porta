@@ -827,9 +827,10 @@ caldo ma senza entusiasmo finto, come una persona attenta. Firmi «Atlas».
 
 Cosa fai DAVVERO, e nient'altro:
 - segni gli impegni che ti scrive (anche quelli da ricordare ad altri: «ricordami di dire a Jacopo…» è un impegno SUO: ricordare a lei di dirlo a lui);
-- ogni mattina alle 7 le mandi per mail il programma della giornata; un'ora prima di ogni impegno con l'ora, un promemoria;
+- la sera prima, alle 20, le mandi per mail gli impegni del giorno dopo; ogni mattina alle 7 il programma della giornata; un'ora prima di ogni impegno con l'ora, un promemoria;
+- per ogni impegno nuovo le mandi (in una mail a parte, al primo giro dopo le 7) un invito del calendario: lo tocca e finisce nel SUO calendario, col suo avviso. Tu nel calendario non entri: è lei che lo aggiunge con un tocco;
 - puoi togliere o spostare un impegno se te lo chiede.
-Cosa NON fai (non dirlo mai, non lasciarlo intendere): non entri nel suo calendario o nel suo telefono, non prendi appuntamenti, non
+Cosa NON fai (non dirlo mai, non lasciarlo intendere): non entri nel suo calendario né nel suo telefono (gli inviti li aggiunge lei), non prendi appuntamenti, non
 telefoni, non compri, non scrivi ad altre persone. Se in una tua risposta precedente hai promesso una di queste cose, correggiti con
 onestà e in una riga. Se ti chiede una di queste cose, di' che oggi non la fai.
 
@@ -859,12 +860,24 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
   if (typeof d.risposta !== "string") throw new Error("risposta senza testo");
   return d;
 }
-async function atlasMail(env, a, nome, oggetto, testo) {
+// l'invito del calendario (.ics, RFC 5545): lo apre e finisce nel suo calendario (Google, Apple, Outlook). Con l'ora: 30 minuti
+// e un avviso un'ora prima; senza ora: tutto il giorno, avviso alle 20 della sera prima. Le ore si scrivono in UTC (Z)
+function icsImpegno(x) {
+  const z = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const testo = (t) => String(t).replace(/\\/g, "\\\\").replace(/([,;])/g, "\\$1").replace(/\n/g, "\\n");
+  const g = x.giorno.replace(/-/g, ""), dopo = new Date(Date.UTC(+x.giorno.slice(0, 4), +x.giorno.slice(5, 7) - 1, +x.giorno.slice(8, 10) + 1)).toISOString().slice(0, 10).replace(/-/g, "");
+  const quando = x.ora ? [`DTSTART:${z(daRoma(x.giorno, x.ora))}`, `DTEND:${z(new Date(daRoma(x.giorno, x.ora).getTime() + 30 * 60000))}`] : [`DTSTART;VALUE=DATE:${g}`, `DTEND;VALUE=DATE:${dopo}`];
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//JJA-VIS//Atlas//IT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
+    `UID:${x.id}-${g}@atlas.jja-vis`, `DTSTAMP:${z(new Date())}`, ...quando, `SUMMARY:${testo(x.cosa)}`, "DESCRIPTION:Segnato da Atlas (JJA-VIS)",
+    "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${testo(x.cosa)}`, x.ora ? "TRIGGER:-PT60M" : "TRIGGER:-PT4H", "END:VALARM", "END:VEVENT", "END:VCALENDAR"].join("\r\n") + "\r\n";
+}
+async function atlasMail(env, a, nome, oggetto, testo, allegati) {
   const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
     headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ sender: { name: "Atlas · JJA-VIS", email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: "Atlas" },
       to: [{ email: a, ...(nome ? { name: nome } : {}) }], subject: oggetto,
-      textContent: testo + "\n\n—\nAtlas, l'assistente di JJA-VIS. Rispondi a questa mail per aggiungere, togliere o spostare un impegno; «cancellami» per non ricevere più niente." }) });
+      textContent: testo + "\n\n—\nAtlas, l'assistente di JJA-VIS. Rispondi a questa mail per aggiungere, togliere o spostare un impegno; «cancellami» per non ricevere più niente.",
+      ...(allegati && allegati.length ? { attachment: allegati } : {}) }) });
   if (!res.ok) throw new Error(`Brevo ${res.status}`);
 }
 // ogni ora: alle 7 (o al primo giro dopo) il programma del giorno; un'ora prima di un impegno con l'ora, il promemoria
@@ -881,6 +894,21 @@ export async function atlasPromemoria(env, adesso = new Date()) {
       const righe = diOggi.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n");
       await atlasMail(env, mail, f.nome, `📋 Il tuo programma di oggi, ${giornoBello(oggi)}`, `Buongiorno${f.nome ? " " + f.nome.split(" ")[0] : ""}! Oggi:\n\n${righe}\n\nTi riscrivo un'ora prima di quelli con l'ora.\nAtlas`);
       f.riepilogo = oggi; cambiato = true; fatti.push([mail, `📋 ${f.nome || mail}: programma di oggi (${diOggi.length})`]);
+    }
+    // la sera prima (lo promette la lettera: «il giorno prima e la mattina stessa»)
+    const domani = new Date(Date.UTC(+oggi.slice(0, 4), +oggi.slice(5, 7) - 1, +oggi.slice(8, 10) + 1)).toISOString().slice(0, 10);
+    const diDomani = f.impegni.filter((x) => x.giorno === domani).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
+    if (h >= 20 && f.serale !== oggi && diDomani.length) {
+      await atlasMail(env, mail, f.nome, `🌙 Domani, ${giornoBello(domani)}`, `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, domani hai:\n\n${diDomani.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n")}\n\nBuona serata.\nAtlas`);
+      f.serale = oggi; cambiato = true; fatti.push([mail, `🌙 ${f.nome || mail}: quelli di domani (${diDomani.length})`]);
+    }
+    // gli inviti del calendario degli impegni nuovi, in una mail sola, fra le 7 e le 22 (di notte non si scrive)
+    const daInvitare = f.impegni.filter((x) => !x.ics && x.giorno >= oggi).slice(0, 10);
+    if (h >= 7 && h < 22 && daInvitare.length) {
+      await atlasMail(env, mail, f.nome, `📅 ${daInvitare.length === 1 ? "Un impegno" : daInvitare.length + " impegni"} da mettere nel tuo calendario`,
+        `Qui sotto ${daInvitare.length === 1 ? "c'è l'invito" : "ci sono gli inviti"} del calendario: ${daInvitare.length === 1 ? "aprilo" : "aprili uno alla volta"} e tocca «Aggiungi», e ${daInvitare.length === 1 ? "finisce" : "finiscono"} nel tuo calendario, con il loro avviso.\n\n${daInvitare.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n")}\n\nAtlas`,
+        daInvitare.map((x) => ({ name: `atlas-${x.giorno}-${x.id}.ics`, content: btoa(String.fromCharCode(...new TextEncoder().encode(icsImpegno(x)))) })));
+      for (const x of daInvitare) x.ics = true; cambiato = true; fatti.push([mail, `📅 ${f.nome || mail}: ${daInvitare.length} inviti del calendario`]);
     }
     for (const x of f.impegni) {
       if (x.avvisato || !x.ora) continue;

@@ -100,7 +100,7 @@ console.log("── nell'argomento della persona (12/10: «non dovrebbe metterlo
   ok(tgMsg.length === 1 && String(tgMsg[0].chat_id).endsWith("1009") && tgMsg[0].message_thread_id === 26, "la risposta di Jessica arriva nel suo argomento del gruppo, non nella chat del bot", tgMsg);
   ok(repo["atlas.json"]["jessica@p.it"].chi === "7b0479", "il codice del profilo resta in atlas.json, per i promemoria", repo["atlas.json"]);
   const { atlasPromemoria: ap } = await import(join(dir, "worker.mjs")); tgMsg = [];
-  repo["atlas.json"]["jessica@p.it"].impegni = [{ id: "z", cosa: "spesa", giorno: "2026-10-15", ora: null, avvisato: false }];
+  repo["atlas.json"]["jessica@p.it"].impegni = [{ id: "z", cosa: "spesa", giorno: "2026-10-15", ora: null, avvisato: false, ics: true }];
   await ap(envG, new Date("2026-10-15T05:07:00Z"));
   ok(tgMsg.length === 1 && tgMsg[0].message_thread_id === 26 && /Atlas ha mandato/.test(tgMsg[0].text), "anche «Atlas ha mandato» va nel suo argomento", tgMsg); }
 
@@ -126,8 +126,8 @@ console.log("── un guasto si dice: il pensiero ha mangiato tutto, nessun tes
 console.log("── i promemoria di Atlas");
 const { atlasPromemoria } = await import(join(dir, "worker.mjs"));
 nuovo(); repo["atlas.json"] = { "jessica@p.it": { nome: "Jessica Crippa", turni: [], riepilogo: "", impegni: [
-  { id: "a1", cosa: "ricordare a Jacopo il parrucchiere", giorno: "2026-10-14", ora: "18:00", avvisato: false },
-  { id: "a2", cosa: "comprare il giubbotto per Athena", giorno: "2026-10-14", ora: null, avvisato: false },
+  { id: "a1", cosa: "ricordare a Jacopo il parrucchiere", giorno: "2026-10-14", ora: "18:00", avvisato: false, ics: true },
+  { id: "a2", cosa: "comprare il giubbotto per Athena", giorno: "2026-10-14", ora: null, avvisato: false, ics: true },
   { id: "a3", cosa: "vecchio", giorno: "2026-10-01", ora: null, avvisato: false } ] } };
 await atlasPromemoria(env, new Date("2026-10-14T04:07:00Z"));   // 06:07 a Roma (ora legale, +2): ancora niente
 ok(mandate.length === 0, "alle 6 di Roma non parte niente", mandate);
@@ -140,8 +140,27 @@ await atlasPromemoria(env, new Date("2026-10-14T15:07:00Z"));   // 17:07 a Roma:
 ok(mandate.length === 2 && /⏰ Alle 18:00: ricordare a Jacopo il parrucchiere/.test(mandate[1].subject), "alle 17:07 di Roma il promemoria delle 18", mandate[1]);
 await atlasPromemoria(env, new Date("2026-10-14T15:30:00Z")); ok(mandate.length === 2, "il promemoria parte una volta sola", mandate.length);
 ok(tgMsg.some((t) => /Atlas ha mandato/.test(t.text)), "JJ sa cosa ha mandato Atlas", tgMsg);
-nuovo(); repo["atlas.json"] = { "x@p.it": { nome: "", turni: [], riepilogo: "", impegni: [{ id: "b", cosa: "y", giorno: "2026-12-10", ora: "09:00", avvisato: false }] } };
+nuovo(); repo["atlas.json"] = { "x@p.it": { nome: "", turni: [], riepilogo: "", impegni: [{ id: "b", cosa: "y", giorno: "2026-12-10", ora: "09:00", avvisato: false, ics: true }] } };
 await atlasPromemoria(env, new Date("2026-12-10T07:07:00Z"));   // 08:07 a Roma d'inverno (+1): un'ora prima delle 9
 ok(mandate.some((m) => /Alle 09:00/.test(m.subject)), "d'inverno (ora solare) il promemoria parte all'ora giusta", mandate.map((m) => m.subject));
+
+console.log("── la sera prima e gli inviti del calendario (la lettera: «il giorno prima e la mattina stessa»; Jessica: «nel calendario»)");
+nuovo(); repo["atlas.json"] = { "jessica@p.it": { nome: "Jessica Crippa", turni: [], riepilogo: "", impegni: [
+  { id: "c1", cosa: "ricordare a Jacopo il parrucchiere; e la torta", giorno: "2026-10-14", ora: "18:00", avvisato: false },
+  { id: "c2", cosa: "giubbotto per Athena", giorno: "2026-10-14", ora: null, avvisato: false } ] } };
+await atlasPromemoria(env, new Date("2026-10-13T00:07:00Z"));   // 02:07 a Roma: di notte niente inviti
+ok(mandate.length === 0, "di notte non si mandano gli inviti", mandate.map((m) => m.subject));
+await atlasPromemoria(env, new Date("2026-10-13T05:07:00Z"));   // 07:07 a Roma del 13
+const inv = mandate.find((m) => /da mettere nel tuo calendario/.test(m.subject));
+ok(inv && inv.attachment.length === 2 && inv.attachment.every((a) => /^atlas-2026-10-14-c\d\.ics$/.test(a.name)), "alle 7 una mail con un invito .ics per impegno", inv && inv.attachment.map((a) => a.name));
+const ics1 = inv ? Buffer.from(inv.attachment[0].content, "base64").toString() : "", ics2 = inv ? Buffer.from(inv.attachment[1].content, "base64").toString() : "";
+ok(/DTSTART:20261014T160000Z\r\n/.test(ics1) && /DTEND:20261014T163000Z/.test(ics1) && /TRIGGER:-PT60M/.test(ics1) && /SUMMARY:ricordare a Jacopo il parrucchiere\\; e la torta/.test(ics1) && /^BEGIN:VCALENDAR\r\n/.test(ics1),
+   "l'invito con l'ora: le 18 di Roma sono le 16 UTC, 30 minuti, avviso un'ora prima, il «;» scritto come vuole il calendario", ics1);
+ok(/DTSTART;VALUE=DATE:20261014\r\nDTEND;VALUE=DATE:20261015/.test(ics2) && /TRIGGER:-PT4H/.test(ics2), "senza ora: tutto il giorno, avviso alle 20 della sera prima", ics2);
+const n_ = mandate.length; await atlasPromemoria(env, new Date("2026-10-13T06:07:00Z")); ok(!mandate.slice(n_).some((m) => /calendario/.test(m.subject)), "gli inviti partono una volta sola", mandate.slice(n_).map((m) => m.subject));
+await atlasPromemoria(env, new Date("2026-10-13T18:07:00Z"));   // 20:07 a Roma del 13: quelli del 14
+const sera = mandate.find((m) => /🌙 Domani, mercoledì 14\/10/.test(m.subject));
+ok(sera && /18:00 ricordare a Jacopo/.test(sera.textContent) && /giubbotto/.test(sera.textContent), "alle 20 della sera prima: quelli di domani", mandate.map((m) => m.subject));
+const n2 = mandate.length; await atlasPromemoria(env, new Date("2026-10-13T19:07:00Z")); ok(mandate.length === n2, "la sera prima una volta sola", mandate.length - n2);
 
 console.log(errori ? `\n${errori} prove rosse` : "\nVERDE"); process.exit(errori ? 1 : 0);
