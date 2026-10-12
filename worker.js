@@ -761,11 +761,13 @@ async function dovePosta(env, chi) {
 // segna gli impegni che gli scrivono per mail e li ricorda da solo: alle 7 il programma del giorno, e un'ora prima di quelli
 // con l'ora. Tutto in atlas.json nell'archivio: { mail: { nome, turni: [{chi, testo, quando}], impegni: [{id, cosa, giorno,
 // ora, avvisato}], riepilogo: "AAAA-MM-GG" } }. Le ore sono di Roma (il server vive in UTC).
-const ATLAS_MODELLI = ["claude-sonnet-4-5", "claude-sonnet-4-5-20250929"];
-// i prezzi per milione di token (documentazione Anthropic, 12/10): Sonnet 4.5 3 $ entrata / 15 $ uscita, Haiku 4.5 1 / 5. Una
-// risposta di Atlas ≈ 4.000 token in entrata (regole + conversazione) e 400 in uscita ≈ 2 cent. Il tetto: 0,50 $ al giorno
+// 12/10, JJ: «sonnet 4.5 non è stato proprio il miglior modello... il 5.5 dovrebbe costare uguale ma è molto meglio». Verificato:
+// Sonnet 5.5 costa MENO (2 $ / 10 $ per milione, contro 3 / 15 di Sonnet 4.5). Se non c'è, il catalogo sceglie un altro Sonnet
+const ATLAS_MODELLI = ["claude-sonnet-5-5", "claude-sonnet-4-5"];
+// i prezzi per milione di token (12/10): Sonnet 5.5 2 $ entrata / 10 $ uscita, Sonnet 4.5 3 / 15, Haiku 4.5 1 / 5. Una
+// risposta di Atlas ≈ 4.000 token in entrata (regole + conversazione) e 400 in uscita ≈ 1,2 cent con Sonnet 5.5. Il tetto: 0,50 $ al giorno
 // (~25 risposte), 3 $ al mese; oltre, le mail vanno a JJ senza Claude. La spesa sta in spesa-ia.json
-const PREZZI = { sonnet: [3, 15], haiku: [1, 5], opus: [5, 25] };
+const PREZZI = [["sonnet-5", [2, 10]], ["sonnet", [3, 15]], ["haiku", [1, 5]], ["opus", [5, 25]]];   // il primo che combacia col nome del modello
 const ATLAS_TETTO_GIORNO = 0.5, ATLAS_TETTO_MESE = 3;
 async function spesaAtlas(env) {
   let s = {}; try { s = deb64((await gh(env, "GET", "spesa-ia.json")).content); } catch (_) {}
@@ -774,8 +776,8 @@ async function spesaAtlas(env) {
 }
 async function contaSpesa(env, uso) {
   if (!uso) return null;
-  const fam = Object.keys(PREZZI).find((k) => uso.modello.includes(k)) || "sonnet";
-  const questa = (uso.entrata * PREZZI[fam][0] + uso.uscita * PREZZI[fam][1]) / 1e6;
+  const [, pr] = PREZZI.find(([k]) => uso.modello.includes(k)) || PREZZI[1];
+  const questa = (uso.entrata * pr[0] + uso.uscita * pr[1]) / 1e6;
   for (let i = 0; i < 2; i++) {
     let s = { giorni: {}, mesi: {} }, sha; try { const f = await gh(env, "GET", "spesa-ia.json"); s = deb64(f.content); sha = f.sha; } catch (_) {}
     const g = new Date().toISOString().slice(0, 10), m = g.slice(0, 7);

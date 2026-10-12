@@ -50,7 +50,7 @@ console.log("── risponde a una nostra lettera: JJA-VIS risponde da solo");
 nuovo(); repo["inviate/1.json"] = lettera;
 r = await posta(daJessica("Mi interessa, puoi spiegarmi meglio come funziona?\n\nIl giorno sab 11 ott 2026 JJA-VIS <jjavis@prova.it> ha scritto:\n> Ciao Jessica, ti scrivo per le scadenze\n> del tuo studio"));
 ok(r.stato === 200 && r.rispondi === "Ciao Jessica, segnato.\nAtlas", "lo script riceve la risposta da mandare da Gmail", r);
-ok(/sonnet/.test(claudeModello), "Atlas risponde con Sonnet, non Haiku", claudeModello);
+ok(claudeModello === "claude-sonnet-5-5", "Atlas risponde con Sonnet 5.5", claudeModello);
 ok(repo["atlas.json"]["jessica@p.it"].impegni[0].cosa === "ricordare a Jacopo il parrucchiere" && repo["atlas.json"]["jessica@p.it"].impegni[0].ora === "18:00", "l'impegno è segnato in atlas.json", repo["atlas.json"]);
 ok(claudeVisto.includes("Le tue scadenze") && claudeVisto.includes("spiegarmi meglio") && !claudeVisto.includes("> Ciao Jessica"), "Claude vede la nostra lettera e la sua risposta, senza la citazione sotto", claudeVisto.slice(0, 300));
 ok(tgMsg.length === 1 && /🤖 Jessica Rossi ha risposto e Atlas gli ha risposto da solo/.test(tgMsg[0].text) && /📌 Segnati: 2026-10-14 18:00/.test(tgMsg[0].text) && !tgMsg[0].reply_markup, "a JJ una riga per sapere, con gli impegni segnati, senza tasti", tgMsg);
@@ -105,7 +105,7 @@ console.log("── nell'argomento della persona (12/10: «non dovrebbe metterlo
 
 console.log("── quanto costa (12/10: «ogni risposta che manda in autonomia pago 15 centesimi?»)");
 nuovo(); repo["inviate/1.json"] = lettera; r = await posta(daJessica("segna la spesa giovedì"));
-ok(/💶 questa risposta ≈ 1\.8 cent di \$/.test(tgMsg[0].text) && Math.abs(Object.values(repo["spesa-ia.json"].giorni)[0] - 0.018) < 1e-9, "Sonnet, 4.000 token in entrata e 400 in uscita: 1,8 cent, detto a JJ e contato", [tgMsg[0].text.slice(-120), repo["spesa-ia.json"]]);
+ok(/💶 questa risposta ≈ 1\.2 cent di \$/.test(tgMsg[0].text) && Math.abs(Object.values(repo["spesa-ia.json"].giorni)[0] - 0.012) < 1e-9, "Sonnet 5.5, 4.000 token in entrata e 400 in uscita: 1,2 cent, detto a JJ e contato", [tgMsg[0].text.slice(-120), repo["spesa-ia.json"]]);
 const oggi_ = new Date().toISOString().slice(0, 10);
 nuovo(); repo["inviate/1.json"] = lettera; repo["spesa-ia.json"] = { giorni: { [oggi_]: 0.5 }, mesi: { [oggi_.slice(0, 7)]: 0.5 } };
 r = await posta(daJessica("e la torta?"));
