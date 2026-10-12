@@ -19,12 +19,12 @@ let repo, mandate, tgMsg, claudeDice, claudeChiamate, claudeVisto;
 const J_ = (o) => JSON.stringify(o);
 const nuovo = () => { repo = {}; mandate = []; tgMsg = []; claudeChiamate = 0; claudeVisto = ""; claudeModello = "";
   claudeDice = J_({ risposta: "Ciao Jessica, segnato.\nAtlas", nuovi: [{ cosa: "ricordare a Jacopo il parrucchiere", giorno: "2026-10-14", ora: "18:00" }], tolti: [], per_jj: null }); };
-let claudeModello = "";
+let claudeModello = "", claudeCorpo = {};
 globalThis.fetch = async (url, o = {}) => {
   const u = new URL(String(url)); const j = (s, b) => new Response(JSON.stringify(b), { status: s });
   if (u.host === "api.telegram.org") { tgMsg.push(JSON.parse(o.body || "{}")); return j(200, { ok: true, result: { message_id: 1 } }); }
   if (u.host === "api.brevo.com") { mandate.push(JSON.parse(o.body)); return j(201, { messageId: "m" + mandate.length }); }
-  if (u.host === "api.anthropic.com") { claudeChiamate++; const b_ = JSON.parse(o.body); claudeVisto = b_.messages[0].content; claudeModello = b_.model; return j(200, { model: b_.model, usage: { input_tokens: 4000, output_tokens: 400 }, content: [{ type: "text", text: claudeDice }] }); }
+  if (u.host === "api.anthropic.com") { claudeChiamate++; const b_ = JSON.parse(o.body); claudeVisto = b_.messages[0].content; claudeModello = b_.model; claudeCorpo = b_; return j(200, { model: b_.model, usage: { input_tokens: 4000, output_tokens: 400 }, content: [{ type: "text", text: claudeDice }] }); }
   if (u.host === "api.github.com") {
     const p = decodeURIComponent(u.pathname.split("/contents/")[1] || ""); const m = o.method || "GET";
     if (m === "GET") { if (repo[p]) return j(200, { content: b64(repo[p]), sha: "s" + p });
@@ -50,7 +50,8 @@ console.log("── risponde a una nostra lettera: JJA-VIS risponde da solo");
 nuovo(); repo["inviate/1.json"] = lettera;
 r = await posta(daJessica("Mi interessa, puoi spiegarmi meglio come funziona?\n\nIl giorno sab 11 ott 2026 JJA-VIS <jjavis@prova.it> ha scritto:\n> Ciao Jessica, ti scrivo per le scadenze\n> del tuo studio"));
 ok(r.stato === 200 && r.rispondi === "Ciao Jessica, segnato.\nAtlas", "lo script riceve la risposta da mandare da Gmail", r);
-ok(claudeModello === "claude-sonnet-5-5", "Atlas risponde con Sonnet 5.5", claudeModello);
+ok(claudeModello === "claude-haiku-5-5" && claudeCorpo.output_config && claudeCorpo.output_config.effort === "medium" && claudeCorpo.max_tokens >= 4000 && !("temperature" in claudeCorpo),
+   "Atlas risponde con Haiku 5.5: sforzo medio, spazio per pensare, niente temperature", claudeCorpo);
 ok(repo["atlas.json"]["jessica@p.it"].impegni[0].cosa === "ricordare a Jacopo il parrucchiere" && repo["atlas.json"]["jessica@p.it"].impegni[0].ora === "18:00", "l'impegno è segnato in atlas.json", repo["atlas.json"]);
 ok(claudeVisto.includes("Le tue scadenze") && claudeVisto.includes("spiegarmi meglio") && !claudeVisto.includes("> Ciao Jessica"), "Claude vede la nostra lettera e la sua risposta, senza la citazione sotto", claudeVisto.slice(0, 300));
 ok(tgMsg.length === 1 && /🤖 Jessica Rossi ha risposto e Atlas gli ha risposto da solo/.test(tgMsg[0].text) && /📌 Segnati: 2026-10-14 18:00/.test(tgMsg[0].text) && !tgMsg[0].reply_markup, "a JJ una riga per sapere, con gli impegni segnati, senza tasti", tgMsg);
@@ -105,13 +106,22 @@ console.log("── nell'argomento della persona (12/10: «non dovrebbe metterlo
 
 console.log("── quanto costa (12/10: «ogni risposta che manda in autonomia pago 15 centesimi?»)");
 nuovo(); repo["inviate/1.json"] = lettera; r = await posta(daJessica("segna la spesa giovedì"));
-ok(/💶 questa risposta ≈ 1\.2 cent di \$/.test(tgMsg[0].text) && Math.abs(Object.values(repo["spesa-ia.json"].giorni)[0] - 0.012) < 1e-9, "Sonnet 5.5, 4.000 token in entrata e 400 in uscita: 1,2 cent, detto a JJ e contato", [tgMsg[0].text.slice(-120), repo["spesa-ia.json"]]);
+ok(/💶 questa risposta ≈ 0\.06 cent di \$/.test(tgMsg[0].text) && Math.abs(Object.values(repo["spesa-ia.json"].giorni)[0] - 0.0006) < 1e-9, "Haiku 5.5, 4.000 token in entrata e 400 in uscita: 0,06 cent, detto a JJ e contato", [tgMsg[0].text.slice(-120), repo["spesa-ia.json"]]);
 const oggi_ = new Date().toISOString().slice(0, 10);
 nuovo(); repo["inviate/1.json"] = lettera; repo["spesa-ia.json"] = { giorni: { [oggi_]: 0.5 }, mesi: { [oggi_.slice(0, 7)]: 0.5 } };
 r = await posta(daJessica("e la torta?"));
 ok(r.attesa && claudeChiamate === 0 && /tetto di spesa di Atlas raggiunto/.test(tgMsg[0].text), "oltre 0,50 $ al giorno niente Claude: la mail va a JJ", [claudeChiamate, tgMsg[0] && tgMsg[0].text.slice(0, 200)]);
 nuovo(); repo["inviate/1.json"] = lettera; repo["spesa-ia.json"] = { giorni: {}, mesi: { [oggi_.slice(0, 7)]: 3 } };
 r = await posta(daJessica("e la torta?")); ok(r.attesa && claudeChiamate === 0, "oltre 3 $ al mese, idem", claudeChiamate);
+
+console.log("── un guasto si dice: il pensiero ha mangiato tutto, nessun testo");
+{ const vero = globalThis.fetch; nuovo(); repo["inviate/1.json"] = lettera;
+  globalThis.fetch = async (url, o) => new URL(String(url)).host === "api.anthropic.com"
+    ? new Response(JSON.stringify({ model: "claude-haiku-5-5", stop_reason: "max_tokens", usage: { input_tokens: 4000, output_tokens: 8000 }, content: [{ type: "thinking", thinking: "" }] }), { status: 200 })
+    : vero(url, o);
+  r = await posta(daJessica("la torta sabato"));
+  globalThis.fetch = vero;
+  ok(r.attesa && /Atlas non è riuscito \(nessun testo \(stop: max_tokens\)\)/.test(tgMsg[0].text), "senza testo la mail va a JJ col motivo, non parte una risposta vuota", tgMsg[0] && tgMsg[0].text.slice(0, 300)); }
 
 console.log("── i promemoria di Atlas");
 const { atlasPromemoria } = await import(join(dir, "worker.mjs"));

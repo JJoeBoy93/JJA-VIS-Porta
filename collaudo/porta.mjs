@@ -118,7 +118,7 @@ ok(m5 && m5[1].text.includes("🔎 SOPRALLUOGO") && m5[1].text.includes("🔗 ht
 await tocco("bozza:" + d5.id);
 const v5 = JSON.stringify(claudeVisti.at(-1));
 ok(v5.includes("forno a legna") && v5.includes("Pizzeria Da Luca") && !v5.includes("var x=1"), "Claude riceve il testo della pagina, senza gli script");
-ok(v5.includes("250 parole") && claudeVisti.at(-1).max_tokens === 1000, "le regole del sopralluogo, e spazio per scriverlo");
+ok(v5.includes("250 parole") && claudeVisti.at(-1).max_tokens >= 1000 && claudeVisti.at(-1).output_config.effort === "low" && !("temperature" in claudeVisti.at(-1)), "le regole del sopralluogo, e spazio per scriverlo (Haiku 5.5: il pensiero sta nel max_tokens)");
 ok(!v5.includes("luca@") , "Claude non vede la mail");
 const b5 = tgInviati.filter(([m, b]) => m === "sendMessage" && (b.text || "").startsWith("✍️ Bozza  #" + d5.id)).at(-1);
 ok(b5 && b5[1].text.includes("🔎 pagina letta:"), "JJ vede che la pagina è stata letta: " + (b5 ? b5[1].text.split("\n")[1] : "—"));
