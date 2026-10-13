@@ -65,4 +65,16 @@ ok(mandate.length === 0 && /https:\/\/wa\.me\/393331234567\?text=/.test(m2.text)
 tgMsg = []; await scrive("/sped");
 ok(/\/sped Nome \| indirizzo \| mail o telefono/.test((tgMsg[0] || {}).text || ""), "/sped da solo spiega come si usa", tgMsg[0]);
 
+console.log("── con la LDV del corriere d'origine (12/10: «sarebbe meglio che il cliente metta già ldv»)");
+mandate = []; tgMsg = []; await scrive("/sped Luigi | Via Collodi 24, Limbiate | luigi@prova.it | 3uw0yga 127951");
+const c3 = Object.entries(repo).find(([k, v]) => k.startsWith("spedizioni/") && v.ldv === "3UW0YGA127951");
+ok(c3 && repo["spedizioni-ldv/3UW0YGA127951.json"] && repo["spedizioni-ldv/3UW0YGA127951.json"].codice === c3[1].codice, "la LDV (anche scritta con spazi e minuscole) porta alla spedizione", Object.keys(repo));
+ok(/traccia\.html\?c=3UW0YGA127951/.test(mandate[0].textContent) && /Lettera di vettura: 3UW0YGA127951/.test(mandate[0].textContent) && /spedizione 3UW0YGA127951/.test(mandate[0].subject), "il cliente riceve il link e il numero con la sua LDV", mandate[0]);
+r = await traccia("3uw0yga127951");
+ok(r.stato === 200 && r.codice === "3UW0YGA127951" && r.stati.length === 1 && !JSON.stringify(r).includes("Luigi"), "la pagina trova la spedizione con la LDV, sempre senza nome", r);
+r = await traccia(c3[1].codice); ok(r.stato === 200, "e anche col codice AT-", r);
+r = await traccia("3UW9999999999"); ok(r.stato === 404, "una LDV che non abbiamo: 404", r);
+tgMsg = []; await scrive("/sped Altro | Limbiate | a@b.it | 3UW0YGA127951");
+ok(/già della spedizione/.test((tgMsg[0] || {}).text || "") && Object.values(repo).filter((v) => v.ldv === "3UW0YGA127951").length === 1, "la stessa LDV due volte: no, e lo dice", tgMsg[0]);
+
 console.log(errori ? `\n${errori} prove rosse` : "\nVERDE"); process.exit(errori ? 1 : 0);

@@ -780,14 +780,21 @@ const STATI_SPED = {
   consegnata: { e: "✅", t: "Consegnata", c: "La tua spedizione è stata consegnata." },
 };
 const URL_TRACCIA = "https://jjoeboy93.github.io/athena-trasporti/traccia.html";
+// la LDV: la lettera di vettura del corriere d'origine, quella che il cliente ha nella mail (JJ, 12/10: «sarebbe meglio che il
+// cliente metta già ldv»). Lettere e numeri, da 8 a 34 (le forme viste: 3UW…/1UW… 13, JJD…+18 cifre, …DE, NN…IT)
+const pulisciLdv = (x) => String(x || "").toUpperCase().replace(/[\s\-()]/g, "");
+const ldvBuona = (x) => /^[A-Z0-9]{8,34}$/.test(x) && !/^AT[A-Z0-9]{5}$/.test(x);
 const nuovoCodice = () => "AT-" + [...crypto.getRandomValues(new Uint8Array(5))].map((b) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[b % 32]).join("");
 const oraBella = (iso) => { const r = oraRoma(new Date(iso)); return `${r.slice(8, 10)}/${r.slice(5, 7)} ${r.slice(11, 16)}`; };
-async function nuovaSpedizione(env, { nome, indirizzo, contatto }) {
+async function nuovaSpedizione(env, { nome, indirizzo, contatto, ldv }) {
   const codice = nuovoCodice(), ora = new Date().toISOString();
+  ldv = pulisciLdv(ldv); if (ldv && !ldvBuona(ldv)) throw new Error(`la LDV «${ldv}» non sembra una lettera di vettura (lettere e numeri, da 8 a 34)`);
+  if (ldv) { try { const g = deb64((await gh(env, "GET", `spedizioni-ldv/${ldv}.json`)).content); throw new Error(`la LDV ${ldv} è già della spedizione ${g.codice}`); } catch (e) { if (/già della spedizione/.test(e.message)) throw e; } }
   const comune = (indirizzo.split(",").pop() || "").trim().slice(0, 40);
-  const d = { codice, nome: nome.slice(0, 80), indirizzo: indirizzo.slice(0, 160), contatto: contatto.slice(0, 80), comune: indirizzo.includes(",") ? comune : "",
+  const d = { codice, ldv: ldv || "", nome: nome.slice(0, 80), indirizzo: indirizzo.slice(0, 160), contatto: contatto.slice(0, 80), comune: indirizzo.includes(",") ? comune : "",
               creata: ora, stati: [{ s: "presa", quando: ora }], mail: [] };
   await gh(env, "PUT", `spedizioni/${codice}.json`, { message: `spedizione ${codice}`, content: b64(d) });
+  if (ldv) await gh(env, "PUT", `spedizioni-ldv/${ldv}.json`, { message: `spedizione ${codice}: LDV`, content: b64({ codice }) });   // la LDV porta alla spedizione
   d.mail = (await avvisaCliente(env, d, "presa")) ? ["presa"] : [];
   if (d.mail.length) { const f = await gh(env, "GET", `spedizioni/${codice}.json`); await gh(env, "PUT", `spedizioni/${codice}.json`, { message: `spedizione ${codice}: mail`, content: b64(d), sha: f.sha }); }
   return d;
@@ -803,19 +810,19 @@ async function statoSpedizione(env, codice, stato) {
 }
 async function avvisaCliente(env, d, stato) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.contatto) || !env.BREVO_API_KEY || !env.MITTENTE) return false;
-  const S = STATI_SPED[stato], link = `${URL_TRACCIA}?c=${d.codice}`;
+  const S = STATI_SPED[stato], chiave = d.ldv || d.codice, link = `${URL_TRACCIA}?c=${chiave}`;
   const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ sender: { name: "Athena Trasporti", email: env.MITTENTE }, replyTo: { email: MAIL_ATHENA, name: "Athena Trasporti" },
-      to: [{ email: d.contatto, ...(d.nome ? { name: d.nome } : {}) }], subject: `${S.e} ${S.t} — spedizione ${d.codice}`,
-      textContent: `Ciao${d.nome ? " " + d.nome.split(" ")[0] : ""},\n\n${S.c}\n\nSegui la spedizione: ${link}\nCodice: ${d.codice}\n\nPer qualsiasi cosa: 377 594 7995 (anche WhatsApp).\nAthena Trasporti — Limbiate (MB)` }) });
+      to: [{ email: d.contatto, ...(d.nome ? { name: d.nome } : {}) }], subject: `${S.e} ${S.t} — spedizione ${d.ldv || d.codice}`,
+      textContent: `Ciao${d.nome ? " " + d.nome.split(" ")[0] : ""},\n\n${S.c}\n\nSegui la spedizione: ${link}\n${d.ldv ? "Lettera di vettura" : "Codice"}: ${chiave}\n\nPer qualsiasi cosa: 377 594 7995 (anche WhatsApp).\nAthena Trasporti — Limbiate (MB)` }) });
   if (!res.ok) throw new Error(`Brevo ${res.status}`);
   return true;
 }
 function testoSpedizione(d) {
-  const link = `${URL_TRACCIA}?c=${d.codice}`;
+  const link = `${URL_TRACCIA}?c=${d.ldv || d.codice}`;
   const tel = (d.contatto.match(/\d[\d\s]{7,}/) || [""])[0].replace(/\s/g, "");
   const ultimo = STATI_SPED[d.stati.at(-1).s];
-  return [`📦 ${d.codice} — ${d.nome}`, d.indirizzo ? `📍 ${d.indirizzo}` : "", d.contatto ? `👤 ${d.contatto}` : "", "",
+  return [`📦 ${d.codice} — ${d.nome}`, d.ldv ? `🏷 LDV ${d.ldv}` : "", d.indirizzo ? `📍 ${d.indirizzo}` : "", d.contatto ? `👤 ${d.contatto}` : "", "",
     ...d.stati.map((x) => `${STATI_SPED[x.s].e} ${oraBella(x.quando)} ${STATI_SPED[x.s].t}${(d.mail || []).includes(x.s) ? " ✉️" : ""}`), "",
     `🔗 Per il cliente: ${link}`,
     tel ? `💬 WhatsApp già scritto: ${linkWa(tel.startsWith("39") ? tel : "39" + tel, `Ciao${d.nome ? " " + d.nome.split(" ")[0] : ""}, ${ultimo.c.charAt(0).toLowerCase() + ultimo.c.slice(1)} Segui qui: ${link}`)}` : ""].filter((x, i, a) => x !== "" || (a[i - 1] !== "" && i > 0)).join("\n");
@@ -825,10 +832,15 @@ function tastiSpedizione(d) {
   return { inline_keyboard: [[t("magazzino"), t("consegna")], [t("assente"), t("consegnata")]] };
 }
 async function tracciaPubblica(url, env, origine) {
-  const c = String(url.searchParams.get("c") || "").trim().toUpperCase();
-  if (!/^AT-[A-Z0-9]{5}$/.test(c)) return risposta({ no: "codice" }, 400, origine);
-  let d; try { d = deb64((await gh(env, "GET", `spedizioni/${c}.json`)).content); } catch (_) { return risposta({ no: "non trovata" }, 404, origine); }
-  return risposta({ codice: d.codice, comune: d.comune || "", stati: d.stati.map((x) => ({ s: x.s, stato: STATI_SPED[x.s].t, emoji: STATI_SPED[x.s].e, quando: x.quando })) }, 200, origine);
+  let c = String(url.searchParams.get("c") || "").trim().toUpperCase();
+  if (/^AT[A-Z0-9]{5}$/.test(c)) c = "AT-" + c.slice(2);
+  let codice = /^AT-[A-Z0-9]{5}$/.test(c) ? c : null;
+  if (!codice) {   // una LDV: si cerca a quale spedizione porta
+    const l = pulisciLdv(c); if (!ldvBuona(l)) return risposta({ no: "codice" }, 400, origine);
+    try { codice = deb64((await gh(env, "GET", `spedizioni-ldv/${l}.json`)).content).codice; } catch (_) { return risposta({ no: "non trovata" }, 404, origine); }
+  }
+  let d; try { d = deb64((await gh(env, "GET", `spedizioni/${codice}.json`)).content); } catch (_) { return risposta({ no: "non trovata" }, 404, origine); }
+  return risposta({ codice: d.ldv || d.codice, comune: d.comune || "", stati: d.stati.map((x) => ({ s: x.s, stato: STATI_SPED[x.s].t, emoji: STATI_SPED[x.s].e, quando: x.quando })) }, 200, origine);
 }
 
 // ══ ATLAS — 12 ottobre ══ JJ prova JJA-VIS con Jessica, sua moglie («per vedere come si comporta con un utente vero»). Atlas
@@ -1142,11 +1154,11 @@ async function telegram(req, env) {
     if (m.text && /^\/sped\b/.test(m.text)) {
       const pezzi = m.text.replace(/^\/sped\S*\s*/, "").split("|").map((x) => x.trim());
       if (!pezzi[0]) {
-        await tg(env, "sendMessage", { ...qui, text: "📦 Una spedizione nuova:\n/sped Nome | indirizzo | mail o telefono\n\nL'indirizzo e il contatto sono facoltativi. Ti do il codice, il link da dare al cliente e i tasti per gli stati: a ogni tocco, se c'è la mail, gli scrivo io." });
+        await tg(env, "sendMessage", { ...qui, text: "📦 Una spedizione nuova:\n/sped Nome | indirizzo | mail o telefono | LDV\n\nIndirizzo, contatto e LDV sono facoltativi. Con la LDV (la lettera di vettura che il cliente ha già nella mail del mittente) il cliente la segue con quella, senza un codice nuovo. Ti do il codice, il link da dare al cliente e i tasti per gli stati: a ogni tocco, se c'è la mail, gli scrivo io." });
         return new Response("ok");
       }
       try {
-        const d = await nuovaSpedizione(env, { nome: pezzi[0], indirizzo: pezzi[1] || "", contatto: pezzi[2] || "" });
+        const d = await nuovaSpedizione(env, { nome: pezzi[0], indirizzo: pezzi[1] || "", contatto: pezzi[2] || "", ldv: pezzi[3] || "" });
         await tg(env, "sendMessage", { ...qui, text: testoSpedizione(d), disable_web_page_preview: true, reply_markup: tastiSpedizione(d) });
       } catch (e) { await tg(env, "sendMessage", { ...qui, text: `⚠️ La spedizione non è stata creata: ${e.message || e}` }); }
       return new Response("ok");
@@ -2162,7 +2174,7 @@ export const COMANDI = [
   ["novita", "Una novità sulla pagina: /novita Titolo | due righe"],
   ["posta", "Come collegare la Gmail di JJA-VIS: le risposte alle lettere le legge e risponde da solo"],
   ["invito", "Prova degli inviti del calendario di Atlas: /invito (alla Gmail di JJA-VIS) o /invito tua@mail"],
-  ["sped", "Athena Trasporti: una spedizione da tracciare (/sped Nome | indirizzo | mail o telefono)"],
+  ["sped", "Athena Trasporti: una spedizione da tracciare (/sped Nome | indirizzo | mail o telefono | LDV)"],
 ];
 const RIEPILOGO = [
   "📋 I COMANDI DI JJA-VIS",
