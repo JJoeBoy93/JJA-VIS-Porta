@@ -784,6 +784,18 @@ const URL_TRACCIA = "https://jjoeboy93.github.io/athena-trasporti/traccia.html";
 // cliente metta già ldv»). Lettere e numeri, da 8 a 34 (le forme viste: 3UW…/1UW… 13, JJD…+18 cifre, …DE, NN…IT)
 const pulisciLdv = (x) => String(x || "").toUpperCase().replace(/[\s\-()]/g, "");
 const ldvBuona = (x) => /^[A-Z0-9]{8,34}$/.test(x) && !/^AT[A-Z0-9]{5}$/.test(x);
+// IL CORRIERE DALLA LDV (12/10). Due corrieri per pacco: chi l'ha spedito (dalla FORMA della LDV) e chi lo consegna qui (l'ultimo
+// miglio). JJ: «le etichette di oggi, nonostante erano di vari spedizionieri, erano tutte in carico a SDA». L'ultimo miglio la LDV
+// non lo dice: lo dice il contesto (la giornata in subappalto, l'etichetta dell'hub), e lo deciderà JARVIS all'affido. Qui c'è solo
+// l'origine, dalle forme viste sul campo (piano/ldv-dal-campo.md nel vault); quello che non riconosce resta «sconosciuto».
+const FORME_LDV = [
+  [/^[13]UW[0-9A-Z]{10}$/, "Poste / SDA"],
+  [/^JJD\d{18,24}$/, "DHL Parcel"],   // viste: JJD + 18, 20 e 24 cifre
+  [/^[A-Z]{2}\d{9}DE$/, "Deutsche Post"],
+  [/^[A-Z]{2}\d{9}IT$/, "Poste Italiane"],
+  [/^\d{3}[A-Z]\d{8}F$/, "Poste / SDA"],   // 954C…F, 960D…F, 974D…F: viste nel giro SDA
+];
+function corriereDaLdv(x) { const l = pulisciLdv(x); const f = FORME_LDV.find(([r]) => r.test(l)); return f ? f[1] : null; }
 const nuovoCodice = () => "AT-" + [...crypto.getRandomValues(new Uint8Array(5))].map((b) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[b % 32]).join("");
 const oraBella = (iso) => { const r = oraRoma(new Date(iso)); return `${r.slice(8, 10)}/${r.slice(5, 7)} ${r.slice(11, 16)}`; };
 async function nuovaSpedizione(env, { nome, indirizzo, contatto, ldv }) {
@@ -837,7 +849,8 @@ async function tracciaPubblica(url, env, origine) {
   let codice = /^AT-[A-Z0-9]{5}$/.test(c) ? c : null;
   if (!codice) {   // una LDV: si cerca a quale spedizione porta
     const l = pulisciLdv(c); if (!ldvBuona(l)) return risposta({ no: "codice" }, 400, origine);
-    try { codice = deb64((await gh(env, "GET", `spedizioni-ldv/${l}.json`)).content).codice; } catch (_) { return risposta({ no: "non trovata" }, 404, origine); }
+    try { codice = deb64((await gh(env, "GET", `spedizioni-ldv/${l}.json`)).content).codice; }
+    catch (_) { return risposta({ no: "non trovata", corriere: corriereDaLdv(l) }, 404, origine); }   // non è nostra: almeno di chi sembra
   }
   let d; try { d = deb64((await gh(env, "GET", `spedizioni/${codice}.json`)).content); } catch (_) { return risposta({ no: "non trovata" }, 404, origine); }
   return risposta({ codice: d.ldv || d.codice, comune: d.comune || "", stati: d.stati.map((x) => ({ s: x.s, stato: STATI_SPED[x.s].t, emoji: STATI_SPED[x.s].e, quando: x.quando })) }, 200, origine);

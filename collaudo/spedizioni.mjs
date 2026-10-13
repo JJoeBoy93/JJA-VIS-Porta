@@ -73,7 +73,13 @@ ok(/traccia\.html\?c=3UW0YGA127951/.test(mandate[0].textContent) && /Lettera di 
 r = await traccia("3uw0yga127951");
 ok(r.stato === 200 && r.codice === "3UW0YGA127951" && r.stati.length === 1 && !JSON.stringify(r).includes("Luigi"), "la pagina trova la spedizione con la LDV, sempre senza nome", r);
 r = await traccia(c3[1].codice); ok(r.stato === 200, "e anche col codice AT-", r);
-r = await traccia("3UW9999999999"); ok(r.stato === 404, "una LDV che non abbiamo: 404", r);
+r = await traccia("3UW9999999999"); ok(r.stato === 404 && r.corriere === "Poste / SDA", "una LDV che non abbiamo: 404, ma dice di chi sembra (Poste / SDA)", r);
+r = await traccia("JJD000269260010831810"); ok(r.corriere === "DHL Parcel", "JJD + 18 cifre: DHL Parcel", r);
+r = await traccia("JJD00012345678901234567"); ok(r.corriere === "DHL Parcel", "JJD + 20 cifre (come sull'etichetta vera): DHL Parcel", r);
+r = await traccia("960D12345678F"); ok(r.corriere === "Poste / SDA", "960D…F: Poste / SDA", r);
+r = await traccia("CQ301592617DE"); ok(r.corriere === "Deutsche Post", "…DE: Deutsche Post", r);
+r = await traccia("NN825701045IT"); ok(r.corriere === "Poste Italiane", "…IT: Poste Italiane", r);
+r = await traccia("ABCDEFGH1234"); ok(r.stato === 404 && r.corriere === null, "una forma che non conosciamo: nessun corriere, non inventa", r);
 tgMsg = []; await scrive("/sped Altro | Limbiate | a@b.it | 3UW0YGA127951");
 ok(/già della spedizione/.test((tgMsg[0] || {}).text || "") && Object.values(repo).filter((v) => v.ldv === "3UW0YGA127951").length === 1, "la stessa LDV due volte: no, e lo dice", tgMsg[0]);
 
