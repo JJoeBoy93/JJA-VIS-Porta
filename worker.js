@@ -103,7 +103,8 @@ export default {
     if (evento.cron === "0 18 * * *") ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e)));
     else { ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
            ctx.waitUntil(spedisciUscita(env).catch((e) => console.log("posta in uscita", e)));
-           ctx.waitUntil(atlasPromemoria(env).catch((e) => console.log("promemoria di Atlas", e))); }
+           ctx.waitUntil(atlasPromemoria(env).catch((e) => console.log("promemoria di Atlas", e)));
+           ctx.waitUntil(giroReel(env).catch((e) => console.log("reel della città", e))); }
   },
   async fetch(req, env, ctx) {
     env = conGruppo(env);
@@ -2283,3 +2284,44 @@ async function annulla(env, testo) {
     (d.evento_google === "telefono" ? "\n⚠️ Sul telefono l'evento «🚚 Athena … #p" + id + "» c'è ancora: cancellalo tu, finché resta quel momento conta come occupato." : "") +
     (d.telefono || d.mail ? `\nAvvisa ${d.nome}${d.telefono ? ` (+${d.telefono})` : ""}${d.mail ? ` (${d.mail})` : ""}.` : "");
 }
+
+
+// ══ I REEL DELLA CITTA' — 19 ottobre 2026 (Athena) ═══════════════════════
+// JJ, 11/10: JJA-VIS «si fa pubblicità da solo» — e il 18/10: «avevi detto che
+// iniziavi a fare pubblicare ad Afrodite e Dioniso post di JJA-VIS ... non hai
+// ancora fatto niente». La Action «reel» di JJA-VIS gira un reel nella città
+// ogni due giorni e lo lascia nella release «reel» (repository pubblico). Qui,
+// al giro di ogni ora: se c'e' un reel nuovo e sono fra le 8 e le 16 di Roma,
+// lo si passa a Hermes, che ne fa una bozza fissata nella chat di JJ (la
+// porta e' quella che sa qual e' la chat); dalle 18 si chiede a Hermes di
+// farla uscire. Lo stato sta in reel/stato.json nell'archivio.
+const REEL = "https://github.com/JJoeBoy93/JJA-VIS/releases/download/reel";
+async function giroReel(env, ora = new Date()) {
+  if (!telefonoCollegato(env) || !env.TG_CHAT || !env.GH_TOKEN) return "manca Hermes, TG_CHAT o GH_TOKEN";
+  const roma = oraRoma(ora), oggi = roma.slice(0, 10), h = +roma.slice(11, 13);
+  let stato = {}, sha;
+  try { const d = await gh(env, "GET", "reel/stato.json"); stato = deb64(d.content); sha = d.sha; } catch (_) {}
+  const salva = (s, msg) => gh(env, "PUT", "reel/stato.json", { message: msg, content: b64(s), ...(sha ? { sha } : {}) });
+  // dalle 18: esce quella fissata (una volta sola per reel)
+  if (stato.data && stato.giorno === oggi && stato.auto && !stato.uscita && h >= 18) {
+    const e = await aHermes(env, "/jjavis/reel/esce", { chat_id: env.TG_CHAT, message_id: stato.message_id });
+    await salva({ ...stato, uscita: { ...e, alle: roma } }, `reel ${stato.data}: alle 18 ${e.uscito ? "uscito" : "non uscito"}`);
+    return e.uscito ? "uscito" : `non uscito: ${e.perche || e.errore || "?"}`;
+  }
+  if (h < 8 || h >= 16) return "fuori orario";
+  const r = await fetch(`${REEL}/reel.json`);
+  // nessun reel ancora: niente da fare
+  if (!r.ok) return `reel.json: HTTP ${r.status}`;
+  const info = await r.json().catch(() => null);
+  if (!info || !info.data) return "reel.json senza data";
+  if (stato.data === info.data) return "già passato";
+  // un reel di piu' di due giorni fa non si propone come nuovo (la Action e' rimasta ferma)
+  if ((Date.parse(oggi) - Date.parse(info.data)) / 86400000 > 2) return `reel vecchio (${info.data})`;
+  const b = await aHermes(env, "/jjavis/reel", { chat_id: env.TG_CHAT, video: `${REEL}/reel.mp4`, descrizione: info.descrizione, tema: info.tema, profilo: "jj" });
+  const nuovo = { data: info.data, tema: info.tema, giorno: oggi, message_id: b.message_id || null, auto: !!b.auto, perche: b.perche || [], errore: b.ok ? null : (b.errore || "?") };
+  await salva(nuovo, `reel ${info.data} (${info.tema}): ${b.ok ? (b.auto ? "bozza fissata, esce alle 18" : "bozza, non esce da sola") : "Hermes: " + nuovo.errore}`);
+  // Se Hermes non ce l'ha fatta, JJ lo sa: un guasto che tace e' peggio di uno che parla.
+  if (!b.ok) await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `🎬 Il reel della città di oggi (${info.tema}) non è arrivato a Hermes: ${nuovo.errore}` }).catch(() => {});
+  return b.ok ? "bozza" : "errore";
+}
+export { giroReel };
