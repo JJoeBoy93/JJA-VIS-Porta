@@ -50,7 +50,10 @@ prova("senza soprannome non si entra: il server dice perché", t1.msg.some(m => 
 t1.ws.send(JSON.stringify({ t: "ciao", n: "str0nz0", a: A, p: { x: 0, z: 18 } })); await dorme(300);
 prova("un soprannome con parole pesanti non entra", !t1.msg.some(m => m.t === "tu"), t1.msg);
 t1.ws.send(JSON.stringify({ t: "ciao", n: "Ada", a: A, p: { x: 0, z: 18, r: 3.14, y: 0, s: 0, l: "" } })); await dorme(300);
-t2.ws.send(JSON.stringify({ t: "ciao", n: "  Bruno_93 ", a: { ...A, skin: "<script>", nome: "Mario Rossi", colore: "rosso" }, p: { x: 2, z: 16 } })); await dorme(300);
+t2.ws.send(JSON.stringify({ t: "ciao", n: "  Bruno_93 ", a: { ...A, skin: "<script>", nome: "Mario Rossi", colore: "rosso" }, p: { x: 2, z: 16 } }));
+// 19/10: in CI 300 ms fissi non bastavano più (la risposta arrivava dopo): si aspetta la risposta, fino a 5 secondi
+for (let i = 0; i < 100 && !t2.msg.some(m => m.t === "tu"); i++) await dorme(50);
+await dorme(300);
 const tu2 = t2.msg.find(m => m.t === "tu");
 prova("chi arriva riceve chi c'è già, col soprannome, l'aspetto e dov'è", tu2 && tu2.altri.length === 1 && tu2.altri[0].n === "Ada" && tu2.altri[0].a.vestito === "corriere" && tu2.altri[0].p.z === 18, tu2);
 const arr = t1.msg.find(m => m.t === "arriva");
