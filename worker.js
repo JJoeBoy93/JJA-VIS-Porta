@@ -1242,6 +1242,15 @@ async function telegram(req, env) {
       } catch (e) { await tg(env, "sendMessage", { ...qui, text: `⚠️ L'invito non è partito: ${e.message || e}` }); }
       return new Response("ok");
     }
+    // /atlas <mail> [nome] (20/10): apre Atlas a una mail senza una lettera prima (JJ e la sua famiglia: il padre, le prove
+    // con le bollette finte). Da quel momento, quando quella mail scrive alla Gmail di JJA-VIS, risponde Atlas
+    if (m.text && /^\/atlas\b/.test(m.text)) {
+      const [, mail, ...nome] = m.text.trim().split(/\s+/), ml = String(mail || "").toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ml)) { await tg(env, "sendMessage", { ...qui, text: "Scrivi: /atlas mail@esempio.it Nome\n(da allora, quando quella mail scrive alla Gmail di JJA-VIS, risponde Atlas)" }); return new Response("ok"); }
+      await atlasAggiorna(env, ml, (f) => { if (nome.length) f.nome = nome.join(" ").slice(0, 60); f.turni.push({ chi: "noi", testo: "[Atlas aperto da JJ: questa persona può scrivere ad Atlas]", quando: new Date().toISOString() }); return []; });
+      await tg(env, "sendMessage", { ...qui, text: `🗂 Atlas aperto per ${ml}${nome.length ? " (" + nome.join(" ") + ")" : ""}: da adesso, quando scrive alla Gmail di JJA-VIS, risponde Atlas (impegni, scadenze, documenti).` });
+      return new Response("ok");
+    }
     if (m.text && /^\/posta\b/.test(m.text)) {
       await tg(env, "sendMessage", { ...qui, disable_web_page_preview: true, text: [
         "✉️ LA POSTA IN ARRIVO DI JJA-VIS", "",
@@ -2228,6 +2237,7 @@ async function comandoCalendario(env, testo) {
 // ogni comando del menu sia davvero capito dalla porta.
 export const COMANDI = [
   ["menu", "Tutti i comandi, con gli esempi"],
+  ["atlas", "Apri Atlas a una mail: /atlas mail@esempio.it Nome"],
   ["stima", "Un prezzo: /stima Monza > Seriate (fac 2 · aiut 1 · urgente · panda)"],
   ["calendario", "I prossimi lavori e i giorni chiusi"],
   ["chiudi", "Chiudi un giorno ai clienti: /chiudi 12/10 (o 12/10 mattina)"],
