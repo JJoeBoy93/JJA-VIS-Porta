@@ -2280,6 +2280,7 @@ const RIEPILOGO = [
   "/invito — prova degli inviti del calendario di Atlas (o /invito tua@mail)",
   "/sped — Athena Trasporti: spedizione da tracciare, coi tasti degli stati e il link per il cliente",
   "/posta — collegare la Gmail di JJA-VIS: chi risponde alle lettere riceve risposta da JJA-VIS da solo; a te solo prezzi e decisioni",
+  "/atlas mail@esempio.it Nome — apri Atlas a una persona senza lettera: da allora, quando scrive, risponde Atlas (impegni, scadenze, documenti)",
   "",
   "/menu — questo elenco. Lo trovi sempre anche nel tasto «Menu» accanto al messaggio.",
   "Tocca un tasto qui sotto per i comandi più usati:",
