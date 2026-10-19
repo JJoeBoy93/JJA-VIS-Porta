@@ -731,8 +731,10 @@ async function postaInArrivo(req, env) {
         if (fatto.archiviati.length) {
           rec.domanda = `${rec.domanda}\n\n[in allegato mi ha mandato ${fatto.archiviati.length} document${fatto.archiviati.length === 1 ? "o" : "i"}, già archiviat${fatto.archiviati.length === 1 ? "o" : "i"} cifrat${fatto.archiviati.length === 1 ? "o" : "i"}: ${fatto.archiviati.map((x) => "«" + x.titolo + "»").join(", ")}` +
             (fatto.scadenze.length ? `; scadenze già segnate: ${fatto.scadenze.map((x) => `${x.cosa}${x.importo ? " " + x.importo : ""} entro il ${x.giorno}`).join("; ")}` : "") + ". Diglielo.]";
+          // la stessa bolletta mandata due volte non fa due scadenze (20/10)
           if (fatto.scadenze.length) await atlasAggiorna(env, da, (f) => { f.scadenze = f.scadenze || [];
-            f.scadenze.push(...fatto.scadenze.map((x) => ({ id: "s" + nuovoId().slice(0, 5), ...x, pagata: false, avvisi: {} }))); return []; });
+            const gia = (x) => f.scadenze.some((s) => !s.pagata && s.giorno === x.giorno && String(s.cosa).toLowerCase() === String(x.cosa).toLowerCase());
+            f.scadenze.push(...fatto.scadenze.filter((x) => !gia(x)).map((x) => ({ id: "s" + nuovoId().slice(0, 5), ...x, pagata: false, avvisi: {} }))); return []; });
         }
       }
       if (env.DOC_CHIAVE) rec.documenti = (await leggiIndice(env, da)).elenco;
@@ -957,6 +959,8 @@ Cosa fai DAVVERO, e nient'altro:
   si ripete ogni mese («l'affitto il 10 di ogni mese») è ricorrente. Gliele ricordi tu per mail 3 giorni prima e la mattina della
   scadenza, finché non ti scrive che l'ha pagata («pagata la luce»): allora la segni pagata (le ricorrenti passano al mese dopo).
   Una scadenza NON è un impegno: va in "scadenze_nuove", non in "nuovi". Non paghi tu e non entri in nessun conto: ricordi e basta.
+  Non scrivere tu le date dei promemoria (le calcola il sistema): di' solo «te la ricordo 3 giorni prima e la mattina stessa».
+  Se una scadenza uguale (stessa cosa, stesso giorno) è già nell'elenco, non segnarla di nuovo.
 - tieni i suoi DOCUMENTI (bollette, ricevute, contratti) che ti manda in allegato: li leggi, li archivi cifrati, e quando te li
   chiede («mandami la bolletta della luce di ottobre») glieli rimandi in allegato: metti i loro id in "manda_documenti". Se ti
   chiede di cancellarli, metti gli id in "documenti_tolti". I documenti che hai sono nell'elenco qui sotto: non inventarne altri.
@@ -2481,7 +2485,8 @@ export { scadenzaPagata };
 // ══ L'ARCHIVIO CIFRATO DEI DOCUMENTI — 20 ottobre 2026 (Athena) ════════════
 // Il padre di JJ: «tenergli archiviati i documenti»; e: «i miei dati li puoi vedere tu?». JJ: «serve un posto che neanche io
 // posso guardare». Ogni documento e l'elenco dei documenti di una persona stanno nell'archivio SOLO cifrati (AES-GCM a 256
-// bit, documenti/<impronta della mail>/), con DOC_CHIAVE: un segreto della porta. 20/10, JJ: «per avere sicurezza che non vada mai
+// bit, documenti/<impronta della mail>/, scritti come TESTO base64 — 20/10: GitHub prendeva un elenco cifrato di 177 byte per testo
+// UTF-16 e lo restituiva convertito, 264 byte che non si aprivano più: Atlas diceva «non ho nessuna bolletta»), con DOC_CHIAVE: un segreto della porta. 20/10, JJ: «per avere sicurezza che non vada mai
 // persa la chiave io debba comunque averla io, la uso solo in questo caso per ... rimettere a posto il secret»: la copia ce l'ha SOLO
 // JJ (non nel vault, non nel codice). Su Telegram non va mai il contenuto. Chiave cambiata = i documenti di prima non si aprono più.
 async function chiaveDoc(env) {
@@ -2495,14 +2500,14 @@ async function cifra(env, u8) { const iv = crypto.getRandomValues(new Uint8Array
 async function decifra(env, u8) { return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: u8.subarray(0, 12) }, await chiaveDoc(env), u8.subarray(12))); }
 async function cartellaDoc(mail) { const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("doc|" + mail))); return "documenti/" + [...h.slice(0, 10)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 async function leggiIndice(env, mail) {
-  let d; try { d = await gh(env, "GET", `${await cartellaDoc(mail)}/indice.bin`); } catch (_) { return { elenco: [], sha: undefined }; }
+  let d; try { d = await gh(env, "GET", `${await cartellaDoc(mail)}/indice.b64`); } catch (_) { return { elenco: [], sha: undefined }; }
   // c'è ma non si apre (la chiave è cambiata, 20/10): si riparte da un elenco vuoto, e lo sha serve per riscriverlo
-  try { return { elenco: JSON.parse(new TextDecoder().decode(await decifra(env, byteDa64(d.content.replace(/\n/g, ""))))), sha: d.sha }; }
+  try { return { elenco: JSON.parse(new TextDecoder().decode(await decifra(env, byteDa64(atob(d.content.replace(/\n/g, "")).trim())))), sha: d.sha }; }
   catch (_) { return { elenco: [], sha: d.sha, illeggibile: true }; }
 }
 async function scriviIndice(env, mail, elenco, sha) {
   const c = await cifra(env, new TextEncoder().encode(JSON.stringify(elenco)));
-  await gh(env, "PUT", `${await cartellaDoc(mail)}/indice.bin`, { message: "documenti: indice", content: b64byte(c), ...(sha ? { sha } : {}) });
+  await gh(env, "PUT", `${await cartellaDoc(mail)}/indice.b64`, { message: "documenti: indice", content: btoa(b64byte(c)), ...(sha ? { sha } : {}) });
 }
 // legge il documento (PDF o foto) e ne tira fuori titolo e scadenza: il modello vede il documento, JJ no
 async function leggiDocumento(env, a, oggi) {
@@ -2520,7 +2525,7 @@ async function archiviaAllegati(env, mail, allegati, oggi) {
   const I = await leggiIndice(env, mail), archiviati = [], scadenze = [];
   for (const a of buoni) {
     const info = await leggiDocumento(env, a, oggi), id = "d" + nuovoId().slice(0, 6);
-    await gh(env, "PUT", `${await cartellaDoc(mail)}/${id}.bin`, { message: "documenti: uno nuovo", content: b64byte(await cifra(env, byteDa64(a.dati))) });
+    await gh(env, "PUT", `${await cartellaDoc(mail)}/${id}.b64`, { message: "documenti: uno nuovo", content: btoa(b64byte(await cifra(env, byteDa64(a.dati)))) });
     const voce = { id, titolo: String(info.titolo || a.nome || "Documento").slice(0, 100), data: /^\d{4}-\d{2}-\d{2}$/.test(info.data || "") ? info.data : null, tipo: a.tipo, nome: String(a.nome || id).slice(0, 80) };
     I.elenco.push(voce); archiviati.push(voce);
     if (/^\d{4}-\d{2}-\d{2}$/.test(info.scadenza || "")) scadenze.push({ cosa: String(info.cosa || voce.titolo).slice(0, 120), importo: info.importo || null, giorno: info.scadenza, ogni_mese: false, doc: id });
@@ -2531,13 +2536,13 @@ async function archiviaAllegati(env, mail, allegati, oggi) {
 async function documentiDaMandare(env, mail, ids) {
   const I = await leggiIndice(env, mail), cartella = await cartellaDoc(mail), fuori = [];
   for (const v of I.elenco.filter((x) => ids.includes(x.id)).slice(0, 5)) {
-    try { const d = await ghGrezzo(env, `${cartella}/${v.id}.bin`); fuori.push({ name: `${v.titolo.replace(/[^\w .àèéìòù-]/gi, "")}.${DOC_TIPI[v.tipo] || "bin"}`, content: b64byte(await decifra(env, d)) }); } catch (_) {}
+    try { const d = byteDa64(new TextDecoder().decode(await ghGrezzo(env, `${cartella}/${v.id}.b64`)).trim()); fuori.push({ name: `${v.titolo.replace(/[^\w .àèéìòù-]/gi, "")}.${DOC_TIPI[v.tipo] || "bin"}`, content: b64byte(await decifra(env, d)) }); } catch (_) {}
   }
   return fuori;
 }
 async function documentiVia(env, mail, ids) {
   const I = await leggiIndice(env, mail), cartella = await cartellaDoc(mail);
-  for (const v of I.elenco.filter((x) => ids.includes(x.id))) { try { const d = await gh(env, "GET", `${cartella}/${v.id}.bin`); await gh(env, "DELETE", `${cartella}/${v.id}.bin`, { message: "documenti: cancellato", sha: d.sha }); } catch (_) {} }
+  for (const v of I.elenco.filter((x) => ids.includes(x.id))) { try { const d = await gh(env, "GET", `${cartella}/${v.id}.b64`); await gh(env, "DELETE", `${cartella}/${v.id}.b64`, { message: "documenti: cancellato", sha: d.sha }); } catch (_) {} }
   await scriviIndice(env, mail, I.elenco.filter((x) => !ids.includes(x.id)), I.sha);
 }
 async function ghGrezzo(env, percorso) {

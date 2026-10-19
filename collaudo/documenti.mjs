@@ -29,13 +29,14 @@ ok(fatto.scadenze.length === 1 && fatto.scadenze[0].giorno === "2026-11-05" && f
 const tutto = Object.values(repo).map((x) => Buffer.from(x, "base64").toString("latin1")).join(" ");
 ok(Object.keys(repo).every((k) => k.startsWith("documenti/") && !k.includes("papa")), "nell'archivio: solo documenti/<impronta>/, nemmeno la mail nel percorso", Object.keys(repo));
 ok(!/Enel|bolletta|85,40|PDF/.test(tutto), "nell'archivio niente in chiaro: né il titolo, né il contenuto", tutto.slice(0, 120));
+ok(Object.values(repo).every((x) => /^[A-Za-z0-9+/=]+$/.test(Buffer.from(x, "base64").toString("latin1"))), "nell'archivio solo testo base64 (20/10: GitHub convertiva i byte grezzi presi per UTF-16)");
 const I = await W.leggiIndice(env, "papa@prova.it");
 const indietro = await W.documentiDaMandare(env, "papa@prova.it", [I.elenco[0].id]);
 ok(indietro.length === 1 && indietro[0].content === pdf && /\.pdf$/.test(indietro[0].name), "a richiesta torna identico, col suo nome", indietro.map((x) => x.name));
 const altra = { ...env, DOC_CHIAVE: Buffer.alloc(32, 9).toString("base64") };
 ok((await W.leggiIndice(altra, "papa@prova.it")).elenco.length === 0 && (await W.documentiDaMandare(altra, "papa@prova.it", [I.elenco[0].id])).length === 0, "controprova: con un'altra chiave non si apre niente");
 await W.documentiVia(env, "papa@prova.it", [I.elenco[0].id]);
-ok((await W.leggiIndice(env, "papa@prova.it")).elenco.length === 0 && Object.keys(repo).filter((k) => k.endsWith(".bin") && !k.endsWith("indice.bin")).length === 0, "si cancella davvero: file e voce nell'elenco");
+ok((await W.leggiIndice(env, "papa@prova.it")).elenco.length === 0 && Object.keys(repo).filter((k) => k.endsWith(".b64") && !k.endsWith("indice.b64")).length === 0, "si cancella davvero: file e voce nell'elenco");
 const dopoCambio = await W.archiviaAllegati(altra, "papa@prova.it", [{ nome: "b2.pdf", tipo: "application/pdf", dati: pdf }], "2026-10-20");
 ok(dopoCambio.archiviati.length === 1 && (await W.leggiIndice(altra, "papa@prova.it")).elenco.length === 1, "chiave cambiata: l'elenco vecchio non si apre, ma i documenti nuovi si archiviano lo stesso", dopoCambio);
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);
