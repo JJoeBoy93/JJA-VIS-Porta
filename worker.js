@@ -2314,7 +2314,8 @@ async function giroReel(env, ora = new Date()) {
   if (!r.ok) return `reel.json: HTTP ${r.status}`;
   const info = await r.json().catch(() => null);
   if (!info || !info.data) return "reel.json senza data";
-  if (stato.data === info.data) return "già passato";
+  // stesso giorno, tema diverso = reel nuovo (19/10: il reel veloce della Torre fermato e rigirato come «jjavis» lo stesso giorno)
+  if (stato.data === info.data && (stato.tema || "") === (info.tema || "")) return "già passato";
   // un reel di piu' di due giorni fa non si propone come nuovo (la Action e' rimasta ferma)
   if ((Date.parse(oggi) - Date.parse(info.data)) / 86400000 > 2) return `reel vecchio (${info.data})`;
   const b = await aHermes(env, "/jjavis/reel", { chat_id: env.TG_CHAT, video: `${REEL}/reel.mp4`, descrizione: info.descrizione, tema: info.tema, profilo: "jj" });

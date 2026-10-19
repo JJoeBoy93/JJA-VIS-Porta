@@ -55,6 +55,14 @@ rispostaHermes = { "/jjavis/reel": { ok: true, message_id: 80, auto: false, perc
 await giroReel(env, alle("2026-10-22", "09:07")); e = await giroReel(env, alle("2026-10-22", "18:07"));
 ok(hermes.length === 1 && repo["reel/stato.json"].perche[0] === "niente musica", "la bozza c'è, ma alle 18 non si chiede di uscire", hermes);
 
+console.log("── stesso giorno, tema nuovo: è un altro reel");
+repo = {}; hermes = []; reelJson = { data: "2026-10-22", tema: "torre", descrizione: "torre" };
+rispostaHermes = { "/jjavis/reel": { ok: true, message_id: 81, auto: true, perche: [] } };
+await giroReel(env, alle("2026-10-22", "09:07"));
+reelJson = { data: "2026-10-22", tema: "jjavis", descrizione: "cos'è" };
+e = await giroReel(env, alle("2026-10-22", "10:07"));
+ok(e === "bozza" && hermes.length === 2 && repo["reel/stato.json"].tema === "jjavis", "il reel rigirato con un altro tema va a Hermes", { e, n: hermes.length });
+
 console.log("── fuori orario, reel vecchio, Hermes che cade");
 repo = {}; hermes = [];
 e = await giroReel(env, alle("2026-10-22", "06:07"));
