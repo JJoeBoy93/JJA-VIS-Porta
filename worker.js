@@ -21,7 +21,7 @@ function cors(origine) {
   return {
     "Access-Control-Allow-Origin": ok ? origine : ORIGINI[0],
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Vary": "Origin",
   };
 }
@@ -147,6 +147,7 @@ export default {
     if (req.method === "GET" && url.pathname === "/risposte") return rispostePerPagina(req, env, origine);
     if (req.method === "GET" && url.pathname === "/video") return videoPerPagina(env, origine);
     if (req.method === "GET" && url.pathname === "/io") return ioDalLink(env, url, origine);
+    if (req.method === "POST" && url.pathname === "/io/dal-conto") return ioDalConto(env, req, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
     if (req.method === "POST" && url.pathname === "/preventivo") return richiestaPreventivo(req, env, ctx, origine);
@@ -1399,7 +1400,8 @@ async function parla(req, env, ctx, origine) {
     ...(contatto ? { a: contatto.mail, contatto } : {}),
     stato: "arrivata", creata: new Date().toISOString() };
   const u = await aggiornaUtente(env, chi, { nome_assistente: rec.nome_assistente, tema: rec.tema, tuo: rec.nome,
-    mestiere: profilo.mestiere, tempo: profilo.tempo, conosciute: profilo.conosciute }, "messaggi");
+    mestiere: profilo.mestiere, tempo: profilo.tempo, conosciute: profilo.conosciute,
+    mail: rec.contatto && rec.contatto.mail ? String(rec.contatto.mail).trim().toLowerCase() : "" }, "messaggi");
   // Nova risponde subito solo nella chat; quello che passa a JJ resta in attesa.
   let subito = null;
   if (da_dove === "chat" && await novaAccesa(env)) {
@@ -2367,3 +2369,42 @@ async function ioDalLink(env, url, origine) {
   return risposta({ io: { id: chi, nome: u.nome_assistente || "", mestiere: u.mestiere || "", tema: u.tema || "", tuo: u.tuo || "" } }, 200, origine);
 }
 export { firmaChi, linkPersonale, ioDalLink };
+
+
+// ══ LA MAIL FA DA PONTE — 19 ottobre 2026 (Athena) ═════════════════════════
+// JJ, 19/10: «non mi ricordo e nemmeno lei da dove aveva iniziato, ma la mail con cui comunica con il suo Atlas dovrebbe
+// fare da ponte ... quando lei fa registrazione ... deve rispondere una cosa del tipo bentornata Jessica, perché la
+// conosce già». La pagina, appena entrata nell'account, manda qui la sua sessione; la porta chiede al server dei conti
+// di chi è (così la mail è quella confermata, col codice o con Google: nessuno può dire «sono Jessica»), cerca chi
+// conosce già con quella mail (Atlas, poi i profili) e rimanda il profilo. La prima volta al giorno: «Bentornata».
+const SERVER_CONTI = "https://jjavis-citta.jjavis.workers.dev";
+async function chiDaMail(env, mail) {
+  try { const a = (await atlasLeggi(env)).dati[mail]; if (a && a.chi) return a.chi; } catch (_) {}
+  try { for (const f of await gh(env, "GET", "utenti")) {
+      if (!f.name.endsWith(".json")) continue;
+      const u = deb64((await gh(env, "GET", `utenti/${f.name}`)).content); if (u && u.mail === mail) return u.chi || f.name.slice(0, -5); } } catch (_) {}
+  return null;
+}
+async function ioDalConto(env, req, origine, fetchConti = fetch) {
+  const t = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!/^[0-9a-f]{64}$/.test(t)) return risposta({ errore: "sessione" }, 401, origine);
+  const c = await fetchConti(`${env.SERVER_CONTI || SERVER_CONTI}/conto`, { headers: { Authorization: "Bearer " + t } }).then((x) => x.ok ? x.json() : null).catch(() => null);
+  const mail = c && c.conto && typeof c.conto.mail === "string" ? c.conto.mail.trim().toLowerCase() : "";
+  if (!mail) return risposta({ errore: "sessione" }, 401, origine);
+  const chi = await chiDaMail(env, mail); if (!chi) return risposta({ io: null }, 200, origine);
+  let u = null, sha; try { const d = await gh(env, "GET", `utenti/${chi}.json`); u = deb64(d.content); sha = d.sha; } catch (_) {}
+  if (!u) return risposta({ io: null }, 200, origine);
+  const io = { id: chi, mail, ...(u.nome_assistente ? { nome: u.nome_assistente } : {}), ...(u.tema ? { tema: u.tema } : {}), ...(u.tuo ? { tuo: u.tuo } : {}),
+    ...(u.mestiere ? { mestiere: u.mestiere } : {}), ...(u.tempo ? { tempo: u.tempo } : {}), ...(u.conosciute ? { conosciute: u.conosciute } : {}), ...(u.ha_risposto ? { inviato: true } : {}) };
+  // «bentornata»: una volta al giorno, alla mail che è già sua
+  const oggi = new Date().toISOString().slice(0, 10);
+  if (u.bentornato !== oggi && env.BREVO_API_KEY && env.MITTENTE) {
+    const nome = u.tuo ? ` ${u.tuo}` : "", ass = u.nome_assistente || "il tuo assistente";
+    await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ sender: { name: u.nome_assistente || "JJA-VIS", email: env.MITTENTE }, to: [{ email: mail }], subject: `Bentornat${/a$/i.test(u.tuo || "") ? "a" : "o"}${nome}`,
+        textContent: `Ciao${nome}, ti ho riconosciuto dalla mail: sono ${ass}, e mi ricordo tutto quello che mi avevi detto.\n\nDa adesso entri col tuo account da qualsiasi telefono, e mi ritrovi così come mi avevi lasciato.\n\n—\n${ass}, l'assistente di JJA-VIS. Per non ricevere altre mail, rispondi con «cancellami».` }) }).catch(() => {});
+    try { await gh(env, "PUT", `utenti/${chi}.json`, { message: `bentornato: ${chi}`, content: b64({ ...u, mail, bentornato: oggi }), sha }); } catch (_) {}
+  }
+  return risposta({ io }, 200, origine);
+}
+export { ioDalConto, chiDaMail };
