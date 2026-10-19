@@ -1,5 +1,5 @@
 /**
- * La posta in arrivo di JJA-VIS (11 ottobre 2026).
+ * La posta in arrivo di JJA-VIS (11 ottobre 2026; 20 ottobre: anche gli allegati, per l'archivio dei documenti).
  *
  * Va messo UNA volta nella Gmail di JJA-VIS: script.google.com → Nuovo progetto → incolla tutto → nella riga CHIAVE la chiave
  * che il bot di JJA-VIS ti dà col comando /posta → Salva → funzione «avvia» → Esegui → dai il permesso di leggere la posta.
@@ -42,7 +42,7 @@ function leggi() {
       const auto = (msg.getHeader("Auto-Submitted") || "").toLowerCase();
       if (m.mail === io || (auto && auto !== "no") || msg.getHeader("List-Id") || /mailer-daemon|no-?reply|postmaster/.test(m.mail)) { segna(id); return; }
       const r = UrlFetchApp.fetch(PORTA, { method: "post", contentType: "application/json", headers: { "X-Posta": CHIAVE },
-        payload: JSON.stringify({ da: m.mail, nome: m.nome, oggetto: msg.getSubject(), testo: msg.getPlainBody(), mid: id }), muteHttpExceptions: true });
+        payload: JSON.stringify({ da: m.mail, nome: m.nome, oggetto: msg.getSubject(), testo: msg.getPlainBody(), mid: id, allegati: allegati(msg) }), muteHttpExceptions: true });
       if (r.getResponseCode() !== 200) { console.log("la porta dice " + r.getResponseCode() + ": " + r.getContentText().slice(0, 200)); return; }   // si riprova al giro dopo
       const d = JSON.parse(r.getContentText() || "{}");
       if (d.rispondi) msg.reply(d.rispondi);
@@ -51,6 +51,13 @@ function leggi() {
   });
   prop.setProperty("fatte", JSON.stringify(fatte.slice(-300)));
   function segna(id) { if (!visto[id]) { visto[id] = true; fatte.push(id); } }
+}
+
+// 20/10: i documenti in allegato (PDF e foto, al massimo 5, ognuno sotto i 4,5 MB) vanno ad Atlas, che li archivia cifrati
+function allegati(msg) {
+  const tipi = { "application/pdf": 1, "image/jpeg": 1, "image/png": 1, "image/webp": 1 };
+  return msg.getAttachments({ includeInlineImages: false }).filter(function (a) { return tipi[a.getContentType()] && a.getSize() < 4500000; }).slice(0, 5)
+    .map(function (a) { return { nome: a.getName(), tipo: a.getContentType(), dati: Utilities.base64Encode(a.getBytes()) }; });
 }
 
 function mittente(msg) {
