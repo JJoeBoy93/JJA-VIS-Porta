@@ -74,6 +74,11 @@ export class Conti extends DurableObject {
     // 19/10, il profilo della pagina sull'account (JJ: «prima di entrare devi fare l'account con la mail, così poi non
     // ricominci mai da capo»): nome dell'assistente, mestiere, risposte, la chat — da qualsiasi telefono
     if (!colonne.includes("io")) this.sql.exec("ALTER TABLE conti ADD COLUMN io TEXT");
+    // 19/10, accedi o registrati (JJ: «la classica schermata di login ... username, mail e password»): la password non
+    // si tiene mai, solo sale + PBKDF2; dopo 5 errori la porta si chiude per 15 minuti
+    if (!colonne.includes("pass")) this.sql.exec("ALTER TABLE conti ADD COLUMN pass TEXT");
+    if (!colonne.includes("errori_pass")) this.sql.exec("ALTER TABLE conti ADD COLUMN errori_pass INTEGER NOT NULL DEFAULT 0");
+    if (!colonne.includes("chiuso_fino")) this.sql.exec("ALTER TABLE conti ADD COLUMN chiuso_fino INTEGER NOT NULL DEFAULT 0");
   }
   admin(mail) { const a = (this.env.JJAVIS_ADMIN || "").trim().toLowerCase(); return !!a && mail === a; }
   mostra(c) {   // quello che il telefono vede del suo account
@@ -92,6 +97,19 @@ export class Conti extends DurableObject {
     return t;
   }
   conto(uid) { return this.sql.exec("SELECT * FROM conti WHERE uid = ?", uid).toArray()[0] || null; }
+  // 20.000 giri: il piano gratuito dei Worker dà pochi millisecondi di calcolo a richiesta; il sale è per account
+  async passa(password, sale) {
+    const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+    return esa(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: new TextEncoder().encode(sale), iterations: 20000 }, k, 256));
+  }
+  async nuovaPass(password) { const sale = esa(crypto.getRandomValues(new Uint8Array(16))); return sale + ":" + await this.passa(password, sale); }
+  perNome(n) { return this.sql.exec("SELECT * FROM conti WHERE lower(soprannome) = lower(?) LIMIT 1", n).toArray()[0] || null; }
+  async codiceGiusto(mail, codice) {   // lo stesso codice di /conto/mail/entra; giusto: si consuma
+    const k = this.sql.exec("SELECT * FROM codici WHERE mail = ?", mail).toArray()[0], ora = Date.now();
+    if (!k || k.fino < ora || k.tentativi >= 5) return "scaduto";
+    if (await this.impronta(mail + ":" + codice) !== k.impronta) { this.sql.exec("UPDATE codici SET tentativi = tentativi + 1 WHERE mail = ?", mail); return "codice"; }
+    this.sql.exec("DELETE FROM codici WHERE mail = ?", mail); return "";
+  }
   async impronta(t) { return esa(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t))); }
 
   // le vie interne: le chiama solo il server della città, col suo stub. Dal mondo non si arriva (il worker passa solo /conto)
@@ -194,6 +212,49 @@ export class Conti extends DurableObject {
       if (!c) { const uid = "m:" + (await this.impronta(mail)).slice(0, 24); this.sql.exec("INSERT INTO conti(uid, mail, nome, creato, visto) VALUES (?, ?, ?, ?, ?)", uid, mail, "", ora, ora); c = this.conto(uid); }
       else this.sql.exec("UPDATE conti SET visto = ? WHERE uid = ?", ora, c.uid);
       return risposta({ token: await this.sessione(c.uid), conto: this.mostra(this.conto(c.uid)), nuovo });
+    }
+
+    if (via === "/conto/registra" && req.method === "POST") {   // nome utente, mail, password; la mail si conferma col codice
+      const mail = mailOk(corpo.mail), codice = typeof corpo.codice === "string" ? corpo.codice.replace(/\D/g, "") : "";
+      const nome = soprannomeOk(corpo.username), pw = typeof corpo.password === "string" ? corpo.password : "";
+      if (!mail) return risposta({ no: "mail" }, 400);
+      if (!nome) return risposta({ no: "username" }, 400);
+      if (pw.length < 8 || pw.length > 200) return risposta({ no: "password" }, 400);
+      if (corpo.eta14 !== true) return risposta({ no: "eta" }, 400);
+      let c = this.perMail(mail);
+      if (c && c.pass) return risposta({ no: "esiste" }, 409);   // c'è già: si accede, o si rifà la password
+      const altro = this.perNome(nome); if (altro && (!c || altro.uid !== c.uid)) return risposta({ no: "preso" }, 409);
+      const k = await this.codiceGiusto(mail, codice); if (k) return risposta({ no: k }, 401);
+      const ora = Date.now(), pass = await this.nuovaPass(pw);
+      if (c) { if (c.bloccato) return risposta({ no: "bloccato" }, 403); this.sql.exec("UPDATE conti SET soprannome = ?, pass = ?, visto = ? WHERE uid = ?", nome, pass, ora, c.uid); }
+      else { const uid = "m:" + (await this.impronta(mail)).slice(0, 24);
+        this.sql.exec("INSERT INTO conti(uid, mail, nome, soprannome, pass, creato, visto) VALUES (?, ?, ?, ?, ?, ?, ?)", uid, mail, "", nome, pass, ora, ora); c = this.conto(uid); }
+      return risposta({ token: await this.sessione(c.uid), conto: this.mostra(this.conto(c.uid)), nuovo: true });
+    }
+    if (via === "/conto/accedi" && req.method === "POST") {   // con la mail o il nome utente, e la password
+      const chi = typeof corpo.chi === "string" ? corpo.chi.trim() : "", pw = typeof corpo.password === "string" ? corpo.password : "";
+      const c = mailOk(chi) ? this.perMail(mailOk(chi)) : this.perNome(chi), ora = Date.now();
+      if (!c || !c.pass) return risposta({ no: "credenziali" }, 401);   // stessa risposta: non si scopre chi è registrato
+      if (c.chiuso_fino > ora) return risposta({ no: "attendi", fra: Math.ceil((c.chiuso_fino - ora) / 60000) }, 429);
+      const [sale, h] = c.pass.split(":");
+      if (await this.passa(pw, sale) !== h) {
+        const e = c.errori_pass + 1;
+        this.sql.exec("UPDATE conti SET errori_pass = ?, chiuso_fino = ? WHERE uid = ?", e >= 5 ? 0 : e, e >= 5 ? ora + 15 * 60000 : 0, c.uid);
+        return risposta({ no: "credenziali" }, 401);
+      }
+      if (c.bloccato) return risposta({ no: "bloccato" }, 403);
+      this.sql.exec("UPDATE conti SET errori_pass = 0, chiuso_fino = 0, visto = ? WHERE uid = ?", ora, c.uid);
+      return risposta({ token: await this.sessione(c.uid), conto: this.mostra(this.conto(c.uid)), nuovo: false });
+    }
+    if (via === "/conto/password" && req.method === "POST") {   // password dimenticata: col codice mandato alla mail
+      const mail = mailOk(corpo.mail), codice = typeof corpo.codice === "string" ? corpo.codice.replace(/\D/g, "") : "";
+      const pw = typeof corpo.password === "string" ? corpo.password : "";
+      if (!mail) return risposta({ no: "mail" }, 400);
+      if (pw.length < 8 || pw.length > 200) return risposta({ no: "password" }, 400);
+      const c = this.perMail(mail); if (!c) return risposta({ no: "credenziali" }, 401);
+      const k = await this.codiceGiusto(mail, codice); if (k) return risposta({ no: k }, 401);
+      this.sql.exec("UPDATE conti SET pass = ?, errori_pass = 0, chiuso_fino = 0 WHERE uid = ?", await this.nuovaPass(pw), c.uid);
+      return risposta({ token: await this.sessione(c.uid), conto: this.mostra(this.conto(c.uid)), nuovo: false });
     }
 
     // da qui serve la sessione

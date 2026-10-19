@@ -101,6 +101,20 @@ for (let i = 0; i < 5; i++) await chiama("/conto/mail/entra", { mail: "zoe@prova
 r = await chiama("/conto/mail/codice", { mail: "zoe@prova.it" }); const cz = codiceDi("zoe@prova.it");
 for (let i = 0; i < 5; i++) await chiama("/conto/mail/entra", { mail: "zoe@prova.it", codice: cz === "123456" ? "654321" : "123456", eta14: true });
 r = await chiama("/conto/mail/entra", { mail: "zoe@prova.it", codice: cz, eta14: true }); prova("dopo 5 codici sbagliati anche quello giusto non vale più (niente tentativi a caso)", r.stato === 401 && r.no === "scaduto", r);
+// 19/10, accedi o registrati (JJ: «username, mail e password»; chi è già registrato non deve farsi mandare il codice ogni volta)
+await chiama("/conto/mail/codice", { mail: "rita@prova.it" }); const cr = codiceDi("rita@prova.it");
+r = await chiama("/conto/registra", { mail: "rita@prova.it", codice: cr, username: "Rita_88", password: "corta", eta14: true }); prova("password sotto gli 8 caratteri: no", r.stato === 400 && r.no === "password", r);
+r = await chiama("/conto/registra", { mail: "rita@prova.it", codice: "000000", username: "Rita_88", password: "lunga-abbastanza", eta14: true }); prova("registrazione col codice sbagliato: no", r.stato === 401, r);
+r = await chiama("/conto/registra", { mail: "rita@prova.it", codice: cr, username: "Rita_88", password: "lunga-abbastanza", eta14: true });
+prova("ci si registra con nome utente, mail e password (la mail confermata col codice)", !!r.token && r.conto.soprannome === "Rita_88", r);
+r = await chiama("/conto/accedi", { chi: "rita@prova.it", password: "lunga-abbastanza" }); prova("poi si accede con mail e password, senza codice", !!r.token, r);
+r = await chiama("/conto/accedi", { chi: "rita_88", password: "lunga-abbastanza" }); prova("o col nome utente (maiuscole indifferenti)", !!r.token, r);
+r = await chiama("/conto/accedi", { chi: "rita@prova.it", password: "sbagliata!!" }); const r2 = await chiama("/conto/accedi", { chi: "nessuno@prova.it", password: "sbagliata!!" });
+prova("password sbagliata e utente che non esiste danno la stessa risposta", r.stato === 401 && r2.stato === 401 && r.no === r2.no, [r, r2]);
+for (let i = 0; i < 4; i++) await chiama("/conto/accedi", { chi: "rita@prova.it", password: "sbagliata!!" });
+r = await chiama("/conto/accedi", { chi: "rita@prova.it", password: "lunga-abbastanza" }); prova("dopo 5 errori la porta resta chiusa 15 minuti, anche con quella giusta", r.stato === 429, r);
+await chiama("/conto/mail/codice", { mail: "pino@prova.it" }); const cp = codiceDi("pino@prova.it");
+r = await chiama("/conto/registra", { mail: "pino@prova.it", codice: cp, username: "RITA_88", password: "lunga-abbastanza", eta14: true }); prova("il nome utente di un altro: no", r.stato === 409 && r.no === "preso", r);
 brevo.close();
 
 // uscire, cancellarsi
