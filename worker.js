@@ -146,6 +146,7 @@ export default {
     if (req.method === "GET" && url.pathname === "/nova") return risposta({ acceso: await novaAccesa(env) }, 200, origine);
     if (req.method === "GET" && url.pathname === "/risposte") return rispostePerPagina(req, env, origine);
     if (req.method === "GET" && url.pathname === "/video") return videoPerPagina(env, origine);
+    if (req.method === "GET" && url.pathname === "/io") return ioDalLink(env, url, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
     if (req.method === "POST" && url.pathname === "/preventivo") return richiestaPreventivo(req, env, ctx, origine);
@@ -575,7 +576,7 @@ async function invia(env, id, testoDiJJ, conMail) {
         to: [{ email: dati.a, ...(dati.nome ? { name: dati.nome } : {}) }],
         subject: dati.oggetto ? (/^re:/i.test(dati.oggetto) ? dati.oggetto : `Re: ${dati.oggetto}`)
                  : dati.nome_assistente ? `${dati.nome_assistente} ti risponde` : "La tua domanda a JJA-VIS",
-        textContent: testo + piede,
+        textContent: testo + piede + (dati.chi ? await piedeLink(env, dati.chi) : ""),
       }),
     });
     const d = await res.json().catch(() => ({}));
@@ -637,7 +638,7 @@ async function spedisciUscita(env) {
     const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
       headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ sender: { name: L.firma || "JJA-VIS", email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: "JJA-VIS" },
-        to: [{ email: L.a, ...(L.nome ? { name: L.nome } : {}) }], subject: L.oggetto, textContent: L.testo.trim() + piede }) });
+        to: [{ email: L.a, ...(L.nome ? { name: L.nome } : {}) }], subject: L.oggetto, textContent: L.testo.trim() + piede + await piedeLink(env, await chiDaLettera(env, L).catch(() => null)) }) });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { esiti.push(`${f.name}: Brevo ${res.status}`); continue; }   // si riprova all'ora dopo
     await gh(env, "PUT", `inviate/${f.name}`, { message: `inviata ${f.name}`, content: b64({ ...L, inviata: new Date().toISOString(), brevo: d.messageId || null }) });
@@ -967,7 +968,7 @@ async function atlasMail(env, a, nome, oggetto, testo, allegati) {
     headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ sender: { name: "Atlas · JJA-VIS", email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: "Atlas" },
       to: [{ email: a, ...(nome ? { name: nome } : {}) }], subject: oggetto,
-      textContent: testo + "\n\n—\nAtlas, l'assistente di JJA-VIS. Rispondi a questa mail per aggiungere, togliere o spostare un impegno; «cancellami» per non ricevere più niente.",
+      textContent: testo + "\n\n—\nAtlas, l'assistente di JJA-VIS. Rispondi a questa mail per aggiungere, togliere o spostare un impegno; «cancellami» per non ricevere più niente." + await piedeLink(env, ((await atlasLeggi(env)).dati[a] || {}).chi),
       ...(allegati && allegati.length ? { attachment: allegati } : {}) }) });
   if (!res.ok) throw new Error(`Brevo ${res.status}`);
 }
@@ -2339,3 +2340,30 @@ async function videoNelCinema(env, link, titolo) {
   return "aggiunto";
 }
 export { videoNelCinema };
+
+
+// ══ RITROVARSI DA QUALSIASI TELEFONO — 19 ottobre 2026 (Athena) ════════════
+// JJ, 19/10: «Jessica mi ha detto che non si ricorda più chi è e gli richiede tutto da capo ... se apri da una pagina
+// nuova non va bene che devi cominciare da capo». Il profilo della pagina sta nel telefono (localStorage): aprendo da
+// un altro browser (il link di una mail apre spesso il browser dell'app di posta) il telefono è «nuovo». Ogni mail
+// porta ora il link personale ?chi=…&k=… (k = firma HMAC del chi col segreto della porta: senza, il chi da solo non
+// apre niente); la pagina lo legge, chiede /io e rimette nome dell'assistente, mestiere, tema e nome.
+async function firmaChi(env, chi) {
+  const chiave = await crypto.subtle.importKey("raw", new TextEncoder().encode("io|" + (env.JJAVIS_SEGRETO || env.GH_TOKEN || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const s = new Uint8Array(await crypto.subtle.sign("HMAC", chiave, new TextEncoder().encode(chi)));
+  return btoa(String.fromCharCode(...s.slice(0, 12))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function linkPersonale(env, chi) { return `https://jjoeboy93.github.io/JJA-VIS/?chi=${encodeURIComponent(chi)}&k=${await firmaChi(env, chi)}`; }
+async function piedeLink(env, chi) {
+  if (!chi || !/^[A-Za-z0-9_-]{6,64}$/.test(chi)) return "";
+  return `\nIl tuo assistente, da qualsiasi telefono: ${await linkPersonale(env, chi)}`;
+}
+async function ioDalLink(env, url, origine) {
+  const chi = url.searchParams.get("chi") || "", k = url.searchParams.get("k") || "";
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(chi) || !k || k !== await firmaChi(env, chi)) return risposta({ errore: "link non valido" }, 403, origine);
+  let u = null;
+  try { u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {}
+  if (!u) return risposta({ errore: "non ti trovo" }, 404, origine);
+  return risposta({ io: { id: chi, nome: u.nome_assistente || "", mestiere: u.mestiere || "", tema: u.tema || "", tuo: u.tuo || "" } }, 200, origine);
+}
+export { firmaChi, linkPersonale, ioDalLink };
