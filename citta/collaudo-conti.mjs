@@ -56,6 +56,11 @@ r = await chiama("/conto/skin", { id: "neon", prezzo: 0 }, A); prova("una skin c
 r = await chiama("/conto/skin", { id: "cavaliere" }, A); prova("una skin che non puoi pagare non arriva", r.stato === 409 && !r.conto.skin.includes("cavaliere"), r);
 r = await chiama("/conto/soprannome", { soprannome: "str0nz0" }, A); prova("soprannome col filtro: le parolacce no", r.stato === 400, r);
 r = await chiama("/conto/soprannome", { soprannome: "Anna_93" }, A); prova("soprannome buono: resta nell'account", r.conto.soprannome === "Anna_93", r);
+// 19/10: il profilo della pagina vive nell'account (JJ: «così poi non ricominci mai da capo»)
+r = await chiama("/conto/io", { io: { id: "abc123", nome: "Atlas", mestiere: "Corriere o autista", chat: [{ ruolo: "tu", testo: "ciao" }] } }, A); prova("il profilo della pagina si salva sull'account", r.fatto === true, r);
+r = await chiama("/conto", null, A, "GET"); prova("e torna con l'account, da qualsiasi telefono", r.conto && r.conto.io && r.conto.io.nome === "Atlas" && r.conto.io.chat.length === 1, r);
+r = await chiama("/conto/io", { io: { x: "a".repeat(70000) } }, A); prova("un profilo enorme no (60 kB)", r.stato === 413, r.stato);
+r = await chiama("/conto/io", { io: { nome: "Spia" } }, null); prova("senza sessione il profilo non si scrive", r.stato === 401, r.stato);
 r = await entra(giusto("1", "anna@prova.it")); prova("rientrando con Google ritrovi tutto (non è un account nuovo)", !r.nuovo && r.conto.gettoni === 439 && r.conto.soprannome === "Anna_93", r);
 const A2 = r.token;
 

@@ -71,10 +71,14 @@ export class Conti extends DurableObject {
     const colonne = this.sql.exec("PRAGMA table_info(conti)").toArray().map(c => c.name);
     if (!colonne.includes("bloccato")) this.sql.exec("ALTER TABLE conti ADD COLUMN bloccato INTEGER NOT NULL DEFAULT 0");
     if (!colonne.includes("zitto_fino")) this.sql.exec("ALTER TABLE conti ADD COLUMN zitto_fino INTEGER NOT NULL DEFAULT 0");
+    // 19/10, il profilo della pagina sull'account (JJ: «prima di entrare devi fare l'account con la mail, così poi non
+    // ricominci mai da capo»): nome dell'assistente, mestiere, risposte, la chat — da qualsiasi telefono
+    if (!colonne.includes("io")) this.sql.exec("ALTER TABLE conti ADD COLUMN io TEXT");
   }
   admin(mail) { const a = (this.env.JJAVIS_ADMIN || "").trim().toLowerCase(); return !!a && mail === a; }
   mostra(c) {   // quello che il telefono vede del suo account
-    return { soprannome: c.soprannome, nome: c.nome, mail: c.mail, gettoni: c.gettoni, skin: JSON.parse(c.skin), portato: !!c.portato, admin: this.admin(c.mail) };
+    let io = null; try { io = c.io ? JSON.parse(c.io) : null; } catch (_) {}
+    return { soprannome: c.soprannome, nome: c.nome, mail: c.mail, gettoni: c.gettoni, skin: JSON.parse(c.skin), portato: !!c.portato, admin: this.admin(c.mail), io };
   }
   classifica(gioco) {
     return this.sql.exec(`SELECT c.soprannome AS n, r.punti AS punti, r.quando AS quando FROM record r JOIN conti c ON c.uid = r.uid
@@ -204,6 +208,12 @@ export class Conti extends DurableObject {
     const aggiorna = () => risposta({ conto: this.mostra(this.conto(uid)) });
 
     if (via === "/conto" && req.method === "GET") return aggiorna();
+    if (via === "/conto/io" && req.method === "POST") {   // il profilo della pagina: un oggetto, al massimo 60 kB
+      const io = corpo.io; if (!io || typeof io !== "object" || Array.isArray(io)) return risposta({ no: "io" }, 400);
+      const s = JSON.stringify(io); if (s.length > 60000) return risposta({ no: "grande" }, 413);
+      this.sql.exec("UPDATE conti SET io = ?, visto = ? WHERE uid = ?", s, Date.now(), uid);
+      return risposta({ fatto: true });
+    }
     if (req.method !== "POST") return risposta({ no: "via" }, 404);
 
     if (via === "/conto/porta") {   // la prima volta: gettoni e skin che il telefono aveva già
