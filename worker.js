@@ -2306,6 +2306,8 @@ async function giroReel(env, ora = new Date()) {
   if (stato.data && stato.giorno === oggi && stato.auto && !stato.uscita && h >= 18) {
     const e = await aHermes(env, "/jjavis/reel/esce", { chat_id: env.TG_CHAT, message_id: stato.message_id });
     await salva({ ...stato, uscita: { ...e, alle: roma } }, `reel ${stato.data}: alle 18 ${e.uscito ? "uscito" : "non uscito"}`);
+    // uscito: entra anche nel Cinema della città (JJ, 19/10: «al cinema ancora non c'è nessun video»)
+    if (e.uscito && e.link) await videoNelCinema(env, e.link, TITOLI_REEL[stato.tema] || "Un giro in città").catch((x) => console.log("cinema", x));
     return e.uscito ? "uscito" : `non uscito: ${e.perche || e.errore || "?"}`;
   }
   if (h < 8 || h >= 16) return "fuori orario";
@@ -2326,3 +2328,14 @@ async function giroReel(env, ora = new Date()) {
   return b.ok ? "bozza" : "errore";
 }
 export { giroReel };
+
+// i reel che escono da soli vanno nel Cinema (video.json, lo stesso elenco di /video), in cima
+const TITOLI_REEL = { jjavis: "Cos'è JJA-VIS", cafe: "Al JJA-VIS Café", torre: "La Torre", sartoria: "In Sartoria", giochi: "In Sala giochi", radio: "La radio della città" };
+async function videoNelCinema(env, link, titolo) {
+  const v = riconosciVideo(link); if (!v) return "link non riconosciuto";
+  const { elenco, sha } = await leggiVideo(env);
+  if (elenco.some((x) => x.piattaforma === v.piattaforma && x.codice === v.codice)) return "già nel Cinema";
+  await gh(env, "PUT", "video.json", { message: `video dal reel: ${titolo}`, content: b64([{ ...v, url: link, titolo, quando: new Date().toISOString() }, ...elenco]), ...(sha ? { sha } : {}) });
+  return "aggiunto";
+}
+export { videoNelCinema };

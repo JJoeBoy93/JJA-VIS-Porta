@@ -46,6 +46,7 @@ console.log("── alle 18");
 rispostaHermes["/jjavis/reel/esce"] = { ok: true, uscito: true, link: "https://www.instagram.com/reel/X/" };
 e = await giroReel(env, alle("2026-10-20", "18:07"));
 ok(e === "uscito" && hermes[1].p === "/jjavis/reel/esce" && hermes[1].c.message_id === 77 && hermes[1].c.chat_id === "42", "chiede a Hermes di farlo uscire, quel messaggio", { e, h: hermes[1] });
+ok(Array.isArray(repo["video.json"]) && repo["video.json"][0].piattaforma === "instagram" && repo["video.json"][0].titolo === "Al JJA-VIS Café", "uscito: entra nel Cinema, in cima, col suo titolo", repo["video.json"]);
 e = await giroReel(env, alle("2026-10-20", "19:07"));
 ok(hermes.length === 2, "alle 19 non lo chiede di nuovo", e);
 
