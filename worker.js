@@ -2481,8 +2481,9 @@ export { scadenzaPagata };
 // ══ L'ARCHIVIO CIFRATO DEI DOCUMENTI — 20 ottobre 2026 (Athena) ════════════
 // Il padre di JJ: «tenergli archiviati i documenti»; e: «i miei dati li puoi vedere tu?». JJ: «serve un posto che neanche io
 // posso guardare». Ogni documento e l'elenco dei documenti di una persona stanno nell'archivio SOLO cifrati (AES-GCM a 256
-// bit, documenti/<impronta della mail>/), con DOC_CHIAVE: un segreto della porta che non sta scritto da nessuna parte (messo
-// da Athena il 20/10, non ricopiato). Su Telegram non va mai il contenuto. Se la chiave si perde, i documenti non si leggono più.
+// bit, documenti/<impronta della mail>/), con DOC_CHIAVE: un segreto della porta. 20/10, JJ: «per avere sicurezza che non vada mai
+// persa la chiave io debba comunque averla io, la uso solo in questo caso per ... rimettere a posto il secret»: la copia ce l'ha SOLO
+// JJ (non nel vault, non nel codice). Su Telegram non va mai il contenuto. Chiave cambiata = i documenti di prima non si aprono più.
 async function chiaveDoc(env) {
   if (!env.DOC_CHIAVE) throw new Error("manca DOC_CHIAVE");
   const raw = Uint8Array.from(atob(env.DOC_CHIAVE), (c) => c.charCodeAt(0));
@@ -2494,9 +2495,10 @@ async function cifra(env, u8) { const iv = crypto.getRandomValues(new Uint8Array
 async function decifra(env, u8) { return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: u8.subarray(0, 12) }, await chiaveDoc(env), u8.subarray(12))); }
 async function cartellaDoc(mail) { const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("doc|" + mail))); return "documenti/" + [...h.slice(0, 10)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 async function leggiIndice(env, mail) {
-  try { const d = await gh(env, "GET", `${await cartellaDoc(mail)}/indice.bin`);
-    return { elenco: JSON.parse(new TextDecoder().decode(await decifra(env, byteDa64(d.content.replace(/\n/g, ""))))), sha: d.sha }; }
-  catch (_) { return { elenco: [], sha: undefined }; }
+  let d; try { d = await gh(env, "GET", `${await cartellaDoc(mail)}/indice.bin`); } catch (_) { return { elenco: [], sha: undefined }; }
+  // c'è ma non si apre (la chiave è cambiata, 20/10): si riparte da un elenco vuoto, e lo sha serve per riscriverlo
+  try { return { elenco: JSON.parse(new TextDecoder().decode(await decifra(env, byteDa64(d.content.replace(/\n/g, ""))))), sha: d.sha }; }
+  catch (_) { return { elenco: [], sha: d.sha, illeggibile: true }; }
 }
 async function scriviIndice(env, mail, elenco, sha) {
   const c = await cifra(env, new TextEncoder().encode(JSON.stringify(elenco)));

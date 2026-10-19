@@ -36,4 +36,6 @@ const altra = { ...env, DOC_CHIAVE: Buffer.alloc(32, 9).toString("base64") };
 ok((await W.leggiIndice(altra, "papa@prova.it")).elenco.length === 0 && (await W.documentiDaMandare(altra, "papa@prova.it", [I.elenco[0].id])).length === 0, "controprova: con un'altra chiave non si apre niente");
 await W.documentiVia(env, "papa@prova.it", [I.elenco[0].id]);
 ok((await W.leggiIndice(env, "papa@prova.it")).elenco.length === 0 && Object.keys(repo).filter((k) => k.endsWith(".bin") && !k.endsWith("indice.bin")).length === 0, "si cancella davvero: file e voce nell'elenco");
+const dopoCambio = await W.archiviaAllegati(altra, "papa@prova.it", [{ nome: "b2.pdf", tipo: "application/pdf", dati: pdf }], "2026-10-20");
+ok(dopoCambio.archiviati.length === 1 && (await W.leggiIndice(altra, "papa@prova.it")).elenco.length === 1, "chiave cambiata: l'elenco vecchio non si apre, ma i documenti nuovi si archiviano lo stesso", dopoCambio);
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);
