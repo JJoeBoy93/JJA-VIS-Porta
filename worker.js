@@ -653,9 +653,12 @@ async function spedisciUscita(env) {
 // leggevano. Uno script di Google (strumenti/posta.gs, messo da JJ una volta nella Gmail di JJA-VIS) ogni 5 minuti passa qui le
 // mail nuove. JJA-VIS risponde DA SOLO nel merito (lo script risponde da Gmail, nella stessa conversazione) e a JJ arriva solo una
 // riga per sapere; prezzi, date, appuntamenti, accordi e quello che JJA-VIS non sa («PER JJ:») vanno a JJ con Invia/Scarta.
-// «cancellami» cancella. Al massimo 3 risposte da solo per mail in 24 ore (due risponditori automatici non si parlano all'infinito).
+// «cancellami» cancella. Al massimo 10 risposte da solo per mail in 24 ore (due risponditori automatici non si parlano all'infinito).
+// 20/10, da 3 a 10: con Atlas una persona manda bollette, chiede documenti, sposta impegni — 3 al giorno finivano subito (JJ:
+// «non posso neanche sapere se va»). I risponditori automatici sono già scartati dallo script; un giro fra due macchine si
+// ferma comunque alla decima, e costa meno di un centesimo.
 // La chiave dello script: HMAC del token del bot, la dice /posta solo a JJ (nessun segreto nuovo da mettere).
-const POSTA_AUTO_MAX = 3;
+const POSTA_AUTO_MAX = 10;
 async function chiavePosta(env) {
   if (!env.TG_BOT_TOKEN) return null;
   const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.TG_BOT_TOKEN), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

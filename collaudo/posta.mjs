@@ -1,7 +1,7 @@
 // La posta in arrivo (11/10) — tutto finto.   node collaudo/posta.mjs
 // Controlla: senza la chiave giusta no; chi risponde a una nostra lettera riceve risposta da JJA-VIS da solo (a JJ una riga);
 // «PER JJ:» (prezzi, date, accordi) va a JJ con la proposta e Invia/Scarta; chi scrive a caso va a JJ senza bozza (non si paga);
-// «cancellami» cancella; al massimo 3 risposte da solo in 24 ore; la lettera citata sotto non entra; le nostre mail si ignorano;
+// «cancellami» cancella; al massimo 10 risposte da solo in 24 ore; la lettera citata sotto non entra; le nostre mail si ignorano;
 // l'Invia di JJ parte da Brevo con «Re: <oggetto>».
 import { copyFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,8 +89,8 @@ nuovo(); r = await posta({ da: "jjavis.93=gmail.com@ab12.brevosend.com", nome: "
 ok(r.ignora && !tgMsg.length, "le nostre passate da Brevo (mittente riscritto) si ignorano: la segnalazione della città non è una risposta", r);
 nuovo(); r = await posta({ da: "chiunque@p.it", nome: "JJA-VIS", oggetto: "Il tuo codice JJA-VIS: 123456", testo: "123456" });
 ok(r.ignora && !tgMsg.length, "anche col nome «JJA-VIS» (i codici d'accesso)", r);
-nuovo(); repo["inviate/1.json"] = lettera; repo["posta-auto.json"] = { "jessica@p.it": [1, 2, 3].map((h) => new Date(Date.now() - h * 36e5).toISOString()) };
-r = await posta(daJessica("ancora una domanda")); ok(r.attesa && /già 3 risposte da solo in 24 ore/.test(tgMsg[0].text), "dopo 3 risposte da solo in 24 ore, la quarta va a JJ", tgMsg[0]);
+nuovo(); repo["inviate/1.json"] = lettera; repo["posta-auto.json"] = { "jessica@p.it": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((h) => new Date(Date.now() - h * 36e5).toISOString()) };
+r = await posta(daJessica("ancora una domanda")); ok(r.attesa && /già 10 risposte da solo in 24 ore/.test(tgMsg[0].text), "dopo 10 risposte da solo in 24 ore, l'undicesima va a JJ", tgMsg[0]);
 nuovo(); r = await posta({ da: "non-una-mail", testo: "x" }); ok(r.stato === 400, "una mail che non è una mail: 400", r);
 
 console.log("── nell'argomento della persona (12/10: «non dovrebbe metterlo nel thread di Jessica?»)");
