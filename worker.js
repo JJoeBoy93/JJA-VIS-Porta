@@ -721,7 +721,7 @@ async function postaInArrivo(req, env) {
   // sondaggio → chi → utenti/<chi>.json; il codice si tiene in atlas.json
   const chi = (filo && filo.chi) || await chiDaLettera(env, lettera);
   const qui = await dovePosta(env, chi);
-  let esito = null, errore = null, costo = null;
+  let esito = null, errore = null, costo = null, docPronti = [];
   if (!lettera && !filo) errore = "non risponde a una nostra lettera";
   else {
     // il tetto di spesa (JJ, 12/10: «se scrivono in 10 per 3 volte sono al limite di 5 dollari»): oltre, niente Claude, decide JJ
@@ -745,8 +745,8 @@ async function postaInArrivo(req, env) {
       delete rec.documenti;   // l'elenco serviva ad Atlas: nella bozza salvata non resta
       // i documenti che chiede: in allegato, con una mail a parte (Brevo); quelli da cancellare: via davvero
       const chiesti = (esito.manda_documenti || []).map(String), via = (esito.documenti_tolti || []).map(String);
-      if (chiesti.length && env.DOC_CHIAVE) { const all = await documentiDaMandare(env, da, chiesti);
-        if (all.length) await atlasMail(env, da, (filo && filo.nome) || rec.nome, `📎 ${all.length === 1 ? "Il documento che mi hai chiesto" : "I documenti che mi hai chiesto"}`, `Eccoli in allegato.\nAtlas`, all); }
+      // si preparano qui; partono più giù: insieme alla risposta, in una mail sola (20/10, JJ: «mi ha risposto in 2 volte»)
+      if (chiesti.length && env.DOC_CHIAVE) docPronti = await documentiDaMandare(env, da, chiesti);
       if (via.length && env.DOC_CHIAVE) await documentiVia(env, da, via);
     } catch (e) { errore = `Atlas non è riuscito (${e.message || e})`; }
   }
@@ -777,6 +777,7 @@ async function postaInArrivo(req, env) {
   }).catch(() => []);
   const elenco = (segnati.length ? `\n\n📌 Segnati: ${segnati.map((x) => `${x.giorno}${x.ora ? " " + x.ora : ""} — ${x.cosa}`).join("; ")}` : "") +
     (costo ? `\n💶 questa risposta ≈ ${(costo.questa * 100).toFixed(2)} cent di $ · oggi ${costo.oggi.toFixed(2)} $ · mese ${costo.mese.toFixed(2)} $` : "");
+  if (perJJ && docPronti.length) await atlasMail(env, da, (filo && filo.nome) || rec.nome, `📎 ${docPronti.length === 1 ? "Il documento che mi hai chiesto" : "I documenti che mi hai chiesto"}`, `${docPronti.length === 1 ? "Eccolo" : "Eccoli"} in allegato.\nAtlas`, docPronti);
   if (perJJ) {
     const motivo = errore ? errore : recenti.length >= POSTA_AUTO_MAX ? `già ${recenti.length} risposte da solo in 24 ore` : (esito.per_jj || "risposta vuota");
     const proposta = testoBozza;
@@ -793,6 +794,10 @@ async function postaInArrivo(req, env) {
   await gh(env, "PUT", "posta-auto.json", { message: "posta: risposta da sola", content: b64(auto), ...(autoSha ? { sha: autoSha } : {}) }).catch(() => {});
   await tg(env, "sendMessage", { ...qui,
     text: `🤖 ${rec.nome || da} ha risposto e Atlas gli ha risposto da solo  #${id}\n«${testo.slice(0, 600)}»\n\n↩️ ${testoBozza.slice(0, 1500)}${elenco}` }).catch(() => {});
+  if (docPronti.length) {
+    await atlasMail(env, da, (filo && filo.nome) || rec.nome, `Re: ${oggetto || "i tuoi documenti"}`.slice(0, 150), testoBozza, docPronti);
+    return J({ fatto: "risposta con gli allegati mandata a parte" });
+  }
   return J({ rispondi: testoBozza });
 }
 
