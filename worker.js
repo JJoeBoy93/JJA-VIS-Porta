@@ -149,6 +149,8 @@ export default {
     if (req.method === "GET" && url.pathname === "/io") return ioDalLink(env, url, origine);
     if (req.method === "POST" && url.pathname === "/io/dal-conto") return ioDalConto(env, req, origine);
     if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/assistente") return assistenteDallaChat(env, req, origine);
+    if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
     if (req.method === "POST" && url.pathname === "/preventivo") return richiestaPreventivo(req, env, ctx, origine);
@@ -760,21 +762,7 @@ async function postaInArrivo(req, env) {
     if (!f.turni.length && lettera) f.turni.push({ chi: "noi", testo: `[la lettera «${lettera.oggetto}»] ${String(lettera.testo || "").slice(0, 1500)}`, quando: lettera.quando || "" });
     f.turni.push({ chi: "lei", testo, quando: rec.quando });
     if (!perJJ) f.turni.push({ chi: "noi", testo: testoBozza, quando: new Date().toISOString() });
-    const tolti = new Set((esito.tolti || []).map(String)); f.impegni = f.impegni.filter((x) => !tolti.has(String(x.id)));
-    const nuovi = (esito.nuovi || []).filter((x) => x && x.cosa && /^\d{4}-\d{2}-\d{2}$/.test(String(x.giorno || ""))).map((x) => ({
-      id: nuovoId().slice(0, 6), cosa: String(x.cosa).slice(0, 200), giorno: x.giorno, ora: /^\d{1,2}:\d{2}$/.test(String(x.ora || "")) ? String(x.ora).padStart(5, "0") : null,
-      avvisato: false }));
-    f.impegni.push(...nuovi);
-    // 20/10, le scadenze da pagare (il padre di JJ: «ricordargli ... scadenze di bollette e altre cose da pagare»)
-    f.scadenze = f.scadenze || [];
-    const pagate = new Set((esito.pagate || []).map(String)), via = new Set((esito.scadenze_tolte || []).map(String));
-    f.scadenze = f.scadenze.filter((x) => !via.has(String(x.id)));
-    for (const x of f.scadenze) if (pagate.has(String(x.id))) scadenzaPagata(x);
-    const nuove = (esito.scadenze_nuove || []).filter((x) => x && x.cosa && /^\d{4}-\d{2}-\d{2}$/.test(String(x.giorno || ""))).map((x) => ({
-      id: "s" + nuovoId().slice(0, 5), cosa: String(x.cosa).slice(0, 120), importo: x.importo ? String(x.importo).slice(0, 30) : null,
-      giorno: x.giorno, ogni_mese: !!x.ogni_mese, pagata: false, avvisi: {} }));
-    f.scadenze.push(...nuove);
-    return [...nuovi, ...nuove.map((x) => ({ ...x, cosa: `💶 ${x.cosa}${x.importo ? " " + x.importo : ""} (scade)` }))];
+    return applicaEsito(f, esito);
   }).catch(() => []);
   const elenco = (segnati.length ? `\n\n📌 Segnati: ${segnati.map((x) => `${x.giorno}${x.ora ? " " + x.ora : ""} — ${x.cosa}`).join("; ")}` : "") +
     (costo ? `\n💶 questa risposta ≈ ${(costo.questa * 100).toFixed(2)} cent di $ · oggi ${costo.oggi.toFixed(2)} $ · mese ${costo.mese.toFixed(2)} $` : "");
@@ -967,6 +955,8 @@ Cosa fai DAVVERO, e nient'altro:
 - la sera prima, alle 20, le mandi per mail gli impegni del giorno dopo; ogni mattina alle 7 il programma della giornata; un'ora prima di ogni impegno con l'ora, un promemoria;
 - per ogni impegno nuovo le mandi (in una mail a parte, al primo giro dopo le 7) un invito del calendario: lo tocca e finisce nel SUO calendario, col suo avviso. Tu nel calendario non entri: è lei che lo aggiunge con un tocco;
 - puoi togliere o spostare un impegno se te lo chiede;
+- se ti chiede una cosa che richiede informazioni aggiornate o che non sai con certezza (orari, prezzi, notizie, un prodotto, un
+  posto), puoi cercare sul web; nella risposta dici in breve da dove viene l'informazione. Il JSON della risposta resta l'ultima cosa;
 - segni le SCADENZE DA PAGARE (bollette, rate, affitto, bollo, tasse…): cosa, importo se lo dice, giorno di scadenza; se dice che
   si ripete ogni mese («l'affitto il 10 di ogni mese») è ricorrente. Gliele ricordi tu per mail 3 giorni prima e la mattina della
   scadenza, finché non ti scrive che l'ha pagata («pagata la luce»): allora la segni pagata (le ricorrenti passano al mese dopo).
@@ -1002,7 +992,9 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
     `Gli impegni già segnati:\n${impegni.length ? impegni.map((x) => `- [${x.id}] ${giornoBello(x.giorno)} (${x.giorno})${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n") : "(nessuno)"}\n\n` +
     `La conversazione fin qui (dalla più vecchia):\n${turni.map((t) => `${t.chi === "lei" ? "LEI" : "TU"}: ${t.testo}`).join("\n---\n") || "(niente)"}\n\n` +
     `Il suo NUOVO messaggio, tra le righe di trattini:\n-----\n${rec.domanda}\n-----`;
-  const t = await claude(env, { max_tokens: 8000, output_config: { effort: "medium" }, system: ATLAS_CHI(nomeAss(filo)), messages: [{ role: "user", content: contesto }] }, ATLAS_MODELLI, "haiku");
+  // 20/10: può cercare sul web (strumento dei server di Anthropic, web_search_20250305), al massimo 3 ricerche a risposta
+  const t = await claude(env, { max_tokens: 8000, output_config: { effort: "medium" }, system: ATLAS_CHI(nomeAss(filo)), messages: [{ role: "user", content: contesto }],
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] }, ATLAS_MODELLI, "haiku");
   const j = t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1);
   const d = JSON.parse(j);
   if (typeof d.risposta !== "string") throw new Error("risposta senza testo");
@@ -2591,7 +2583,9 @@ async function fotoDallaChat(env, req, origine) {
   const blocco = a.tipo === "application/pdf" ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: a.dati } }
     : { type: "image", source: { type: "base64", media_type: a.tipo, data: a.dati } };
   const t = await claude(env, { max_tokens: 700, system: `Sei ${ass}, l'assistente personale di JJA-VIS. Ti mandano una foto o un PDF nella chat. Se è un DOCUMENTO PERSONALE da tenere (bolletta, ricevuta, fattura, contratto, multa, avviso di pagamento, referto, documento d'identità…) rispondi SOLO con JSON {"documento": true}. Altrimenti {"documento": false, "risposta": "rispondi in italiano, del tu, breve, a quello che ti chiede sulla foto (o, se non chiede niente, dì cosa vedi e come puoi aiutare)"}. Non inventare quello che non si vede.`,
-    messages: [{ role: "user", content: [blocco, { type: "text", text: domanda ? `Mi chiede: «${domanda}»` : "Non ha scritto niente." }] }] }, ATLAS_MODELLI, "haiku").catch(() => null);
+    messages: [{ role: "user", content: [blocco, { type: "text", text: domanda ? `Mi chiede: «${domanda}»` : "Non ha scritto niente." }] }],
+    // dalla foto si può cercare sul web (JJ, 20/10: «per cercare online»), al massimo 3 ricerche
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] }, ATLAS_MODELLI, "haiku").catch(() => null);
   let j = {}; try { j = JSON.parse(String(t || "").replace(/^[^{]*/, "").replace(/[^}]*$/, "")); } catch (_) {}
   if (!j.documento) return risposta({ risposta: String(j.risposta || "Non sono riuscito a guardarla bene: riprova con una foto più nitida.").slice(0, 900) }, 200, origine);
   if (!env.DOC_CHIAVE) return risposta({ risposta: "L'archivio dei documenti adesso non è attivo: riprova più tardi." }, 200, origine);
@@ -2607,3 +2601,60 @@ async function fotoDallaChat(env, req, origine) {
     " Quando ti serve, chiedimelo e te lo rimando." }, 200, origine);
 }
 export { fotoDallaChat, mailDalConto };
+
+// quello che l'assistente ha deciso (impegni nuovi e tolti, scadenze nuove, pagate, tolte) entra nel filo; uguale per la posta e
+// per la chat della pagina (20/10: un assistente solo, da dove gli si scrive). Ritorna quello che è stato segnato
+function applicaEsito(f, esito) {
+    const tolti = new Set((esito.tolti || []).map(String)); f.impegni = f.impegni.filter((x) => !tolti.has(String(x.id)));
+    const nuovi = (esito.nuovi || []).filter((x) => x && x.cosa && /^\d{4}-\d{2}-\d{2}$/.test(String(x.giorno || ""))).map((x) => ({
+      id: nuovoId().slice(0, 6), cosa: String(x.cosa).slice(0, 200), giorno: x.giorno, ora: /^\d{1,2}:\d{2}$/.test(String(x.ora || "")) ? String(x.ora).padStart(5, "0") : null,
+      avvisato: false }));
+    f.impegni.push(...nuovi);
+    // 20/10, le scadenze da pagare (il padre di JJ: «ricordargli ... scadenze di bollette e altre cose da pagare»)
+    f.scadenze = f.scadenze || [];
+    const pagate = new Set((esito.pagate || []).map(String)), via = new Set((esito.scadenze_tolte || []).map(String));
+    f.scadenze = f.scadenze.filter((x) => !via.has(String(x.id)));
+    for (const x of f.scadenze) if (pagate.has(String(x.id))) scadenzaPagata(x);
+    const nuove = (esito.scadenze_nuove || []).filter((x) => x && x.cosa && /^\d{4}-\d{2}-\d{2}$/.test(String(x.giorno || ""))).map((x) => ({
+      id: "s" + nuovoId().slice(0, 5), cosa: String(x.cosa).slice(0, 120), importo: x.importo ? String(x.importo).slice(0, 30) : null,
+      giorno: x.giorno, ogni_mese: !!x.ogni_mese, pagata: false, avvisi: {} }));
+    f.scadenze.push(...nuove);
+    return [...nuovi, ...nuove.map((x) => ({ ...x, cosa: `💶 ${x.cosa}${x.importo ? " " + x.importo : ""} (scade)` }))];
+}
+
+// ══ UN ASSISTENTE SOLO — 20 ottobre 2026 (Athena) ══════════════════════════
+// JJ: «direi di farle tutte»: la chat della pagina (con l'account) parla con lo STESSO assistente della posta — stesso filo
+// (turni, impegni, scadenze, documenti), stessa memoria: quello che dici in chat lo sa anche per mail, e il contrario.
+// I documenti che chiedi in chat tornano come link da scaricare (GET /doc, solo con la tua sessione).
+async function assistenteDallaChat(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const testo = String(d.testo || "").trim().slice(0, 1500); if (!testo) return risposta({ errore: "vuoto" }, 400, origine);
+  const spesa = await spesaAtlas(env).catch(() => ({ oggi: 0, mese: 0 }));
+  if (spesa.oggi >= ATLAS_TETTO_GIORNO || spesa.mese >= ATLAS_TETTO_MESE) return risposta({ risposta: "Per oggi ho lavorato abbastanza: riprova domani." }, 200, origine);
+  const ass = String(d.nome_assistente || "").trim().slice(0, 24), tuo = String(d.tuo || "").trim().slice(0, 40);
+  await atlasAggiorna(env, mail, (f) => { if (ass) f.assistente = ass; if (tuo && !f.nome) f.nome = tuo; return []; });
+  const filo = (await atlasLeggi(env)).dati[mail];
+  const rec = { domanda: `[mi scrive dalla chat della pagina: la risposta compare in chat; i documenti che chiede li vede come link da scaricare]\n${testo}`, nome: filo.nome || tuo, quando: new Date().toISOString(),
+    documenti: env.DOC_CHIAVE ? (await leggiIndice(env, mail)).elenco : [] };
+  let esito; try { esito = await atlasRisponde(env, mail, rec, filo, null); await contaSpesa(env, ultimoUso); }
+  catch (e) { return risposta({ risposta: "Adesso non riesco a risponderti: riprova tra poco." }, 200, origine); }
+  const chiesti = (esito.manda_documenti || []).map(String), via = (esito.documenti_tolti || []).map(String);
+  if (via.length && env.DOC_CHIAVE) await documentiVia(env, mail, via);
+  await atlasAggiorna(env, mail, (f) => { f.turni.push({ chi: "lei", testo: `[chat] ${testo}`, quando: rec.quando }); f.turni.push({ chi: "noi", testo: esito.risposta, quando: new Date().toISOString() }); return applicaEsito(f, esito); });
+  const documenti = (rec.documenti || []).filter((x) => chiesti.includes(x.id)).map((x) => ({ id: x.id, titolo: x.titolo }));
+  return risposta({ risposta: esito.risposta, documenti }, 200, origine);
+}
+async function documentoDallaChat(env, req, url, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  const id = String(url.searchParams.get("id") || ""); if (!/^d[0-9a-z]{3,12}$/i.test(id)) return risposta({ errore: "id" }, 400, origine);
+  const I = await leggiIndice(env, mail), v = I.elenco.find((x) => x.id === id);
+  if (!v) return risposta({ errore: "non c'è" }, 404, origine);
+  const [f] = await documentiDaMandare(env, mail, [id]); if (!f) return risposta({ errore: "non si apre" }, 500, origine);
+  const r = new Response(byteDa64(f.content), { status: 200, headers: { "Content-Type": v.tipo || "application/octet-stream", "Content-Disposition": `inline; filename="${f.name.replace(/"/g, "")}"`, "Cache-Control": "no-store" } });
+  const c = risposta({}, 200, origine); for (const [k, val] of c.headers) if (/^access-control/i.test(k)) r.headers.set(k, val);
+  return r;
+}
+export { assistenteDallaChat, documentoDallaChat, applicaEsito };
