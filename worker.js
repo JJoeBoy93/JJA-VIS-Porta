@@ -148,6 +148,7 @@ export default {
     if (req.method === "GET" && url.pathname === "/video") return videoPerPagina(env, origine);
     if (req.method === "GET" && url.pathname === "/io") return ioDalLink(env, url, origine);
     if (req.method === "POST" && url.pathname === "/io/dal-conto") return ioDalConto(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
     if (req.method === "POST" && url.pathname === "/preventivo") return richiestaPreventivo(req, env, ctx, origine);
@@ -2567,3 +2568,42 @@ async function ghGrezzo(env, percorso) {
   if (!r.ok) throw new Error(`grezzo ${r.status}`); return new Uint8Array(await r.arrayBuffer());
 }
 export { cifra, decifra, archiviaAllegati, documentiDaMandare, documentiVia, leggiIndice, cartellaDoc };
+
+
+// ══ LE FOTO DALLA CHAT DELLA PAGINA — 20 ottobre 2026 (Athena) ══════════════
+// JJ: «bisogna implementare dentro a JJA-VIS che si possono mandare immagini da dentro la pagina ... per questa cosa delle
+// bollette, non è il massimo della comodità dover fare le cose via mail». Con l'account (la mail la conferma il server dei
+// conti, come nel ponte): una bolletta o un documento si archivia cifrato e la scadenza si segna, come per mail; un'altra
+// foto si guarda e si risponde. Senza account niente: i documenti di una persona stanno sotto la sua mail confermata.
+async function mailDalConto(req, fetchConti = fetch, env = {}) {
+  const t = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!/^[0-9a-f]{64}$/.test(t)) return "";
+  const c = await fetchConti(`${env.SERVER_CONTI || SERVER_CONTI}/conto`, { headers: { Authorization: "Bearer " + t } }).then((x) => x.ok ? x.json() : null).catch(() => null);
+  return c && c.conto && typeof c.conto.mail === "string" ? c.conto.mail.trim().toLowerCase() : "";
+}
+async function fotoDallaChat(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const a = { tipo: String(d.tipo || ""), dati: String(d.dati || ""), nome: String(d.nome || "foto").slice(0, 80) };
+  if (!DOC_TIPI[a.tipo] || a.dati.length < 100 || a.dati.length > 6e6) return risposta({ errore: "una foto (JPG, PNG) o un PDF, sotto i 4 MB" }, 400, origine);
+  const domanda = String(d.testo || "").slice(0, 500), ass = String(d.nome_assistente || "").slice(0, 24) || "JJA-VIS";
+  const blocco = a.tipo === "application/pdf" ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: a.dati } }
+    : { type: "image", source: { type: "base64", media_type: a.tipo, data: a.dati } };
+  const t = await claude(env, { max_tokens: 700, system: `Sei ${ass}, l'assistente personale di JJA-VIS. Ti mandano una foto o un PDF nella chat. Se è un DOCUMENTO PERSONALE da tenere (bolletta, ricevuta, fattura, contratto, multa, avviso di pagamento, referto, documento d'identità…) rispondi SOLO con JSON {"documento": true}. Altrimenti {"documento": false, "risposta": "rispondi in italiano, del tu, breve, a quello che ti chiede sulla foto (o, se non chiede niente, dì cosa vedi e come puoi aiutare)"}. Non inventare quello che non si vede.`,
+    messages: [{ role: "user", content: [blocco, { type: "text", text: domanda ? `Mi chiede: «${domanda}»` : "Non ha scritto niente." }] }] }, ATLAS_MODELLI, "haiku").catch(() => null);
+  let j = {}; try { j = JSON.parse(String(t || "").replace(/^[^{]*/, "").replace(/[^}]*$/, "")); } catch (_) {}
+  if (!j.documento) return risposta({ risposta: String(j.risposta || "Non sono riuscito a guardarla bene: riprova con una foto più nitida.").slice(0, 900) }, 200, origine);
+  if (!env.DOC_CHIAVE) return risposta({ risposta: "L'archivio dei documenti adesso non è attivo: riprova più tardi." }, 200, origine);
+  const fatto = await archiviaAllegati(env, mail, [a], oraRoma().slice(0, 10));
+  if (!fatto.archiviati.length) return risposta({ risposta: "Non sono riuscito ad archiviarlo: riprova tra poco." }, 200, origine);
+  await atlasAggiorna(env, mail, (f) => { f.scadenze = f.scadenze || []; if (d.nome_assistente && !f.assistente) f.assistente = ass;
+    const gia = (x) => f.scadenze.some((s) => !s.pagata && s.giorno === x.giorno && String(s.cosa).toLowerCase() === String(x.cosa).toLowerCase());
+    f.scadenze.push(...fatto.scadenze.filter((x) => !gia(x)).map((x) => ({ id: "s" + nuovoId().slice(0, 5), ...x, pagata: false, avvisi: {} })));
+    f.turni.push({ chi: "lei", testo: `[dalla chat della pagina: documento «${fatto.archiviati[0].titolo}»]`, quando: new Date().toISOString() }); return []; });
+  const s = fatto.scadenze[0];
+  return risposta({ risposta: `Ho archiviato «${fatto.archiviati[0].titolo}», cifrato: lo vedi solo tu.` +
+    (s ? ` Ho segnato la scadenza: ${s.cosa}${s.importo ? " " + s.importo : ""} entro il ${s.giorno.split("-").reverse().join("/")}. Te la ricordo per mail 3 giorni prima e la mattina stessa; quando l'hai pagata scrivimi «pagata».` : "") +
+    " Quando ti serve, chiedimelo e te lo rimando." }, 200, origine);
+}
+export { fotoDallaChat, mailDalConto };
