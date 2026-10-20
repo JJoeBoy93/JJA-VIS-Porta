@@ -128,7 +128,7 @@ const { atlasPromemoria } = await import(join(dir, "worker.mjs"));
 nuovo(); repo["atlas.json"] = { "jessica@p.it": { nome: "Jessica Crippa", turni: [], riepilogo: "", impegni: [
   { id: "a1", cosa: "ricordare a Jacopo il parrucchiere", giorno: "2026-10-14", ora: "18:00", avvisato: false, ics: true },
   { id: "a2", cosa: "comprare il giubbotto per Athena", giorno: "2026-10-14", ora: null, avvisato: false, ics: true },
-  { id: "a3", cosa: "vecchio", giorno: "2026-10-01", ora: null, avvisato: false } ] } };
+  { id: "a3", cosa: "vecchio", giorno: "2026-10-01", ora: null, avvisato: false } ], assistente: "Atlas" } };
 await atlasPromemoria(env, new Date("2026-10-14T04:07:00Z"));   // 06:07 a Roma (ora legale, +2): ancora niente
 ok(mandate.length === 0, "alle 6 di Roma non parte niente", mandate);
 await atlasPromemoria(env, new Date("2026-10-14T05:07:00Z"));   // 07:07 a Roma

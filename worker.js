@@ -777,7 +777,7 @@ async function postaInArrivo(req, env) {
   }).catch(() => []);
   const elenco = (segnati.length ? `\n\n📌 Segnati: ${segnati.map((x) => `${x.giorno}${x.ora ? " " + x.ora : ""} — ${x.cosa}`).join("; ")}` : "") +
     (costo ? `\n💶 questa risposta ≈ ${(costo.questa * 100).toFixed(2)} cent di $ · oggi ${costo.oggi.toFixed(2)} $ · mese ${costo.mese.toFixed(2)} $` : "");
-  if (perJJ && docPronti.length) await atlasMail(env, da, (filo && filo.nome) || rec.nome, `📎 ${docPronti.length === 1 ? "Il documento che mi hai chiesto" : "I documenti che mi hai chiesto"}`, `${docPronti.length === 1 ? "Eccolo" : "Eccoli"} in allegato.\nAtlas`, docPronti);
+  if (perJJ && docPronti.length) await atlasMail(env, da, (filo && filo.nome) || rec.nome, `📎 ${docPronti.length === 1 ? "Il documento che mi hai chiesto" : "I documenti che mi hai chiesto"}`, `${docPronti.length === 1 ? "Eccolo" : "Eccoli"} in allegato.\n${nomeAss(filo)}`, docPronti);
   if (perJJ) {
     const motivo = errore ? errore : recenti.length >= POSTA_AUTO_MAX ? `già ${recenti.length} risposte da solo in 24 ore` : (esito.per_jj || "risposta vuota");
     const proposta = testoBozza;
@@ -955,8 +955,11 @@ async function atlasAggiorna(env, mail, cambia) {
     catch (e) { if (i) throw e; }
   }
 }
-const ATLAS_CHI = `Sei Atlas, l'assistente di JJA-VIS che ricorda gli impegni a una persona, per mail. Rispondi in italiano, del tu, breve e
-caldo ma senza entusiasmo finto, come una persona attenta. Firmi «Atlas».
+// 20/10, JJ: «Atlas non è il nome corretto, è solo un nome d'esempio personalizzato ... JJA-VIS è Atlas»: il prodotto è JJA-VIS,
+// e ognuno chiama il suo assistente come vuole (Jessica e JJ: Atlas). Il nome viene da f.assistente, messo dalla pagina.
+const nomeAss = (f) => (f && f.assistente) || "JJA-VIS";
+const ATLAS_CHI = (nome) => `Sei ${nome}, l'assistente personale di JJA-VIS che ricorda impegni, scadenze e documenti a una persona, per mail. ${nome} è il nome che
+questa persona ti ha dato. Rispondi in italiano, del tu, breve e caldo ma senza entusiasmo finto, come una persona attenta. Firmi «${nome}».
 
 Cosa fai DAVVERO, e nient'altro:
 - segni gli impegni che ti scrive (anche quelli da ricordare ad altri: «ricordami di dire a Jacopo…» è un impegno SUO: ricordare a lei di dirlo a lui);
@@ -998,7 +1001,7 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
     `Gli impegni già segnati:\n${impegni.length ? impegni.map((x) => `- [${x.id}] ${giornoBello(x.giorno)} (${x.giorno})${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n") : "(nessuno)"}\n\n` +
     `La conversazione fin qui (dalla più vecchia):\n${turni.map((t) => `${t.chi === "lei" ? "LEI" : "TU"}: ${t.testo}`).join("\n---\n") || "(niente)"}\n\n` +
     `Il suo NUOVO messaggio, tra le righe di trattini:\n-----\n${rec.domanda}\n-----`;
-  const t = await claude(env, { max_tokens: 8000, output_config: { effort: "medium" }, system: ATLAS_CHI, messages: [{ role: "user", content: contesto }] }, ATLAS_MODELLI, "haiku");
+  const t = await claude(env, { max_tokens: 8000, output_config: { effort: "medium" }, system: ATLAS_CHI(nomeAss(filo)), messages: [{ role: "user", content: contesto }] }, ATLAS_MODELLI, "haiku");
   const j = t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1);
   const d = JSON.parse(j);
   if (typeof d.risposta !== "string") throw new Error("risposta senza testo");
@@ -1016,11 +1019,12 @@ function icsImpegno(x) {
     "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${testo(x.cosa)}`, x.ora ? "TRIGGER:-PT60M" : "TRIGGER:-PT4H", "END:VALARM", "END:VEVENT", "END:VCALENDAR"].join("\r\n") + "\r\n";
 }
 async function atlasMail(env, a, nome, oggetto, testo, allegati) {
+  const fa = (await atlasLeggi(env)).dati[a] || {}, ass = nomeAss(fa);
   const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
     headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ sender: { name: "Atlas · JJA-VIS", email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: "Atlas" },
+    body: JSON.stringify({ sender: { name: ass === "JJA-VIS" ? "JJA-VIS" : `${ass} · JJA-VIS`, email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: ass },
       to: [{ email: a, ...(nome ? { name: nome } : {}) }], subject: oggetto,
-      textContent: testo + "\n\n—\nAtlas, l'assistente di JJA-VIS. Rispondi a questa mail per aggiungere, togliere o spostare un impegno; «cancellami» per non ricevere più niente." + await piedeLink(env, ((await atlasLeggi(env)).dati[a] || {}).chi),
+      textContent: testo + `\n\n—\n${ass}, il tuo assistente JJA-VIS.`+" Rispondi a questa mail per aggiungere, togliere o spostare un impegno; «cancellami» per non ricevere più niente." + await piedeLink(env, fa.chi),
       ...(allegati && allegati.length ? { attachment: allegati } : {}) }) });
   if (!res.ok) throw new Error(`Brevo ${res.status}`);
 }
@@ -1036,21 +1040,21 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     const diOggi = f.impegni.filter((x) => x.giorno === oggi).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
     if (h >= 7 && f.riepilogo !== oggi && diOggi.length) {
       const righe = diOggi.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n");
-      await atlasMail(env, mail, f.nome, `📋 Il tuo programma di oggi, ${giornoBello(oggi)}`, `Buongiorno${f.nome ? " " + f.nome.split(" ")[0] : ""}! Oggi:\n\n${righe}\n\nTi riscrivo un'ora prima di quelli con l'ora.\nAtlas`);
+      await atlasMail(env, mail, f.nome, `📋 Il tuo programma di oggi, ${giornoBello(oggi)}`, `Buongiorno${f.nome ? " " + f.nome.split(" ")[0] : ""}! Oggi:\n\n${righe}\n\nTi riscrivo un'ora prima di quelli con l'ora.\n${nomeAss(f)}`);
       f.riepilogo = oggi; cambiato = true; fatti.push([mail, `📋 ${f.nome || mail}: programma di oggi (${diOggi.length})`]);
     }
     // la sera prima (lo promette la lettera: «il giorno prima e la mattina stessa»)
     const domani = new Date(Date.UTC(+oggi.slice(0, 4), +oggi.slice(5, 7) - 1, +oggi.slice(8, 10) + 1)).toISOString().slice(0, 10);
     const diDomani = f.impegni.filter((x) => x.giorno === domani).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
     if (h >= 20 && h < 22 && f.serale !== oggi && diDomani.length) {   // fino alle 22: dopo, si aspetta la mattina
-      await atlasMail(env, mail, f.nome, `🌙 Domani, ${giornoBello(domani)}`, `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, domani hai:\n\n${diDomani.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n")}\n\nBuona serata.\nAtlas`);
+      await atlasMail(env, mail, f.nome, `🌙 Domani, ${giornoBello(domani)}`, `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, domani hai:\n\n${diDomani.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n")}\n\nBuona serata.\n${nomeAss(f)}`);
       f.serale = oggi; cambiato = true; fatti.push([mail, `🌙 ${f.nome || mail}: quelli di domani (${diDomani.length})`]);
     }
     // gli inviti del calendario degli impegni nuovi, in una mail sola, fra le 7 e le 22 (di notte non si scrive)
     const daInvitare = f.impegni.filter((x) => !x.ics && x.giorno >= oggi).slice(0, 10);
     if (h >= 7 && h < 22 && daInvitare.length) {
       await atlasMail(env, mail, f.nome, `📅 ${daInvitare.length === 1 ? "Un impegno" : daInvitare.length + " impegni"} da mettere nel tuo calendario`,
-        `Qui sotto ${daInvitare.length === 1 ? "c'è l'invito" : "ci sono gli inviti"} del calendario: ${daInvitare.length === 1 ? "aprilo" : "aprili uno alla volta"} e tocca «Aggiungi», e ${daInvitare.length === 1 ? "finisce" : "finiscono"} nel tuo calendario, con il loro avviso.\n\n${daInvitare.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n")}\n\nAtlas`,
+        `Qui sotto ${daInvitare.length === 1 ? "c'è l'invito" : "ci sono gli inviti"} del calendario: ${daInvitare.length === 1 ? "aprilo" : "aprili uno alla volta"} e tocca «Aggiungi», e ${daInvitare.length === 1 ? "finisce" : "finiscono"} nel tuo calendario, con il loro avviso.\n\n${daInvitare.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n")}\n\n${nomeAss(f)}`,
         daInvitare.map((x) => ({ name: `atlas-${x.giorno}-${x.id}.ics`, content: btoa(String.fromCharCode(...new TextEncoder().encode(icsImpegno(x)))) })));
       for (const x of daInvitare) x.ics = true; cambiato = true; fatti.push([mail, `📅 ${f.nome || mail}: ${daInvitare.length} inviti del calendario`]);
     }
@@ -1061,14 +1065,14 @@ export async function atlasPromemoria(env, adesso = new Date()) {
       const quale = fra === 0 ? "oggi" : fra > 0 && fra <= 3 ? "prima" : null;
       if (!quale || x.avvisi[quale]) continue;
       await atlasMail(env, mail, f.nome, quale === "oggi" ? `💶 Scade oggi: ${x.cosa}${x.importo ? " · " + x.importo : ""}` : `💶 Tra ${fra} giorn${fra === 1 ? "o" : "i"}: ${x.cosa}${x.importo ? " · " + x.importo : ""}`,
-        `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, ${quale === "oggi" ? "oggi" : giornoBello(x.giorno)} scade: ${x.cosa}${x.importo ? ", " + x.importo : ""}.\n\nQuando l'hai pagata rispondimi «pagata» e smetto di ricordartela.\nAtlas`);
+        `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, ${quale === "oggi" ? "oggi" : giornoBello(x.giorno)} scade: ${x.cosa}${x.importo ? ", " + x.importo : ""}.\n\nQuando l'hai pagata rispondimi «pagata» e smetto di ricordartela.\n${nomeAss(f)}`);
       x.avvisi[quale] = true; if (quale === "oggi") x.avvisi.prima = true; cambiato = true; fatti.push([mail, `💶 ${f.nome || mail}: ${x.cosa} (${quale})`]);
     }
     for (const x of f.impegni) {
       if (x.avvisato || !x.ora) continue;
       const quando = daRoma(x.giorno, x.ora).getTime();
       if (adesso.getTime() >= quando - 65 * 60000 && adesso.getTime() < quando) {
-        await atlasMail(env, mail, f.nome, `⏰ Alle ${x.ora}: ${x.cosa}`, `Tra poco, alle ${x.ora}: ${x.cosa}.\nAtlas`);
+        await atlasMail(env, mail, f.nome, `⏰ Alle ${x.ora}: ${x.cosa}`, `Tra poco, alle ${x.ora}: ${x.cosa}.\n${nomeAss(f)}`);
         x.avvisato = true; cambiato = true; fatti.push([mail, `⏰ ${f.nome || mail}: ${x.ora} ${x.cosa}`]);
       }
     }
@@ -2463,6 +2467,11 @@ async function ioDalConto(env, req, origine, fetchConti = fetch) {
   const c = await fetchConti(`${env.SERVER_CONTI || SERVER_CONTI}/conto`, { headers: { Authorization: "Bearer " + t } }).then((x) => x.ok ? x.json() : null).catch(() => null);
   const mail = c && c.conto && typeof c.conto.mail === "string" ? c.conto.mail.trim().toLowerCase() : "";
   if (!mail) return risposta({ errore: "sessione" }, 401, origine);
+  // 20/10, JJ: «non è molto comodo dover abilitare io manualmente ogni user»: entrare con l'account (mail confermata) apre
+  // anche l'assistente per mail, col nome che la pagina gli ha dato
+  let corpo = {}; try { corpo = await req.json(); } catch (_) {}
+  const assistente = typeof corpo.assistente === "string" ? corpo.assistente.trim().slice(0, 24) : "", tuo = typeof corpo.tuo === "string" ? corpo.tuo.trim().slice(0, 40) : "";
+  await atlasAggiorna(env, mail, (f) => { if (assistente) f.assistente = assistente; if (tuo && !f.nome) f.nome = tuo; return []; }).catch(() => {});
   const chi = await chiDaMail(env, mail); if (!chi) return risposta({ io: null }, 200, origine);
   let u = null, sha; try { const d = await gh(env, "GET", `utenti/${chi}.json`); u = deb64(d.content); sha = d.sha; } catch (_) {}
   if (!u) return risposta({ io: null }, 200, origine);
