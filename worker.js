@@ -148,6 +148,7 @@ export default {
     if (req.method === "GET" && url.pathname === "/video") return videoPerPagina(env, origine);
     if (req.method === "GET" && url.pathname === "/io") return ioDalLink(env, url, origine);
     if (req.method === "POST" && url.pathname === "/io/dal-conto") return ioDalConto(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/nato") return nato(env, req, origine);
     if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente") return assistenteDallaChat(env, req, origine);
     if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
@@ -2511,6 +2512,36 @@ async function ioDalConto(env, req, origine, fetchConti = fetch) {
   return risposta({ io }, 200, origine);
 }
 export { ioDalConto, chiDaMail };
+
+// ══ NASCE UN ASSISTENTE — 22 ottobre 2026 (Athena) ══════════════════════════
+// JJ: «viene creato effettivamente il nuovo utente e assistente solo alla fine di tutte le domande, sbagliato: dopo che uno entra ha
+// già fatto la registrazione, ha scelto nome e tema, qui deve arrivare a telegram che c'è un nuovo assistente e un nuovo user, poi
+// con tutte le domande è dove inizia davvero a conoscere la persona ma esiste già». La pagina chiama POST /nato appena la persona
+// ha l'account e ha scelto nome, tema e come si chiama: nasce utenti/<chi>.json col suo argomento nel gruppo, l'assistente per
+// mail sa nome e chi, e a JJ arriva 🆕 una volta sola (u.nato). Il codice di un'altra persona non si prende (403).
+async function nato(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const chi = /^[0-9a-f]{8,32}$/.test(d.chi || "") ? d.chi : "";
+  if (!chi) return risposta({ errore: "codice" }, 400, origine);
+  let prima = null; try { prima = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {}
+  if (prima && prima.mail && String(prima.mail).trim().toLowerCase() !== mail) return risposta({ errore: "non è tuo" }, 403, origine);
+  const ass = testo(d.nome_assistente, 20), tema = testo(d.tema, 10), tuo = testo(d.tuo, 40);
+  // chi esisteva già prima del 22/10 (argomento nato col sondaggio): JJ l'ha già saputo, niente 🆕 — si segna e basta
+  const vecchio = prima && prima.thread && !prima.nascita && !prima.nato;
+  const u = await aggiornaUtente(env, chi, { nome_assistente: ass, tema, tuo, mail, ...(vecchio ? { nato: new Date().toISOString() } : prima ? {} : { nascita: new Date().toISOString() }) },
+    prima ? null : "nascite");
+  await atlasAggiorna(env, mail, (f) => { if (ass) f.assistente = ass; if (tuo && !f.nome) f.nome = tuo; if (!f.chi) f.chi = chi; return []; }).catch(() => {});
+  if (!u) return risposta({ errore: "archivio" }, 502, origine);
+  if (prima && (prima.nato || vecchio)) return risposta({ ok: true, gia: true }, 200, origine);
+  let detto = false;
+  try { await manda(env, u, { text: `🆕 Nuovo assistente, nuova persona\n${ass || "(senza nome)"} · ${tuo || "(non ha detto il suo nome)"}${tema ? " · tema " + tema : ""}\n✉️ ${mail}\n\nAccount fatto, nome e tema scelti: adesso comincia a conoscerla.` }); detto = true; }
+  catch (e) { console.log("nato: telegram", e); }
+  // u.nato solo se JJ l'ha saputo: se Telegram cade, alla prossima apertura riprova
+  if (detto) await aggiornaUtente(env, chi, { nato: new Date().toISOString() }, null);
+  return risposta({ ok: true, detto }, 201, origine);
+}
 
 // una scadenza pagata: finita, o — se si ripete ogni mese — lo stesso giorno del mese dopo, con gli avvisi da rifare
 function scadenzaPagata(x) {
