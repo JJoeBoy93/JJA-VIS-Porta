@@ -150,6 +150,7 @@ export default {
     if (req.method === "GET" && url.pathname === "/io") return ioDalLink(env, url, origine);
     if (req.method === "POST" && url.pathname === "/io/dal-conto") return ioDalConto(env, req, origine);
     if (req.method === "POST" && url.pathname === "/nato") return nato(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/ares") return aresParla(env, req);
     if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente") return assistenteDallaChat(env, req, origine);
     if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
@@ -2925,6 +2926,24 @@ async function primoDaTasto(env, k, si) {
   return `prima proposta mandata (${chi ? "chat + " : ""}${e.mail ? "mail" : "mail NON partita"})`;
 }
 export { giroPrimi, primoDaTasto };
+
+// ══ ARES PARLA A JJ — 23 ottobre 2026 (Athena) ═════════════════════════════
+// Ares (repository Ardito-Ares, ogni mattina su GitHub Actions) guarda tutti i repository e scrive a JJ su Telegram passando di
+// qui. JJ, 23/10: «serve che entra operativo Ares». Nel codice c'è solo l'impronta SHA-256 della chiave (la chiave sta fra i
+// segreti di Ardito-Ares, e JJ ne ha la copia): chiave sbagliata → 403 e niente messaggio. Il messaggio va solo nella chat di JJ.
+const IMPRONTA_ARES = "3f2ecc6ca9eeabdaf5c9006f21f72559d41244b281d09139b157ca726be0019c";
+async function aresParla(env, req) {
+  const dati = new TextEncoder().encode(req.headers.get("X-Chiave") || "");
+  const impronta = [...new Uint8Array(await crypto.subtle.digest("SHA-256", dati))].map((x) => x.toString(16).padStart(2, "0")).join("");
+  if (impronta !== IMPRONTA_ARES) return new Response('{"errore":"chiave"}', { status: 403, headers: { "content-type": "application/json" } });
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const testo = String(d.testo || "").trim().slice(0, 4000);
+  if (!testo) return new Response('{"errore":"vuoto"}', { status: 400, headers: { "content-type": "application/json" } });
+  try { await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: testo }); }
+  catch (e) { return new Response(JSON.stringify({ errore: String(e.message || e) }), { status: 502, headers: { "content-type": "application/json" } }); }
+  return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
+}
+export { aresParla };
 async function documentoDallaChat(env, req, url, origine) {
   const mail = await mailDalConto(req, fetch, env);
   if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
