@@ -1554,6 +1554,11 @@ async function parla(req, env, ctx, origine) {
       catch (e) { console.log("nova per-pagina", e); }
     }
   }
+  // 22/10: «Voglio provare Clio» → l'invito monouso parte da solo (invitoClioDallaPagina); se non riesce, la domanda va a JJ come prima
+  if (da_dove === "clio" && rec.a) {
+    const fatto = await invitoClioDallaPagina(env, rec, u).catch((e) => { console.log("clio invito", e); return false; });
+    if (fatto) return risposta({ ok: true, id, clio: fatto }, 201, origine);
+  }
   try { await nuovaDomanda(env, rec, u); }
   catch (e) { return risposta({ errore: String(e.message || e) }, 502, origine); }
   return risposta({ ok: true, id, ...(subito ? { subito } : {}) }, 201, origine);
@@ -2782,11 +2787,58 @@ async function giaGuida(env, mail) {
     if (!r.ok) return null; const d = await r.json(); return d.guida === true;
   } catch (_) { return null; }
 }
+// ══ L'INVITO A CLIO PARTE DA SOLO — 22 ottobre 2026 (Athena) ══════════════
+// JJ: «per usare Clio serve l'invito, puoi fare in modo che si crei in automatico un invito monouso per chi vuole usare Clio?».
+// Clio crea l'invito (POST /api/porta/invito, CLIO_CHIAVE): monouso, uno per indirizzo (chi preme due volte riceve lo stesso), e
+// nessuno per chi è già guida. Il link apre «Creane uno» col codice e la mail già scritti. Clio è a pagamento per le guide nuove
+// (JJ, 22/10: abbonamento mensile; gratis solo per lui e sua madre): la mail lo dice, col prezzo se c'è CLIO_PREZZO, se no che
+// le condizioni le scrive Jacopo. Nessun prezzo inventato.
+const CLIO = "https://clio.19-jjardito93.workers.dev";
+async function invitoClio(env, mail) {
+  if (!env.CLIO_CHIAVE) return null;
+  try {
+    const r = await fetch(`${CLIO}/api/porta/invito`, { method: "POST", headers: { "content-type": "application/json", "X-Chiave": env.CLIO_CHIAVE },
+      body: JSON.stringify({ email: mail }), signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null; const d = await r.json();
+    return d.gia ? { gia: true } : d.chiave ? { chiave: d.chiave, link: `${CLIO}/accedi.html?invito=${d.chiave}&email=${encodeURIComponent(mail)}` } : null;
+  } catch (_) { return null; }
+}
+function rigaPrezzoClio(env) {
+  return env.CLIO_PREZZO ? `Clio è un servizio in abbonamento mensile: ${env.CLIO_PREZZO}.`
+    : "Clio è un servizio in abbonamento mensile: le condizioni te le scrive Jacopo, che l'ha costruita, prima che tu cominci con i visitatori.";
+}
+async function invitoClioDallaPagina(env, rec, u) {
+  const mail = String(rec.a).trim().toLowerCase(), inv = await invitoClio(env, mail);
+  if (!inv) return false;
+  const ciao = `Ciao${rec.nome ? " " + rec.nome.split(" ")[0] : ""},`;
+  const testo = inv.gia
+    ? `${ciao}\n\nhai già il tuo account da guida su Clio: entri da qui, con la tua mail e la tua password.\n\n${CLIO}/accedi.html\n\nJJA-VIS`
+    : `${ciao}\n\necco il tuo invito personale a Clio. Vale una volta sola: serve per creare il tuo account da guida.\n\n${inv.link}\n\n` +
+      `Apri il link, scegli una password e sei dentro: il codice è già scritto. Se te lo chiede a mano: ${inv.chiave}\n\n${rigaPrezzoClio(env)}\n\nJJA-VIS`;
+  const r = await postaFuori(env, { method: "POST", headers: { "content-type": "application/json", "api-key": env.BREVO_API_KEY || "" },
+    body: JSON.stringify({ sender: { name: "Clio · JJA-VIS", email: env.MITTENTE }, to: [{ email: mail, name: rec.nome || mail }],
+      subject: inv.gia ? "Clio · entri da qui" : "Clio · il tuo invito personale", textContent: testo }) });
+  if (!r.ok) return false;
+  const quando = new Date().toISOString();
+  await salvaBozza(env, rec.id, { ...rec, stato: "inviata", inviato: testo, via: ["mail", "clio-invito"], quando_inviata: quando });
+  if (rec.chi) { try { await gh(env, "PUT", `per-pagina/${rec.chi}/${rec.id}.json`, { message: `invito Clio ${rec.id}`, content: b64({ id: rec.id, domanda: rec.domanda,
+    risposta: inv.gia ? `Hai già l'account da guida su Clio: ti ho mandato a ${mail} il link per entrare.` : `Ti ho mandato l'invito a Clio a ${mail}: vale una volta sola. Se non lo vedi, guarda anche nello spam.`, quando }) }); } catch (e) { console.log("clio per-pagina", e); } }
+  await manda(env, u, { text: `🏛 CLIO · ${[rec.nome, mail].filter(Boolean).join(" · ")}\n«${rec.domanda}»\n\n` +
+    (inv.gia ? "È già guida: le ho mandato il link per entrare." : `🎟 Invito monouso creato e mandato (${ultimaVia === "gmail" ? "dalla Gmail" : "da Brevo ⚠️ spam"}): ${inv.chiave}`) +
+    (env.CLIO_PREZZO || inv.gia ? "" : "\n💶 Nella mail: abbonamento mensile, «le condizioni te le scrive Jacopo» — manca CLIO_PREZZO.") }).catch(() => {});
+  return inv.gia ? "gia" : "invito";
+}
 async function prodottoPer(env, mail, mestiere) {
   if (!PRODOTTO_PER[mestiere]) return "";
   if (mestiere === "Guida turistica" && await giaGuida(env, mail) === true)
     return "\n\nPER IL SUO LAVORO: usa GIÀ Clio come guida (ha l'account). NON proporla come una novità e non chiedere inviti " +
       "(niente per_jj per Clio): al massimo una riga, «Clio la trovi come sempre», e il resto per quello che ha chiesto.";
+  if (mestiere === "Guida turistica") {
+    const inv = await invitoClio(env, mail);
+    if (inv && inv.chiave) return `\n\nPER IL SUO LAVORO JJA-VIS HA GIÀ: ${PRODOTTO_PER[mestiere].replace(/Si entra con un invito personale[^.]*: PROPONILO[^.]*\./, "")}` +
+      ` PROPONILO: il suo invito personale (vale una volta) è già pronto, metti nella risposta questo link così com'è: ${inv.link} — niente per_jj per Clio. ` +
+      `Di' anche, in una riga: ${rigaPrezzoClio(env)}`;
+  }
   return `\n\nPER IL SUO LAVORO JJA-VIS HA GIÀ: ${PRODOTTO_PER[mestiere]}`;
 }
 // 22/10, JJ: «visto che ha messo la risposta anche per mail, le deve arrivare anche per mail, altrimenti non sa che le è arrivata
