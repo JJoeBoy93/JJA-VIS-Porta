@@ -9,6 +9,11 @@
  * porta dice «rispondi», lo script risponde da questa Gmail, nella stessa conversazione. Se dice «attesa», la mail è passata a JJ
  * su Telegram e la risposta partirà da lì. In ogni caso la mail viene segnata come letta e con l'etichetta «JJA-VIS/letta».
  * Se la porta non risponde, si riprova al giro dopo: niente si perde. Ogni mail si passa una volta sola.
+ *
+ * 22/10 — LE MAIL IN USCITA PARTONO DA QUI (Vi: «finiscono nello spam»). Una volta sola, dopo aver incollato il file intero:
+ * Distribuisci → Nuova distribuzione → tipo «App web» → Esegui come: «Me» · Chi ha accesso: «Chiunque» → Distribuisci → dai i
+ * permessi → copia l'«URL dell'app web» (finisce con /exec) e mandalo ad Athena. La porta chiama doPost con la stessa CHIAVE:
+ * senza la chiave giusta lo script non manda niente. Le mail partono da questa Gmail (si vedono in «Inviati»).
  */
 const CHIAVE = "METTI-QUI-LA-CHIAVE";
 const PORTA = "https://jjavis-porta.19-jjardito93.workers.dev/posta";
@@ -64,3 +69,19 @@ function mittente(msg) {
   const da = msg.getFrom(); const m = da.match(/<([^>]+)>/);
   return { mail: (m ? m[1] : da).trim().toLowerCase(), nome: m ? da.replace(/<[^>]+>/, "").replace(/"/g, "").trim() : "" };
 }
+
+// 22/10: la porta manda le mail da qui (doPost). Corpo: { chiave, a: [mail], nome, oggetto, testo, allegati: [{ nome, dati base64 }] }
+const TIPI = { ics: "text/calendar", pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", txt: "text/plain" };
+function doPost(e) {
+  let d = {}; try { d = JSON.parse(e.postData.contents); } catch (_) { return esce({ ok: false, errore: "non è JSON" }); }
+  if (CHIAVE === "METTI-QUI-LA-CHIAVE" || d.chiave !== CHIAVE) return esce({ ok: false, errore: "chiave" });
+  const a = (d.a || []).filter(function (x) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x); });
+  if (!a.length || !d.oggetto) return esce({ ok: false, errore: "manca destinatario o oggetto" });
+  if (MailApp.getRemainingDailyQuota() < a.length) return esce({ ok: false, errore: "quota del giorno finita" });
+  const allegati = (d.allegati || []).map(function (x) { const est = String(x.nome || "").split(".").pop().toLowerCase();
+    return Utilities.newBlob(Utilities.base64Decode(x.dati), TIPI[est] || "application/octet-stream", x.nome || "allegato"); });
+  try { GmailApp.sendEmail(a.join(","), d.oggetto, d.testo || "", { name: d.nome || "JJA-VIS", attachments: allegati }); }
+  catch (err) { return esce({ ok: false, errore: String(err && err.message || err).slice(0, 200) }); }
+  return esce({ ok: true, restano: MailApp.getRemainingDailyQuota() });
+}
+function esce(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }

@@ -586,7 +586,7 @@ async function invia(env, id, testoDiJJ, conMail) {
   if (dati.a && (conMail || !dati.chi)) {
     if (!env.BREVO_API_KEY || !env.MITTENTE) throw new Error("mancano BREVO_API_KEY o MITTENTE");
     const piede = "\n\n—\nHai scritto a JJA-VIS dalla sua pagina. Per non ricevere altre mail, rispondi con «cancellami».";
-    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    const res = await postaFuori(env,  {
       method: "POST",
       headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
@@ -654,7 +654,7 @@ async function spedisciUscita(env) {
       esiti.push(`${f.name}: ferma (${perche})`); continue;
     }
     const piede = "\n\n—\nTi scrivo perché hai lasciato questa mail nella pagina di JJA-VIS. Per non ricevere altre mail, rispondi con «cancellami».";
-    const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
+    const res = await postaFuori(env,  { method: "POST",
       headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ sender: { name: L.firma || "JJA-VIS", email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: "JJA-VIS" },
         to: [{ email: L.a, ...(L.nome ? { name: L.nome } : {}) }], subject: L.oggetto, textContent: L.testo.trim() + piede + await piedeLink(env, await chiDaLettera(env, L).catch(() => null)) }) });
@@ -683,6 +683,32 @@ async function chiavePosta(env) {
   const f = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode("posta in arrivo di JJA-VIS"));
   return [...new Uint8Array(f)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 40);
 }
+// ══ LE MAIL PARTONO DALLA GMAIL DI JJA-VIS — 22 ottobre 2026 (Athena) ═══════
+// JJ: «mi ha detto Vi che le mail finiscono nello spam… altrimenti è come non aver risposto». Il perché, dalla documentazione di
+// Brevo: un mittente @gmail.com non si può autenticare, e Brevo lo SOSTITUISCE con un indirizzo suo (…@…t-sender-sib.com /
+// brevosend.com): chi riceve vede un mittente che non conosce, non allineato → spam (iCloud e Outlook per primi). Gratis, senza
+// dominio: la mail la manda la Gmail stessa, con lo script che c'è già (doPost di strumenti/posta.gs, pubblicato come app web):
+// firmata da Google, mittente vero, e le risposte finiscono nella stessa conversazione. Tetto di Google per un account normale:
+// 100 destinatari al giorno (documentazione delle quote di Apps Script); oltre, o se lo script non risponde, si torna a Brevo e lo
+// si dice nel registro. Tutte le chiamate che prima andavano a Brevo passano di qui, con lo stesso corpo (formato Brevo).
+let ultimaVia = "";
+async function postaFuori(env, o) {
+  const url = env.GMAIL_URL || "";
+  if (url) {
+    try {
+      const b = JSON.parse(o.body), chiave = await chiavePosta(env);
+      const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, redirect: "follow",
+        body: JSON.stringify({ chiave, a: (b.to || []).map((x) => x.email), nome: b.sender && b.sender.name || "JJA-VIS", oggetto: b.subject || "",
+          testo: b.textContent || "", allegati: (b.attachment || []).map((x) => ({ nome: x.name, dati: x.content })) }) });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok) { ultimaVia = "gmail"; return new Response(JSON.stringify({ messageId: "gmail", restano: d.restano }), { status: 201 }); }
+      console.log("gmail non ha mandato:", d.errore || r.status);
+    } catch (e) { console.log("gmail non risponde:", e.message || e); }
+  }
+  ultimaVia = "brevo";
+  return fetch("https://api.brevo.com/v3/smtp/email", o);
+}
+export { postaFuori };
 // la risposta senza la lettera citata sotto (le righe con «>», e da «Il giorno … ha scritto:» / «On … wrote:» in giù)
 function soloRisposta(t) {
   const righe = String(t || "").replace(/\r/g, "").split("\n"); const fuori = [];
@@ -870,7 +896,7 @@ async function statoSpedizione(env, codice, stato) {
 async function avvisaCliente(env, d, stato) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.contatto) || !env.BREVO_API_KEY || !env.MITTENTE) return false;
   const S = STATI_SPED[stato], chiave = d.ldv || d.codice, link = `${URL_TRACCIA}?c=${chiave}`;
-  const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+  const res = await postaFuori(env,  { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ sender: { name: "Athena Trasporti", email: env.MITTENTE }, replyTo: { email: MAIL_ATHENA, name: "Athena Trasporti" },
       to: [{ email: d.contatto, ...(d.nome ? { name: d.nome } : {}) }], subject: `${S.e} ${S.t} — spedizione ${d.ldv || d.codice}`,
       textContent: `Ciao${d.nome ? " " + d.nome.split(" ")[0] : ""},\n\n${S.c}\n\nSegui la spedizione: ${link}\n${d.ldv ? "Lettera di vettura" : "Codice"}: ${chiave}\n\nPer qualsiasi cosa: 377 594 7995 (anche WhatsApp).\nAthena Trasporti — Limbiate (MB)` }) });
@@ -1040,7 +1066,7 @@ function icsImpegno(x) {
 }
 async function atlasMail(env, a, nome, oggetto, testo, allegati) {
   const fa = (await atlasLeggi(env)).dati[a] || {}, ass = nomeAss(fa);
-  const res = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
+  const res = await postaFuori(env,  { method: "POST",
     headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ sender: { name: ass === "JJA-VIS" ? "JJA-VIS" : `${ass} · JJA-VIS`, email: env.MITTENTE }, replyTo: { email: env.MITTENTE, name: ass },
       to: [{ email: a, ...(nome ? { name: nome } : {}) }], subject: oggetto,
@@ -1309,6 +1335,7 @@ async function telegram(req, env) {
         "3. Nella riga CHIAVE metti questa (copiala intera):", "", (await chiavePosta(env)) || "(manca TG_BOT_TOKEN)", "",
         "4. Salva, scegli la funzione «avvia» in alto e tocca Esegui: Google chiede il permesso di leggere la posta, dai l'ok.",
         "Da lì ogni 5 minuti le mail nuove arrivano qui: JJA-VIS risponde da solo, a te arrivano solo prezzi, date, accordi e quello che non sa.",
+        "5. Perché le mail che manda JJA-VIS non finiscano nello spam (22/10): Distribuisci → Nuova distribuzione → tipo «App web» → Esegui come «Me», Chi ha accesso «Chiunque» → Distribuisci → copia l'URL che finisce con /exec e mandalo ad Athena.",
       ].join("\n") });
       return new Response("ok");
     }
@@ -1999,7 +2026,7 @@ async function approva(env, id, prezzoDiJJ, qui, mezzo) {
   const fatto = [];
   if (dati.mail) {
     if (!env.BREVO_API_KEY || !env.MITTENTE) throw new Error("mancano BREVO_API_KEY o MITTENTE");
-    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    const res = await postaFuori(env,  {
       method: "POST",
       headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
@@ -2193,7 +2220,7 @@ async function caparraArrivata(env, id) {
   // Al cliente: la conferma, per mail se l'ha lasciata.
   let mail = "";
   if (d.mail && env.BREVO_API_KEY && env.MITTENTE) {
-    const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST",
+    const r = await postaFuori(env,  { method: "POST",
       headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ sender: { name: "Athena Trasporti", email: env.MITTENTE }, replyTo: { email: MAIL_ATHENA, name: "Athena Trasporti" },
         to: [{ email: d.mail, name: d.nome }], subject: `Confermato: ${giornoLeggibile(giorno)}, ${d.fascia}`,
@@ -2514,7 +2541,7 @@ async function ioDalConto(env, req, origine, fetchConti = fetch) {
   const oggi = new Date().toISOString().slice(0, 10);
   if (u.bentornato !== oggi && env.BREVO_API_KEY && env.MITTENTE) {
     const nome = u.tuo ? ` ${u.tuo}` : "", ass = u.nome_assistente || "il tuo assistente";
-    await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+    await postaFuori(env,  { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ sender: { name: u.nome_assistente || "JJA-VIS", email: env.MITTENTE }, to: [{ email: mail }], subject: `Bentornat${/a$/i.test(u.tuo || "") ? "a" : "o"}${nome}`,
         textContent: `Ciao${nome}, ti ho riconosciuto dalla mail: sono ${ass}, e mi ricordo tutto quello che mi avevi detto.\n\nDa adesso entri col tuo account da qualsiasi telefono, e mi ritrovi così come mi avevi lasciato.\n\n—\n${ass}, l'assistente di JJA-VIS. Per non ricevere altre mail, rispondi con «cancellami».` }) }).catch(() => {});
     try { await gh(env, "PUT", `utenti/${chi}.json`, { message: `bentornato: ${chi}`, content: b64({ ...u, mail, bentornato: oggi }), sha }); } catch (_) {}
