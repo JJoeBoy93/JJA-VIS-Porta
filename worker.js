@@ -104,7 +104,8 @@ export default {
     else { ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
            ctx.waitUntil(spedisciUscita(env).catch((e) => console.log("posta in uscita", e)));
            ctx.waitUntil(atlasPromemoria(env).catch((e) => console.log("promemoria di Atlas", e)));
-           ctx.waitUntil(giroReel(env).catch((e) => console.log("reel della città", e))); }
+           ctx.waitUntil(giroReel(env).catch((e) => console.log("reel della città", e)));
+           ctx.waitUntil(giroPrimi(env).catch((e) => console.log("chi non ha ricevuto niente", e))); }
   },
   async fetch(req, env, ctx) {
     env = conGruppo(env);
@@ -1196,6 +1197,15 @@ async function telegram(req, env) {
         if (/^(confermato|liberato)/.test(esito)) {
           await tg(env, "editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
         }
+        return new Response("ok");
+      }
+      // 22/10: «🤝 Proponi» / «🗑 No» per chi aveva l'account ma non aveva mai ricevuto niente (giroPrimi)
+      if (azione === "primo" || azione === "primono") {
+        await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: azione === "primo" ? "la scrive…" : "fatto" }).catch(() => {});
+        const qui = { chat_id: q.message.chat.id, ...(q.message.message_thread_id ? { message_thread_id: q.message.message_thread_id } : {}) };
+        let esito; try { esito = await primoDaTasto(env, id, azione === "primo"); } catch (e) { esito = `NON fatto — ${e.message || e}`; }
+        await tg(env, "sendMessage", { ...qui, text: esito, reply_to_message_id: q.message.message_id }).catch(() => {});
+        if (/^(prima proposta mandata|niente|ha già)/.test(esito)) await tg(env, "editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
         return new Response("ok");
       }
       if (azione === "pok" || azione === "pno") {
@@ -2724,6 +2734,11 @@ async function primoIncontro(env, mail, d, origine) {
   return risposta(esito.gia ? { gia: true } : esito.rimanda ? { gia: false, rimanda: true } : esito.errore ? { gia: false, errore: "non ci sono riuscito" }
     : { risposta: esito.risposta, primo: true, mail: esito.mail }, 200, origine);
 }
+// 22/10 (Mirna, la guida per cui è nata Clio, non aveva ricevuto niente): alla prima volta l'assistente propone anche il prodotto
+// di JJA-VIS fatto per il suo lavoro. L'accesso lo dà JJ: per_jj, e la riga arriva a JJ insieme alla proposta
+const PRODOTTO_PER = {
+  "Guida turistica": "Clio. La guida parla una volta sola nella sua lingua e ogni visitatore legge la traduzione sul suo telefono mentre lei parla; si entra inquadrando un QR, senza radioline; i tour si preparano da casa con tappe e foto; le domande dei visitatori arrivano tradotte. Si entra con un invito personale che manda chi ti costruisce: PROPONILO (è la cosa che le serve di più) e metti in per_jj «invito a Clio». Non è una cosa che fai tu: è un prodotto di JJA-VIS, puoi parlarne.",
+};
 // 22/10, JJ: «visto che ha messo la risposta anche per mail, le deve arrivare anche per mail, altrimenti non sa che le è arrivata
 // la risposta nella pagina e potrebbe non aprirlo più». La proposta parte SEMPRE anche per mail (la mail è quella dell'account).
 // perPagina: quando la proposta non nasce dalla pagina aperta (il tocco di JJ su ✍️ Bozza) si scrive anche per la chat
@@ -2737,7 +2752,9 @@ async function primoCore(env, mail, chi, u, d, perPagina) {
   await atlasAggiorna(env, mail, (f) => { if (ass) f.assistente = ass; if (tuo && !f.nome) f.nome = tuo; if (chi && !f.chi) f.chi = chi; return []; });
   const filo = (await atlasLeggi(env)).dati[mail];
   const sa = [(u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`, (u.tempo || d.tempo) && `- cosa le fa perdere tempo: ${u.tempo || d.tempo}`,
-    bisogno && `- cosa vorrebbe da te, con parole sue: «${bisogno}»`].filter(Boolean).join("\n");
+    bisogno && `- cosa vorrebbe da te, con parole sue: «${bisogno}»`,
+    (u.voti || []).length && `- cosa ha votato da costruire: ${u.voti.join("; ")} (lo costruisce chi ti ha costruito, su commissione: dille che gliel'hai passato, nessun prezzo)`]
+    .filter(Boolean).join("\n") + (PRODOTTO_PER[u.mestiere || d.mestiere] ? `\n\nPER IL SUO LAVORO JJA-VIS HA GIÀ: ${PRODOTTO_PER[u.mestiere || d.mestiere]}` : "");
   const quando = new Date().toISOString();
   const rec = { domanda: `[PRIMA VOLTA] Si è registrata a JJA-VIS; questa risposta la legge per mail e nella chat della pagina. Nel sondaggio ha detto:\n${sa ||
     "(niente di preciso: proponi tu le due cose che fai che servono di più a chi lavora)"}\nI promemoria le arrivano a ${mail}; può rispondere a questa mail o scriverti nella chat.`, nome: filo.nome || tuo, quando, documenti: [] };
@@ -2762,10 +2779,50 @@ async function primoCore(env, mail, chi, u, d, perPagina) {
       await segnaAttesa(env, id, false); chiuse.push(id); } } catch (e) { console.log("primo: attesa", e); }
   await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: (`🤝 ${nomeAss(filo)} ha fatto la prima proposta a ${tuo || filo.nome || mail} (chat${perMail ? " + mail" : ""}):\n\n${esito.risposta}` +
     (mailErrore ? `\n\n⚠️ La mail NON è partita: ${mailErrore}` : "") +
+    (esito.per_jj ? `\n\n👉 Per te: ${String(esito.per_jj).slice(0, 300)}` : "") +
     (segnati.length ? `\n\nSegnato: ${segnati.map((x) => x.cosa).join("; ")}` : "") +
     (chiuse.length ? `\n\nLa domanda ${chiuse.map((x) => "#" + x).join(", ")} è chiusa: le ha risposto lui, non serve toccare niente.` : "")).slice(0, 4000) }).catch(() => {});
   return { risposta: esito.risposta, mail: !!perMail };
 }
+// ══ CHI NON HA RICEVUTO NIENTE — 22 ottobre 2026 (Athena) ═══════════════════
+// JJ: «e per chi non ha ricevuto nulla? Questa è mia madre, la persona per la quale è stata creata Clio». Chi aveva fatto l'account
+// prima del primo incontro non riceve niente finché non riapre la pagina, e magari non la riapre più. Il giro di ogni ora (9–20 di
+// Roma) trova chi ha l'assistente aperto ma nessun messaggio e nessuna proposta, e ne chiede UNO per giro a JJ nel suo argomento,
+// una volta sola (f.primo_chiesto): «🤝 Proponi» manda la prima proposta (chat + mail), «🗑 No» lo toglie. Il tocco di JJ e non
+// l'invio da solo: in quella lista ci sono anche i suoi account di prova e il padre (prima dei documenti va la privacy, 21/10).
+const chiaveMail = async (mail) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(mail)))].slice(0, 5).map((x) => x.toString(16).padStart(2, "0")).join("");
+async function giroPrimi(env, adesso = new Date()) {
+  const h = +oraRoma(adesso).slice(11, 13); if (h < 9 || h >= 20) return null;
+  const A = await atlasLeggi(env); if (!A.sha) return null;
+  let cancellati = []; try { cancellati = deb64((await gh(env, "GET", "cancellati.json")).content).map((x) => String(x).toLowerCase()); } catch (_) {}
+  // prima chi si sa chi è (codice della pagina: sondaggio fatto), poi gli altri
+  const mail = Object.keys(A.dati).filter((m) => { const f = A.dati[m]; return !f.primo && !f.primo_chiesto && !(f.turni || []).length && !cancellati.includes(m); })
+    .sort((x, y) => Number(!!A.dati[y].chi) - Number(!!A.dati[x].chi))[0];
+  if (!mail) return null;
+  const f = A.dati[mail], chi = f.chi || await chiDaMail(env, mail) || "";
+  let u = {}; if (chi) { try { u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {} }
+  const k = await chiaveMail(mail);
+  await atlasAggiorna(env, mail, (x) => { x.primo_chiesto = k; if (chi && !x.chi) x.chi = chi; return []; });
+  const chiE = [u.tuo || f.nome || "(senza nome)", u.nome_assistente || f.assistente ? `assistente «${u.nome_assistente || f.assistente}»` : "", mail].filter(Boolean).join(" · ");
+  const sa = u.ha_risposto ? `sondaggio fatto: ${[u.mestiere, u.tempo, ...(u.voti || [])].filter(Boolean).join(" · ")}${u.proposta ? ` · «${u.proposta}»` : ""}` : "il sondaggio non l'ha fatto";
+  await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: `⏳ Non ha ancora ricevuto niente: ${chiE}\nHa l'account; ${sa}.\n\n«🤝 Proponi»: il suo assistente le scrive cosa fa per lei da oggi, in chat e per mail.`,
+    reply_markup: { inline_keyboard: [[{ text: "🤝 Proponi", callback_data: `primo:${k}` }, { text: "🗑 No", callback_data: `primono:${k}` }]] } });
+  return mail;
+}
+async function primoDaTasto(env, k, si) {
+  const A = await atlasLeggi(env); const mail = Object.keys(A.dati).find((m) => A.dati[m].primo_chiesto === k);
+  if (!mail) return "niente: non la trovo più";
+  if (!si) { await atlasAggiorna(env, mail, (f) => { f.primo = "no"; return []; }); return "niente: non le scrivo"; }
+  const f = A.dati[mail], chi = f.chi || "";
+  let u = {}; if (chi) { try { u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {} }
+  if (u.mail && String(u.mail).trim().toLowerCase() !== mail) u = {};
+  const e = await primoCore(env, mail, chi, u, {}, chi ? "primo-" + k : null);
+  if (e.gia) return "ha già parlato col suo assistente: la proposta non serve";
+  if (e.rimanda) return "tetto di spesa dell'assistente raggiunto: riprova domani";
+  if (e.errore) return `prima proposta non riuscita — ${e.errore}`;
+  return `prima proposta mandata (${chi ? "chat + " : ""}${e.mail ? "mail" : "mail NON partita"})`;
+}
+export { giroPrimi, primoDaTasto };
 async function documentoDallaChat(env, req, url, origine) {
   const mail = await mailDalConto(req, fetch, env);
   if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
