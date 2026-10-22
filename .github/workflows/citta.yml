@@ -27,7 +27,7 @@ jobs:
       - name: la prova, contro workerd
         run: |
           set -o pipefail
-          npm i --no-save --silent wrangler@4 ws@8
+          npm i --no-save --silent wrangler@4.149.0 ws@8
           # la chiave di prova firma i biglietti «di Google» finti: vale solo con LOCALE:1, che in produzione non c'è
           PJ=$(node -e 'console.log(JSON.stringify(require("./prova-chiave.json").pubblica))')
           (npx wrangler dev --port 8799 --ip 127.0.0.1 --local --var LOCALE:1 --var "PROVA_JWK:$PJ" --var JJAVIS_ADMIN:capo@prova.it \
@@ -74,18 +74,18 @@ jobs:
           # senza token il server non si consegna: lo dice forte nell'annotazione, ma non manda una mail di fallimento a ogni push
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::warning::server della città NON consegnato: manca JJAVIS_CF_TOKEN nei Secrets del repository (token dell'account JJA-VIS, modello «Edit Cloudflare Workers»). Messo il token: Actions → consegna città → Run workflow"; exit 0; fi
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then echo "::error::manca CF_AI_ACCOUNT (l'ID dell'account JJA-VIS)"; exit 1; fi
-          if npx --yes wrangler@4 deploy 2>&1 | tee consegna.log; then
+          if npx --yes wrangler@4.149.0 deploy 2>&1 | tee consegna.log; then
             # l'indirizzo vero del server: va in JJA-VIS/insieme.json, da cui la città lo legge
             echo "::notice::città consegnata: $(grep -o 'https://jjavis-citta[^ ]*workers.dev' consegna.log | head -1)"
             echo "::notice::$(tail -c 500 consegna.log | tr '\n' '|')"
             # la mail dell'amministratore (JJ): segreto del worker, mai nel codice (il repository è pubblico)
             if [ -n "$ADMIN" ]; then
-              printf '%s' "$ADMIN" | npx --yes wrangler@4 secret put JJAVIS_ADMIN > segreto.log 2>&1 && echo "::notice::amministratore impostato" || echo "::error::JJAVIS_ADMIN non impostato: $(tail -c 300 segreto.log | tr '\n' '|')"
+              printf '%s' "$ADMIN" | npx --yes wrangler@4.149.0 secret put JJAVIS_ADMIN > segreto.log 2>&1 && echo "::notice::amministratore impostato" || echo "::error::JJAVIS_ADMIN non impostato: $(tail -c 300 segreto.log | tr '\n' '|')"
             else echo "::warning::manca il segreto JJAVIS_ADMIN nel repository: nessun account è amministratore"; fi
             # il «segnala» (6/10): Telegram (il bot di JJA-VIS, la chat di JJ; domani un gruppo dello staff) e la casella di JJA-VIS via Brevo
             for S in TG_BOT_TOKEN SEGNALAZIONI_CHAT BREVO_API_KEY MITTENTE; do
               V="${!S}"; if [ -z "$V" ]; then echo "::warning::manca $S: le segnalazioni non arrivano per quella strada"; continue; fi
-              printf '%s' "$V" | npx --yes wrangler@4 secret put $S > segreto.log 2>&1 || echo "::error::$S non impostato: $(tail -c 300 segreto.log | tr '\n' '|')"
+              printf '%s' "$V" | npx --yes wrangler@4.149.0 secret put $S > segreto.log 2>&1 || echo "::error::$S non impostato: $(tail -c 300 segreto.log | tr '\n' '|')"
             done
             echo "::notice::segreti del segnala passati al server"
           else

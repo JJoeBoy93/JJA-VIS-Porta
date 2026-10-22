@@ -40,7 +40,7 @@ jobs:
         run: |
           set -o pipefail
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::manca CLOUDFLARE_API_TOKEN nei Secrets del repository"; exit 1; fi
-          if npx --yes wrangler@4 deploy 2>&1 | tee consegna.log; then
+          if npx --yes wrangler@4.149.0 deploy 2>&1 | tee consegna.log; then
             echo "::notice::$(tail -c 500 consegna.log | tr '\n' '|')"
           else
             echo "::error::$(tail -c 900 consegna.log | tr '\n' '|')"
@@ -80,7 +80,7 @@ jobs:
           json.dump(d, open("/tmp/segreti.json", "w"))
           print("::notice::segreti messi: " + ", ".join(d) + (" — mancano: " + ", ".join(mancano) if mancano else ""))
           PY
-          npx --yes wrangler@4 secret bulk /tmp/segreti.json 2>&1 | tail -5
+          npx --yes wrangler@4.149.0 secret bulk /tmp/segreti.json 2>&1 | tail -5
           rm -f /tmp/segreti.json
 
       - name: il bot punta alla porta
