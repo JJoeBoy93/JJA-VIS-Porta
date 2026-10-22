@@ -35,3 +35,8 @@ crons = ["0 18 * * *", "7 * * * *"]
 [[services]]
 binding = "HERMES"
 service = "hermes"
+
+# 22/10: le mail partono dalla Gmail di JJA-VIS (app web di strumenti/posta.gs, doPost). L'indirizzo da solo non basta: lo script
+# manda solo con la CHIAVE della posta. Se lo script non risponde o la quota (100 al giorno) è finita, si torna a Brevo.
+[vars]
+GMAIL_URL = "https://script.google.com/macros/s/AKfycbyD4h3JgjHrcx03qEiZUJskfT3OMQEtFw7PMH2No62vfyDvAdHWBuI82HyLpUWvNp6C/exec"

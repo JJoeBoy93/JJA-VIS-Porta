@@ -2809,7 +2809,7 @@ async function primoCore(env, mail, chi, u, d, perPagina) {
       if (dati.chi !== chi || !chi || dati.da_dove !== "sondaggio" || dati.stato !== "arrivata") continue;
       await salvaBozza(env, id, { ...dati, stato: "inviata", inviato: esito.risposta, via: ["assistente", ...(perMail ? ["mail"] : [])], quando_inviata: new Date().toISOString() }, sha);
       await segnaAttesa(env, id, false); chiuse.push(id); } } catch (e) { console.log("primo: attesa", e); }
-  await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: (`🤝 ${nomeAss(filo)} ha fatto la prima proposta a ${tuo || filo.nome || mail} (chat${perMail ? " + mail" : ""}):\n\n${esito.risposta}` +
+  await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: (`🤝 ${nomeAss(filo)} ha fatto la prima proposta a ${tuo || filo.nome || mail} (chat${perMail ? ` + mail ${ultimaVia === "gmail" ? "dalla Gmail" : "da Brevo ⚠️ spam"}` : ""}):\n\n${esito.risposta}` +
     (mailErrore ? `\n\n⚠️ La mail NON è partita: ${mailErrore}` : "") +
     (esito.per_jj ? `\n\n👉 Per te: ${String(esito.per_jj).slice(0, 300)}` : "") +
     (segnati.length ? `\n\nSegnato: ${segnati.map((x) => x.cosa).join("; ")}` : "") +

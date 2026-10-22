@@ -61,7 +61,7 @@ let A = leggi("atlas.json")["giada@prova.it"];
 ok(A.primo && A.turni[0].testo === "[dal sondaggio] " + BISOGNO && A.turni[1].chi === "noi", "nel filo: f.primo, quello che ha scritto e la risposta (per mail lo sa)", A);
 ok(leggi("bozze/af144945.json").stato === "inviata" && !leggi("attesa.json").ids.includes("af144945") && leggi("attesa.json").ids.includes("11111111"),
   "la sua domanda in attesa si chiude, quella di un altro resta", leggi("attesa.json"));
-ok(telegram.some((t) => /🤝 Arya ha fatto la prima proposta a Giada \(chat \+ mail\)/.test(t.text) && /#af144945 è chiusa/.test(t.text)), "a JJ: la proposta (chat + mail) e la domanda chiusa", telegram.map((t) => t.text));
+ok(telegram.some((t) => /🤝 Arya ha fatto la prima proposta a Giada \(chat \+ mail\)/.test(t.text) && /#af144945 è chiusa/.test(t.text)), "a JJ: la proposta, da dove è partita la mail (qui Brevo: niente GMAIL_URL) e la domanda chiusa", telegram.map((t) => t.text));
 const pm = mail.find((x) => x.to[0].email === "giada@prova.it" && /cosa faccio per te da oggi/.test(x.subject));
 ok(pm && pm.textContent.startsWith("Ciao Giada, sono Arya.") && pm.sender.name === "Arya · JJA-VIS", "la proposta arriva ANCHE per mail (JJ: se no non sa che le ha risposto)", mail);
 richieste = [];
