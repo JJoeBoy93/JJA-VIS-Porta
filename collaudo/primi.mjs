@@ -9,8 +9,11 @@ for (const [a, b] of [["worker.js", "worker.mjs"], ["preventivo.js", "preventivo
 const W = await import(join(dir, "worker.mjs"));
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64"); const leggi = (p) => JSON.parse(Buffer.from(repo[p], "base64").toString());
+let clio = "no", clioChiesto = [];
 let repo = {}, risposta = "", richieste = [], telegram = [], mail = [];
 globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url));
+  if (u.host === "clio.19-jjardito93.workers.dev") { clioChiesto.push(JSON.parse(o.body).email); if (clio === "giu") throw new Error("rete");
+    return (o.headers || {})["X-Chiave"] === "kc" ? Response.json({ guida: clio === "guida" }) : new Response('{"errore":"chiave"}', { status: 403 }); }
   if (u.host === "api.anthropic.com") { richieste.push(JSON.parse(o.body)); return new Response(JSON.stringify({ content: [{ type: "text", text: risposta }], model: "claude-haiku-5-5", usage: { input_tokens: 10, output_tokens: 10 } })); }
   if (u.host === "api.telegram.org") { telegram.push(JSON.parse(o.body || "{}")); return new Response('{"ok":true,"result":{"message_id":1}}'); }
   if (u.host === "api.brevo.com") { mail.push(JSON.parse(o.body)); return new Response('{"messageId":"x"}', { status: 201 }); }
@@ -20,7 +23,7 @@ globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url));
     if (!repo[p]) return new Response('{"message":"Not Found"}', { status: 404 });
     return new Response(JSON.stringify({ content: repo[p], sha: "s" })); }
   return new Response("{}", { status: 404 }); };
-const env = { GH_TOKEN: "g", ANTHROPIC_API_KEY: "k", TG_CHAT: "1", TG_GRUPPO: "-100", TG_BOT_TOKEN: "t", BREVO_API_KEY: "b", MITTENTE: "jjavis@prova.it" };
+const env = { GH_TOKEN: "g", ANTHROPIC_API_KEY: "k", TG_CHAT: "1", TG_GRUPPO: "-100", TG_BOT_TOKEN: "t", BREVO_API_KEY: "b", MITTENTE: "jjavis@prova.it", CLIO_CHIAVE: "kc" };
 const SEG = createHash("sha256").update("t").digest("hex").slice(0, 32);
 const tocca = (data) => W.default.fetch(new Request("https://porta/telegram", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": SEG },
   body: JSON.stringify({ callback_query: { id: "q", from: { id: 1 }, data, message: { message_id: 1, chat: { id: -100 }, message_thread_id: 268 } } }) }), env, { waitUntil() {} });
@@ -52,4 +55,17 @@ await tocca(`primono:${k2}`);
 ok(!richieste.length && !mail.length && leggi("atlas.json")["papa@prova.it"].primo === "no", "controprova: «🗑 No» non chiama il modello e non scrive", leggi("atlas.json")["papa@prova.it"]);
 // 22/10, JJ: «non adegua maschile e femminile?» — i messaggi a JJ non danno il femminile per scontato, e il modello sa di accordare
 ok(!/le scrive|per lei|non le scrivo/.test(JSON.stringify(telegram)) && !/le scrive cosa fa per lei/.test(readFileSync(join(qui, "..", "worker.js"), "utf8")), "a JJ niente «le scrive / per lei» fisso");
+// 22/10 sera, JJ: Mirna ha già l'account da guida di Clio — non si propone a chi ce l'ha già
+// primoCore non è esportato: si passa dal tasto, dopo aver segnato la persona come chiesta
+const tastoPer = async (m, stato) => { clio = stato; clioChiesto = []; richieste = [];
+  const A = leggi("atlas.json"); A[m] = { nome: "Rita", turni: [], impegni: [], chi: "abcdabcdabcdabcd", assistente: "Ada", primo_chiesto: m.slice(0, 4) + "ff" }; repo["atlas.json"] = b64(A);
+  repo["utenti/abcdabcdabcdabcd.json"] = b64({ chi: "abcdabcdabcdabcd", mail: m, tuo: "Rita", mestiere: "Guida turistica" });
+  await tocca(`primo:${m.slice(0, 4)}ff`); return richieste[0] ? richieste[0].messages[0].content : ""; };
+risposta = '{"risposta":"Ciao Rita.","nuovi":[]}';
+let qq = await tastoPer("rita@prova.it", "guida");
+ok(clioChiesto[0] === "rita@prova.it" && /usa GIÀ Clio/.test(qq) && !/invito personale/.test(qq), "già guida di Clio: non si propone e non si chiede l'invito", qq.slice(-400));
+qq = await tastoPer("rosa@prova.it", "no");
+ok(/PER IL SUO LAVORO JJA-VIS HA GIÀ: Clio/.test(qq), "guida che non ha Clio: si propone", qq.slice(-300));
+qq = await tastoPer("rina@prova.it", "giu");
+ok(/PER IL SUO LAVORO JJA-VIS HA GIÀ: Clio/.test(qq), "Clio che non risponde: si propone come prima", qq.slice(-300));
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);

@@ -2771,6 +2771,24 @@ async function primoIncontro(env, mail, d, origine) {
 const PRODOTTO_PER = {
   "Guida turistica": "Clio. La guida parla una volta sola nella sua lingua e ogni visitatore legge la traduzione sul suo telefono mentre lei parla; si entra inquadrando un QR, senza radioline; i tour si preparano da casa con tappe e foto; le domande dei visitatori arrivano tradotte. Si entra con un invito personale che manda chi ti costruisce: PROPONILO (è la cosa che serve di più a una guida) e metti in per_jj «invito a Clio». Non è una cosa che fai tu: è un prodotto di JJA-VIS, puoi parlarne.",
 };
+// 22/10, JJ: Mirna ha già l'account da guida di Clio, e la prima proposta gliel'ha proposta lo stesso («👉 Per te: invito a Clio»).
+// Prima di proporre Clio si chiede a Clio se quella mail è già una guida (POST /api/porta/guida, chiave CLIO_CHIAVE; Clio risponde
+// solo sì o no). Sì → non si propone e non si chiede l'invito; no → si propone; Clio che non risponde → si propone come prima.
+async function giaGuida(env, mail) {
+  if (!env.CLIO_CHIAVE) return null;
+  try {
+    const r = await fetch("https://clio.19-jjardito93.workers.dev/api/porta/guida", { method: "POST",
+      headers: { "content-type": "application/json", "X-Chiave": env.CLIO_CHIAVE }, body: JSON.stringify({ email: mail }), signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return null; const d = await r.json(); return d.guida === true;
+  } catch (_) { return null; }
+}
+async function prodottoPer(env, mail, mestiere) {
+  if (!PRODOTTO_PER[mestiere]) return "";
+  if (mestiere === "Guida turistica" && await giaGuida(env, mail) === true)
+    return "\n\nPER IL SUO LAVORO: usa GIÀ Clio come guida (ha l'account). NON proporla come una novità e non chiedere inviti " +
+      "(niente per_jj per Clio): al massimo una riga, «Clio la trovi come sempre», e il resto per quello che ha chiesto.";
+  return `\n\nPER IL SUO LAVORO JJA-VIS HA GIÀ: ${PRODOTTO_PER[mestiere]}`;
+}
 // 22/10, JJ: «visto che ha messo la risposta anche per mail, le deve arrivare anche per mail, altrimenti non sa che le è arrivata
 // la risposta nella pagina e potrebbe non aprirlo più». La proposta parte SEMPRE anche per mail (la mail è quella dell'account).
 // perPagina: quando la proposta non nasce dalla pagina aperta (il tocco di JJ su ✍️ Bozza) si scrive anche per la chat
@@ -2786,7 +2804,7 @@ async function primoCore(env, mail, chi, u, d, perPagina) {
   const sa = [(u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`, (u.tempo || d.tempo) && `- cosa fa perdere tempo nel lavoro: ${u.tempo || d.tempo}`,
     bisogno && `- cosa vorrebbe da te, con parole sue: «${bisogno}»`,
     (u.voti || []).length && `- cosa ha votato da costruire: ${u.voti.join("; ")} (lo costruisce chi ti ha costruito, su commissione: di' che l'hai passato a lui, nessun prezzo)`]
-    .filter(Boolean).join("\n") + (PRODOTTO_PER[u.mestiere || d.mestiere] ? `\n\nPER IL SUO LAVORO JJA-VIS HA GIÀ: ${PRODOTTO_PER[u.mestiere || d.mestiere]}` : "");
+    .filter(Boolean).join("\n") + await prodottoPer(env, mail, u.mestiere || d.mestiere);
   const quando = new Date().toISOString();
   const rec = { domanda: `[PRIMA VOLTA] Ha appena fatto l'account di JJA-VIS; questa risposta la legge per mail e nella chat della pagina. Nel sondaggio ha detto:\n${sa ||
     "(niente di preciso: proponi tu le due cose che fai che servono di più a chi lavora)"}\nI promemoria arrivano a ${mail}; può rispondere a questa mail o scriverti nella chat.`, nome: filo.nome || tuo, quando, documenti: [] };
