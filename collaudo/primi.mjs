@@ -3,7 +3,7 @@
 // 9–20 niente; il giro chiede a JJ UNA persona per volta (account, nessun messaggio, nessuna proposta), una volta sola, nel suo
 // argomento, con «🤝 Proponi» / «🗑 No»; il tocco manda la prima proposta (chat + mail) e alla guida propone Clio con i voti, e a
 // JJ arriva «👉 Per te». Controprove: chi ha già parlato non viene chiesto; «🗑 No» non chiama il modello e non scrive.
-import { copyFileSync, mkdtempSync } from "node:fs"; import { tmpdir } from "node:os"; import { join, dirname } from "node:path"; import { fileURLToPath } from "node:url"; import { createHash } from "node:crypto";
+import { copyFileSync, mkdtempSync, readFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { join, dirname } from "node:path"; import { fileURLToPath } from "node:url"; import { createHash } from "node:crypto";
 const qui = dirname(fileURLToPath(import.meta.url)); const dir = mkdtempSync(join(tmpdir(), "primi-"));
 for (const [a, b] of [["worker.js", "worker.mjs"], ["preventivo.js", "preventivo.js"], ["google.js", "google.js"]]) copyFileSync(join(qui, "..", a), join(dir, b));
 const W = await import(join(dir, "worker.mjs"));
@@ -42,6 +42,7 @@ risposta = '{"risposta":"Ciao Mirna, sono Gordi. Per i tuoi tour c\'è Clio: par
 telegram = []; mail = [];
 await tocca(`primo:${k}`);
 const q = richieste[0] && richieste[0].messages[0].content;
+ok(/UOMO O DONNA/.test(richieste[0].system) && /Si chiama: Mirna \(dal nome capisci se è un uomo o una donna\)/.test(q), "il modello: accorda maschile e femminile dal nome", q && q.slice(0, 200));
 ok(q && q.includes("[PRIMA VOLTA]") && q.includes("Clio") && q.includes("Una pagina per farti trovare dalle agenzie"), "al modello: la prima volta, Clio per la guida, i suoi voti", q && q.slice(0, 300));
 ok(mail.some((x) => x.to[0].email === "mirna@prova.it" && /cosa faccio per te da oggi/.test(x.subject)) && repo[`per-pagina/${MIRNA}/primo-${k}.json`], "🤝 Proponi: la proposta va per mail e nella chat della pagina", mail);
 ok(telegram.some((t) => /👉 Per te: invito a Clio/.test(t.text || "")) && telegram.some((t) => /^prima proposta mandata \(chat \+ mail\)/.test(t.text || "")), "a JJ: la proposta, «👉 Per te: invito a Clio» e l'esito", telegram.map((t) => t.text));
@@ -49,4 +50,6 @@ ok(leggi("atlas.json")["mirna@prova.it"].primo && leggi("atlas.json")["mirna@pro
 const k2 = createHash("sha256").update("papa@prova.it").digest("hex").slice(0, 10); richieste = []; mail = [];
 await tocca(`primono:${k2}`);
 ok(!richieste.length && !mail.length && leggi("atlas.json")["papa@prova.it"].primo === "no", "controprova: «🗑 No» non chiama il modello e non scrive", leggi("atlas.json")["papa@prova.it"]);
+// 22/10, JJ: «non adegua maschile e femminile?» — i messaggi a JJ non danno il femminile per scontato, e il modello sa di accordare
+ok(!/le scrive|per lei|non le scrivo/.test(JSON.stringify(telegram)) && !/le scrive cosa fa per lei/.test(readFileSync(join(qui, "..", "worker.js"), "utf8")), "a JJ niente «le scrive / per lei» fisso");
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);

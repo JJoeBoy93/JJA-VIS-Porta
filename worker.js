@@ -990,6 +990,11 @@ async function atlasAggiorna(env, mail, cambia) {
 const nomeAss = (f) => (f && f.assistente) || "JJA-VIS";
 const ATLAS_CHI = (nome) => `Sei ${nome}, l'assistente personale di JJA-VIS che ricorda impegni, scadenze e documenti a una persona, per mail. ${nome} è il nome che
 questa persona ti ha dato. Rispondi in italiano, del tu, breve e caldo ma senza entusiasmo finto, come una persona attenta. Firmi «${nome}».
+UOMO O DONNA (22/10, JJ: «non adegua maschile e femminile?»): queste regole dicono «lei» per comodità, ma la persona può essere un uomo
+o una donna. Capiscilo dal suo nome e da come scrive (Paolo, Vincenzo, Joe → maschile; Giada, Mirna, Jessica → femminile) e accorda
+TUTTO di conseguenza: «pronto/pronta», «registrato/registrata», «caro/cara». Se non si capisce, usa frasi che vanno bene per tutti
+(«ciao, eccomi» invece di «benvenuto/benvenuta», «ti ricordo» invece di «sei pronto/pronta»). Sbagliare il genere a una persona
+alla prima mail vuol dire non conoscerla.
 
 Cosa fai DAVVERO, e nient'altro:
 - segni gli impegni che ti scrive (anche quelli da ricordare ad altri: «ricordami di dire a Jacopo…» è un impegno SUO: ricordare a lei di dirlo a lui);
@@ -1015,12 +1020,12 @@ Cosa NON fai (non dirlo mai, non lasciarlo intendere): non entri nel suo calenda
 telefoni, non compri, non scrivi ad altre persone. Se in una tua risposta precedente hai promesso una di queste cose, correggiti con
 onestà e in una riga. Se ti chiede una di queste cose, di' che oggi non la fai.
 
-La PRIMA VOLTA (il messaggio comincia con [PRIMA VOLTA]): è il momento in cui devi servirle davvero, non conoscerla.
-- Niente domande su di lei, niente presentazioni lunghe: in 3-6 righe le dici cosa fai DA SUBITO per quello che ha chiesto, con
-  parole sue, e fai SUBITO il primo passo: le chiedi la cosa che ti serve per cominciare oggi (gli impegni di oggi e di domani
+La PRIMA VOLTA (il messaggio comincia con [PRIMA VOLTA]): è il momento in cui devi esserle utile davvero, non conoscerla.
+- Niente domande sulla persona, niente presentazioni lunghe: in 3-6 righe dici cosa fai DA SUBITO per quello che ha chiesto, con
+  parole sue, e fai SUBITO il primo passo: chiedi la cosa che ti serve per cominciare oggi (gli impegni di oggi e di domani
   con l'ora, cosa deve portarsi sempre dietro, la prossima bolletta…). Una o due domande precise, non di più.
 - Solo cose dell'elenco «Cosa fai DAVVERO». Se ha chiesto una cosa che non fai, dillo in una riga e proponi quella più vicina che fai.
-- Dille che i promemoria le arrivano per mail e che può scriverti qui o rispondere alle mail, come le è più comodo.
+- Di' che i promemoria arrivano per mail e che può scriverti nella chat o rispondere alle mail, come è più comodo.
 
 Come rispondi:
 - Leggi TUTTA la conversazione: non chiedere mai una cosa che ti ha già detto. Se ti corregge, prendi la correzione e basta.
@@ -1038,7 +1043,7 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
   const turni = filo ? filo.turni : (lettera ? [{ chi: "noi", testo: `[la lettera «${lettera.oggetto}»] ${String(lettera.testo || "").slice(0, 1500)}` }] : []);
   const impegni = filo ? filo.impegni : [];
   const contesto = `OGGI è ${giornoBello(oggi)} ${oggi.slice(0, 4)} (${oggi}), a Roma sono le ${ora.slice(11)}.\n` +
-    `Lei si chiama: ${rec.nome || (filo && filo.nome) || "(non lo so)"}.\n\n` +
+    `Si chiama: ${rec.nome || (filo && filo.nome) || "(non lo so)"} (dal nome capisci se è un uomo o una donna).\n\n` +
     `I suoi documenti archiviati:\n${(rec.documenti || []).map((x) => `- [${x.id}] ${x.titolo}${x.data ? " · " + x.data : ""}`).join("\n") || "(nessuno)"}\n\n` +
     `Le scadenze da pagare già segnate:\n${(filo && filo.scadenze || []).filter((x) => !x.pagata).map((x) => `- [${x.id}] ${x.giorno}${x.importo ? " · " + x.importo : ""}: ${x.cosa}${x.ogni_mese ? " (ogni mese)" : ""}`).join("\n") || "(nessuna)"}\n\n` +
     `Cosa si porta sempre dietro quando esce: ${(filo && filo.da_portare || []).join(", ") || "(non me l'ha ancora detto)"}\n\n` +
@@ -2764,7 +2769,7 @@ async function primoIncontro(env, mail, d, origine) {
 // 22/10 (Mirna, la guida per cui è nata Clio, non aveva ricevuto niente): alla prima volta l'assistente propone anche il prodotto
 // di JJA-VIS fatto per il suo lavoro. L'accesso lo dà JJ: per_jj, e la riga arriva a JJ insieme alla proposta
 const PRODOTTO_PER = {
-  "Guida turistica": "Clio. La guida parla una volta sola nella sua lingua e ogni visitatore legge la traduzione sul suo telefono mentre lei parla; si entra inquadrando un QR, senza radioline; i tour si preparano da casa con tappe e foto; le domande dei visitatori arrivano tradotte. Si entra con un invito personale che manda chi ti costruisce: PROPONILO (è la cosa che le serve di più) e metti in per_jj «invito a Clio». Non è una cosa che fai tu: è un prodotto di JJA-VIS, puoi parlarne.",
+  "Guida turistica": "Clio. La guida parla una volta sola nella sua lingua e ogni visitatore legge la traduzione sul suo telefono mentre lei parla; si entra inquadrando un QR, senza radioline; i tour si preparano da casa con tappe e foto; le domande dei visitatori arrivano tradotte. Si entra con un invito personale che manda chi ti costruisce: PROPONILO (è la cosa che serve di più a una guida) e metti in per_jj «invito a Clio». Non è una cosa che fai tu: è un prodotto di JJA-VIS, puoi parlarne.",
 };
 // 22/10, JJ: «visto che ha messo la risposta anche per mail, le deve arrivare anche per mail, altrimenti non sa che le è arrivata
 // la risposta nella pagina e potrebbe non aprirlo più». La proposta parte SEMPRE anche per mail (la mail è quella dell'account).
@@ -2778,13 +2783,13 @@ async function primoCore(env, mail, chi, u, d, perPagina) {
   const ass = String(d.nome_assistente || u.nome_assistente || "").trim().slice(0, 24), tuo = String(d.tuo || u.tuo || "").trim().slice(0, 40);
   await atlasAggiorna(env, mail, (f) => { if (ass) f.assistente = ass; if (tuo && !f.nome) f.nome = tuo; if (chi && !f.chi) f.chi = chi; return []; });
   const filo = (await atlasLeggi(env)).dati[mail];
-  const sa = [(u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`, (u.tempo || d.tempo) && `- cosa le fa perdere tempo: ${u.tempo || d.tempo}`,
+  const sa = [(u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`, (u.tempo || d.tempo) && `- cosa fa perdere tempo nel lavoro: ${u.tempo || d.tempo}`,
     bisogno && `- cosa vorrebbe da te, con parole sue: «${bisogno}»`,
-    (u.voti || []).length && `- cosa ha votato da costruire: ${u.voti.join("; ")} (lo costruisce chi ti ha costruito, su commissione: dille che gliel'hai passato, nessun prezzo)`]
+    (u.voti || []).length && `- cosa ha votato da costruire: ${u.voti.join("; ")} (lo costruisce chi ti ha costruito, su commissione: di' che l'hai passato a lui, nessun prezzo)`]
     .filter(Boolean).join("\n") + (PRODOTTO_PER[u.mestiere || d.mestiere] ? `\n\nPER IL SUO LAVORO JJA-VIS HA GIÀ: ${PRODOTTO_PER[u.mestiere || d.mestiere]}` : "");
   const quando = new Date().toISOString();
-  const rec = { domanda: `[PRIMA VOLTA] Si è registrata a JJA-VIS; questa risposta la legge per mail e nella chat della pagina. Nel sondaggio ha detto:\n${sa ||
-    "(niente di preciso: proponi tu le due cose che fai che servono di più a chi lavora)"}\nI promemoria le arrivano a ${mail}; può rispondere a questa mail o scriverti nella chat.`, nome: filo.nome || tuo, quando, documenti: [] };
+  const rec = { domanda: `[PRIMA VOLTA] Ha appena fatto l'account di JJA-VIS; questa risposta la legge per mail e nella chat della pagina. Nel sondaggio ha detto:\n${sa ||
+    "(niente di preciso: proponi tu le due cose che fai che servono di più a chi lavora)"}\nI promemoria arrivano a ${mail}; può rispondere a questa mail o scriverti nella chat.`, nome: filo.nome || tuo, quando, documenti: [] };
   let esito; try { esito = await atlasRisponde(env, mail, rec, filo, null); await contaSpesa(env, ultimoUso); }
   catch (e) { await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: `⚠️ Prima proposta a ${tuo || mail} NON partita: ${String(e.message || e).slice(0, 200)}` }).catch(() => {});
     return { errore: String(e.message || e) }; }
@@ -2808,7 +2813,7 @@ async function primoCore(env, mail, chi, u, d, perPagina) {
     (mailErrore ? `\n\n⚠️ La mail NON è partita: ${mailErrore}` : "") +
     (esito.per_jj ? `\n\n👉 Per te: ${String(esito.per_jj).slice(0, 300)}` : "") +
     (segnati.length ? `\n\nSegnato: ${segnati.map((x) => x.cosa).join("; ")}` : "") +
-    (chiuse.length ? `\n\nLa domanda ${chiuse.map((x) => "#" + x).join(", ")} è chiusa: le ha risposto lui, non serve toccare niente.` : "")).slice(0, 4000) }).catch(() => {});
+    (chiuse.length ? `\n\nLa domanda ${chiuse.map((x) => "#" + x).join(", ")} è chiusa: ha già la risposta del suo assistente, non serve toccare niente.` : "")).slice(0, 4000) }).catch(() => {});
   return { risposta: esito.risposta, mail: !!perMail };
 }
 // ══ CHI NON HA RICEVUTO NIENTE — 22 ottobre 2026 (Athena) ═══════════════════
@@ -2832,14 +2837,14 @@ async function giroPrimi(env, adesso = new Date()) {
   await atlasAggiorna(env, mail, (x) => { x.primo_chiesto = k; if (chi && !x.chi) x.chi = chi; return []; });
   const chiE = [u.tuo || f.nome || "(senza nome)", u.nome_assistente || f.assistente ? `assistente «${u.nome_assistente || f.assistente}»` : "", mail].filter(Boolean).join(" · ");
   const sa = u.ha_risposto ? `sondaggio fatto: ${[u.mestiere, u.tempo, ...(u.voti || [])].filter(Boolean).join(" · ")}${u.proposta ? ` · «${u.proposta}»` : ""}` : "il sondaggio non l'ha fatto";
-  await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: `⏳ Non ha ancora ricevuto niente: ${chiE}\nHa l'account; ${sa}.\n\n«🤝 Proponi»: il suo assistente le scrive cosa fa per lei da oggi, in chat e per mail.`,
+  await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: `⏳ Non ha ancora ricevuto niente: ${chiE}\nHa l'account; ${sa}.\n\n«🤝 Proponi»: il suo assistente scrive cosa fa da oggi per questa persona, in chat e per mail.`,
     reply_markup: { inline_keyboard: [[{ text: "🤝 Proponi", callback_data: `primo:${k}` }, { text: "🗑 No", callback_data: `primono:${k}` }]] } });
   return mail;
 }
 async function primoDaTasto(env, k, si) {
   const A = await atlasLeggi(env); const mail = Object.keys(A.dati).find((m) => A.dati[m].primo_chiesto === k);
   if (!mail) return "niente: non la trovo più";
-  if (!si) { await atlasAggiorna(env, mail, (f) => { f.primo = "no"; return []; }); return "niente: non le scrivo"; }
+  if (!si) { await atlasAggiorna(env, mail, (f) => { f.primo = "no"; return []; }); return "niente: nessuna proposta"; }
   const f = A.dati[mail], chi = f.chi || "";
   let u = {}; if (chi) { try { u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {} }
   if (u.mail && String(u.mail).trim().toLowerCase() !== mail) u = {};
