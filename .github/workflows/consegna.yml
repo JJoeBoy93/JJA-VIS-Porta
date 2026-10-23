@@ -37,21 +37,44 @@ jobs:
           echo "::notice::prove della porta tutte verdi"
 
       # Persefone (23/10): il magazzino dove ricorda chi ha già sondato oggi. Passo a sé: se non riesce, Persefone avvisa a ogni
-      # colpo ma la consegna va avanti. Creato una volta, l'id resta nel wrangler.toml e le volte dopo questo passo non fa niente.
+      # colpo ma la consegna va avanti (continue-on-error). Creato una volta, l'id resta nel wrangler.toml e dopo questo passo non fa niente.
+      #
+      # 23/10 pomeriggio — rifatto: prima usava `wrangler kv namespace create` e, se il token non aveva il permesso KV, usciva
+      # SENZA id e il passo diceva solo «non creato» — un guasto muto (non si capiva se mancava il permesso o altro). Ora chiama
+      # l'API di Cloudflare direttamente: l'id si legge in JSON e un permesso mancante dà un messaggio esplicito, non il silenzio.
       - name: il magazzino di Persefone
         continue-on-error: true
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          if grep -q 'binding = "PERSEFONE_VISTI"' wrangler.toml; then echo "c'è già"; exit 0; fi
-          OUT=$(npx --yes wrangler@4.149.0 kv namespace create PERSEFONE_VISTI 2>&1 || true); echo "$OUT"
-          ID=$(echo "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)
-          if [ -n "$ID" ]; then
+          if grep -q 'binding = "PERSEFONE_VISTI"' wrangler.toml; then echo "c'è già, non faccio niente"; exit 0; fi
+          ACCOUNT=$(grep -oE 'account_id = "[0-9a-f]{32}"' wrangler.toml | grep -oE '[0-9a-f]{32}')
+          echo "account $ACCOUNT"
+          RISP=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/storage/kv/namespaces" \
+                 -H "Authorization: Bearer $CF_TOKEN" -H "content-type: application/json" \
+                 --data '{"title":"PERSEFONE_VISTI"}')
+          echo "$RISP" | head -c 600; echo
+          OK=$(echo "$RISP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success'))" 2>/dev/null)
+          ID=$(echo "$RISP" | python3 -c "import json,sys; print((json.load(sys.stdin).get('result') or {}).get('id',''))" 2>/dev/null)
+          if [ "$OK" = "True" ] && [ -n "$ID" ]; then
             printf '\n[[kv_namespaces]]\nbinding = "PERSEFONE_VISTI"\nid = "%s"\n' "$ID" >> wrangler.toml
             git config user.name Athena; git config user.email athena@jja-vis.local
             git add wrangler.toml && git commit -qm "Persefone: id del magazzino PERSEFONE_VISTI nel wrangler.toml" && git push -q origin HEAD:main || echo "commit saltato"
-            echo "::notice::magazzino di Persefone creato: $ID"
-          else echo "::warning::magazzino di Persefone non creato ora: Persefone avviserà a ogni colpo"; fi
+            echo "::notice::magazzino di Persefone creato: $ID — la prossima consegna lo userà"
+          else
+            # se il titolo esiste già da un tentativo andato a metà, riuso quell'id invece di restare senza
+            ESISTE=$(curl -s "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/storage/kv/namespaces?per_page=100" \
+                     -H "Authorization: Bearer $CF_TOKEN" | python3 -c "import json,sys; print(next((n['id'] for n in (json.load(sys.stdin).get('result') or []) if n.get('title')=='PERSEFONE_VISTI'),''))" 2>/dev/null)
+            if [ -n "$ESISTE" ]; then
+              printf '\n[[kv_namespaces]]\nbinding = "PERSEFONE_VISTI"\nid = "%s"\n' "$ESISTE" >> wrangler.toml
+              git config user.name Athena; git config user.email athena@jja-vis.local
+              git add wrangler.toml && git commit -qm "Persefone: riuso l'id del magazzino già esistente" && git push -q origin HEAD:main || echo "commit saltato"
+              echo "::notice::magazzino di Persefone già esistente, riusato: $ESISTE"
+            else
+              ERR=$(echo "$RISP" | python3 -c "import json,sys; e=json.load(sys.stdin).get('errors') or []; print(e[0].get('message','?') if e else '?')" 2>/dev/null)
+              echo "::warning::magazzino di Persefone NON creato — Cloudflare dice: ${ERR}. Se è un permesso mancante, al token CLOUDFLARE_API_TOKEN serve «Workers KV Storage: Edit». Intanto Persefone avvisa a ogni colpo, ma protegge."
+            fi
+          fi
 
       - name: wrangler deploy
         env:
