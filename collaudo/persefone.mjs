@@ -35,6 +35,24 @@ import("node:assert");
 const { ESCHE } = W;
 for (const p of ["/parla", "/assistente", "/nato", "/ares", "/posta", "/telegram", "/conoscenza", "/risposte", "/stato"])
   ok(!ESCHE.some((rx) => rx.test(p)), `la strada vera ${p} non è un'esca`);
+// ── IL SECONDO PEZZO: il labirinto (23/10) — chi prova a USARE i dati finti non deve scoprire che sono finti ──
+// POST del login finto: accetta e manda alla dashboard, non rimanda al login (quello sarebbe la firma di una trappola)
+r = await W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev/wp-login.php", { method: "POST", headers: { "CF-Connecting-IP": "5.5.5.5" } }), env, { waitUntil: (p) => p });
+ok(r.status === 303 && r.headers.get("location") === "/wp-admin/" && /wordpress_logged_in=/.test(r.headers.get("set-cookie") || ""), "POST del login finto: 303 verso la dashboard, con cookie di sessione", r.status);
+r = await chiama("/wp-admin/"); corpo = await r.text();
+ok(r.status === 200 && /Bacheca/.test(corpo) && /href="\/wp-admin\//.test(corpo), "la dashboard finta risponde con link interni (il labirinto)");
+// un attaccante segue i link: devono restare TUTTI dentro Persefone, mai una strada vera della porta
+const linkDash = [...corpo.matchAll(/href="([^"]+)"/g)].map((m) => new URL("https://x" + m[1]).pathname).filter((pp) => !ESCHE.some((rx) => rx.test(pp)));
+ok(linkDash.length === 0, "ogni link del labirinto resta un'esca (non porta a una strada vera)", linkDash.slice(0, 3));
+const q1 = await (await chiama("/wp-admin/edit.php?post=zz")).text(), q2 = await (await chiama("/wp-admin/edit.php?post=yy")).text();
+ok(q1 !== q2, "articoli diversi = pagine diverse (il seme considera la query, non solo il percorso)");
+const q1b = await (await chiama("/wp-admin/edit.php?post=zz")).text();
+ok(q1 === q1b, "lo stesso articolo dà sempre la stessa pagina (deterministico)");
+// XSS riflessa a casa nostra: un payload nella query NON deve comparire nell'HTML generato
+const veleno = await (await chiama("/wp-admin/edit.php?post=<script>alert(1)</script>")).text();
+ok(!veleno.includes("<script>alert"), "un payload nella query non finisce nell'HTML (niente XSS riflessa nel labirinto)");
+
 // controprova: il testo di /.env proviene da Persefone, non da una vera pagina della porta
 ok(readFileSync(join(qui, "..", "worker.js"), "utf8").includes("const trappola = persefone("), "Persefone è agganciata all'ingresso della porta");
+ok(readFileSync(join(qui, "..", "worker.js"), "utf8").includes("function labirinto("), "il secondo pezzo (labirinto) è nel worker");
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);

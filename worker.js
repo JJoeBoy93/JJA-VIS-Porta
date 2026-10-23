@@ -2980,7 +2980,7 @@ function persefone(req, url, env, ctx) {
       text: `🕸 Persefone: qualcuno sta sondando la porta.\nCercava: ${p}\nDa: ${chi}\n\nNon c'è niente di vero lì: gli ho dato dati finti. Nessuna azione da fare.` }).catch(() => {}));
     // lento di proposito: tiene l'attaccante fermo qui invece che altrove (ma non così tanto da intasare noi)
     await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 2500)));
-    const seme = p.toLowerCase();
+    const seme = (p + url.search).toLowerCase();   // anche la query: ?post=zz e ?post=yy devono dare pagine diverse
     if (/\.json$|credential|secret|config\.json/.test(p)) {
       const [a, b, c] = await Promise.all([esca64(env, seme + 1), esca64(env, seme + 2), esca64(env, seme + 3)]);
       return new Response(JSON.stringify({ aws_access_key_id: "AKIA" + a.toUpperCase().slice(0, 16), aws_secret_access_key: b, db_password: c.slice(0, 20), api_token: "sk_live_" + a }, null, 2),
@@ -2992,15 +2992,42 @@ function persefone(req, url, env, ctx) {
         { status: 200, headers: { "content-type": "text/plain" } });
     }
     if (/wp-|wordpress|admin|administrator/.test(p)) {
-      return new Response(`<!doctype html><html><head><title>Log In</title></head><body><form method="post" action="${p}">` +
-        `<p><label>Username<br><input name="log"></label></p><p><label>Password<br><input name="pwd" type="password"></label></p>` +
-        `<p><input type="submit" value="Log In"></p></form></body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+      // IL SECONDO PEZZO (23/10, JJ: «quello che usa i dati finti per continuare la trappola e non farsi scoprire che sono finti»).
+      // Un vero pannello, dopo il login, porta a una dashboard. Qui il POST del login finto NON rimanda alla stessa pagina
+      // (sarebbe la firma di una trappola): accetta qualunque credenziale, mette un cookie di «sessione» e manda al labirinto.
+      if (req.method === "POST") {
+        const sess = await esca64(env, "sess:" + (req.headers.get("CF-Connecting-IP") || ""));
+        return new Response(null, { status: 303, headers: { location: "/wp-admin/", "set-cookie": `wordpress_logged_in=${sess}; Path=/; HttpOnly; Max-Age=86400` } });
+      }
+      // /wp-login → la pagina di accesso; /wp-admin/* e il resto → dentro il labirinto (la dashboard che risponde senza fine)
+      if (/wp-login|^\/wp-config/.test(p)) {
+        return new Response(`<!doctype html><html><head><title>Log In</title></head><body><form method="post" action="${p}">` +
+          `<p><label>Username<br><input name="log"></label></p><p><label>Password<br><input name="pwd" type="password"></label></p>` +
+          `<p><input type="submit" value="Log In"></p></form></body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+      }
+      return new Response(labirinto(p, await esca64(env, seme), false), { status: 200, headers: { "content-type": "text/html" } });
     }
     const a = await esca64(env, seme);
     return new Response(a + "\n", { status: 200, headers: { "content-type": "text/plain" } });
   })();
 }
-export { persefone, ESCHE };
+
+// Il labirinto di Persefone: una finta dashboard che risponde e rimanda sempre a OGNI altra pagina del labirinto, senza fine.
+// Ogni pagina è decisa dal percorso (stessa strada → stessa pagina: non si capisce che è generata) e i link puntano solo a
+// strade-esca (restano dentro Persefone, non toccano mai le strade vere della porta). Niente stato da difendere: è solo testo.
+function labirinto(p, seme, login) {
+  const n = parseInt(seme.slice(0, 6), 36) % 40 + 8;   // 8-47 voci, sempre le stesse per questa strada
+  const voci = Array.from({ length: n }, (_, i) =>
+    `<li><a href="/wp-admin/edit.php?post=${seme.slice(0, 8)}${i}">Articolo #${(parseInt(seme.slice(i % 20, i % 20 + 4), 36) || i)}</a> — bozza</li>`);
+  const menu = ["/wp-admin/users.php", "/wp-admin/options.php", "/wp-admin/plugins.php", "/wp-admin/upload.php", "/wp-admin/export.php"]
+    .map((m) => `<a href="${m}">${m.split("/").pop().replace(".php", "")}</a>`).join(" · ");
+  return `<!doctype html><html><head><title>Dashboard</title></head><body>` +
+    (login ? "" : "<p>Benvenuto, admin.</p>") +
+    `<nav>${menu}</nav><h1>Bacheca</h1><p>Hai ${n} elementi.</p><ul>${voci.join("")}</ul>` +
+    `<form method="post" action="/wp-admin/options.php"><input name="k"><input type="submit" value="Salva"></form>` +
+    `</body></html>`;
+}
+export { persefone, ESCHE, labirinto };
 async function documentoDallaChat(env, req, url, origine) {
   const mail = await mailDalConto(req, fetch, env);
   if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
