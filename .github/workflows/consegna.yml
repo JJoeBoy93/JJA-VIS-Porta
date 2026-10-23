@@ -36,18 +36,29 @@ jobs:
           if [ -n "$rossi" ]; then echo "::error::prove rosse, niente consegna —$rossi"; exit 1; fi
           echo "::notice::prove della porta tutte verdi"
 
+      # Persefone (23/10): il magazzino dove ricorda chi ha già sondato oggi. Passo a sé: se non riesce, Persefone avvisa a ogni
+      # colpo ma la consegna va avanti. Creato una volta, l'id resta nel wrangler.toml e le volte dopo questo passo non fa niente.
+      - name: il magazzino di Persefone
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if grep -q 'binding = "PERSEFONE_VISTI"' wrangler.toml; then echo "c'è già"; exit 0; fi
+          OUT=$(npx --yes wrangler@4.149.0 kv namespace create PERSEFONE_VISTI 2>&1 || true); echo "$OUT"
+          ID=$(echo "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)
+          if [ -n "$ID" ]; then
+            printf '\n[[kv_namespaces]]\nbinding = "PERSEFONE_VISTI"\nid = "%s"\n' "$ID" >> wrangler.toml
+            git config user.name Athena; git config user.email athena@jja-vis.local
+            git add wrangler.toml && git commit -qm "Persefone: id del magazzino PERSEFONE_VISTI nel wrangler.toml" && git push -q origin HEAD:main || echo "commit saltato"
+            echo "::notice::magazzino di Persefone creato: $ID"
+          else echo "::warning::magazzino di Persefone non creato ora: Persefone avviserà a ogni colpo"; fi
+
       - name: wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -o pipefail
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::manca CLOUDFLARE_API_TOKEN nei Secrets del repository"; exit 1; fi
-          # Persefone (23/10): il magazzino dove ricorda chi ha già sondato oggi. Lo crea la prima volta e scrive l'id in wrangler.toml;
-          # le volte dopo l'id c'è già e non si tocca niente. Senza, Persefone funziona lo stesso ma avvisa a ogni colpo.
-          if ! grep -q 'binding = "PERSEFONE_VISTI"' wrangler.toml; then
-            ID=$(npx --yes wrangler@4.149.0 kv namespace create PERSEFONE_VISTI 2>&1 | grep -oE '"?id"?[ =:]+"?[0-9a-f]{32}' | grep -oE '[0-9a-f]{32}' | head -1)
-            if [ -n "$ID" ]; then printf '\n[[kv_namespaces]]\nbinding = "PERSEFONE_VISTI"\nid = "%s"\n' "$ID" >> wrangler.toml; echo "$ID" > persefone-kv.txt; echo "::notice::magazzino di Persefone creato: $ID"; else echo "::warning::magazzino di Persefone non creato: Persefone avviserà a ogni colpo"; fi
-          fi
           if npx --yes wrangler@4.149.0 deploy 2>&1 | tee consegna.log; then
             echo "::notice::$(tail -c 500 consegna.log | tr '\n' '|')"
           else
@@ -55,16 +66,6 @@ jobs:
             exit 1
           fi
 
-      - name: l'id del magazzino di Persefone resta nel repository
-        if: always()
-        run: |
-          if [ -f persefone-kv.txt ] && ! git grep -q 'binding = "PERSEFONE_VISTI"' -- wrangler.toml; then
-            ID=$(cat persefone-kv.txt)
-            printf '\n[[kv_namespaces]]\nbinding = "PERSEFONE_VISTI"\nid = "%s"\n' "$ID" >> wrangler.toml
-            rm -f persefone-kv.txt
-            git config user.name Athena; git config user.email athena@jja-vis.local
-            git add wrangler.toml && git commit -qm "Persefone: l'id del magazzino PERSEFONE_VISTI nel wrangler.toml (creato dalla consegna)" && git push -q || echo "niente da salvare"
-          fi
 
       - name: i segreti della porta
         env:
