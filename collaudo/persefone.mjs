@@ -18,7 +18,7 @@ const env = { TG_BOT_TOKEN: "t", TG_CHAT: "42", PERSEFONE_VISTI: VISTI, PERSEFON
 const chiama = (percorso, ip = "1.2.3.4") => W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev" + percorso, { headers: { "CF-Connecting-IP": ip } }), env, { waitUntil: (p) => p });
 const t0 = Date.now();
 let r = await chiama("/.env"); let corpo = await r.text();
-ok(r.status === 200 && /DB_PASSWORD=/.test(corpo) && /SECRET_KEY=/.test(corpo), "/.env: dati finti, stato 200 (non 403)", corpo.slice(0, 60));
+ok(r.status === 200 && /WP_ADMIN_PASSWORD=/.test(corpo) && /SECRET_KEY=/.test(corpo), "/.env: dati finti, stato 200 (non 403)", corpo.slice(0, 60));
 ok(Date.now() - t0 >= 1500, "la risposta è lenta di proposito (tiene fermo l'attaccante)");
 r = await chiama("/.git/config"); ok(r.status === 200 && (await r.text()).length > 10, "/.git/config: esca");
 r = await chiama("/wp-login.php"); corpo = await r.text(); ok(r.status === 200 && /Log In/.test(corpo) && /<form/.test(corpo), "/wp-login.php: una falsa pagina di accesso");
@@ -36,9 +36,22 @@ const { ESCHE } = W;
 for (const p of ["/parla", "/assistente", "/nato", "/ares", "/posta", "/telegram", "/conoscenza", "/risposte", "/stato"])
   ok(!ESCHE.some((rx) => rx.test(p)), `la strada vera ${p} non è un'esca`);
 // ── IL SECONDO PEZZO: il labirinto (23/10) — chi prova a USARE i dati finti non deve scoprire che sono finti ──
-// POST del login finto: accetta e manda alla dashboard, non rimanda al login (quello sarebbe la firma di una trappola)
-r = await W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev/wp-login.php", { method: "POST", headers: { "CF-Connecting-IP": "5.5.5.5" } }), env, { waitUntil: (p) => p });
-ok(r.status === 303 && r.headers.get("location") === "/wp-admin/" && /wordpress_logged_in=/.test(r.headers.get("set-cookie") || ""), "POST del login finto: 303 verso la dashboard, con cookie di sessione", r.status);
+// Le credenziali seminate nel .env sono quelle che poi fanno entrare dal login (JJ 23/10: «se entro con credenziali casuali non è roba vera»)
+const env_txt = await (await chiama("/.env")).text();
+const u = (env_txt.match(/WP_ADMIN_USER=(.*)/) || [])[1];
+const pw = (env_txt.match(/WP_ADMIN_PASSWORD=(.*)/) || [])[1];
+ok(!!u && !!pw, "il .env contiene le credenziali WordPress (utente e password)", { u, pw });
+// la stessa coppia compare anche in config.json (coerenza fra le esche)
+const cfg = JSON.parse(await (await chiama("/config.json")).text());
+ok(cfg.wp_user === u && cfg.wp_password === pw, "config.json ha le STESSE credenziali del .env", { cfg_u: cfg.wp_user, cfg_p: cfg.wp_password });
+const postLogin = (body, ip = "5.5.5.5") => W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev/wp-login.php", { method: "POST", headers: { "CF-Connecting-IP": ip, "content-type": "application/x-www-form-urlencoded" }, body }), env, { waitUntil: (p) => p });
+// credenziali SBAGLIATE: «password errata», niente cookie (come un WordPress vero — il rifiuto non smaschera la trappola)
+r = await postLogin("log=admin&pwd=password123");
+corpo = await r.text();
+ok(!/wordpress_logged_in=/.test(r.headers.get("set-cookie") || "") && /non è corretta/.test(corpo), "credenziali a caso: respinte con «password errata», nessun cookie", r.status);
+// credenziali GIUSTE (quelle del .env): si entra
+r = await postLogin(`log=${encodeURIComponent(u)}&pwd=${encodeURIComponent(pw)}`);
+ok(r.status === 303 && r.headers.get("location") === "/wp-admin/" && /wordpress_logged_in=/.test(r.headers.get("set-cookie") || ""), "credenziali prese dal .env: 303 verso la dashboard, col cookie di sessione", r.status);
 r = await chiama("/wp-admin/"); corpo = await r.text();
 ok(r.status === 200 && /Bacheca/.test(corpo) && /href="\/wp-admin\//.test(corpo), "la dashboard finta risponde con link interni (il labirinto)");
 // un attaccante segue i link: devono restare TUTTI dentro Persefone, mai una strada vera della porta

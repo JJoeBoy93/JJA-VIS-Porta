@@ -2981,21 +2981,37 @@ function persefone(req, url, env, ctx) {
     // lento di proposito: tiene l'attaccante fermo qui invece che altrove (ma non così tanto da intasare noi)
     await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 2500)));
     const seme = (p + url.search).toLowerCase();   // anche la query: ?post=zz e ?post=yy devono dare pagine diverse
+    // Le credenziali-esca sono le STESSE ovunque le semini Persefone (seme fisso, non il percorso): così la coppia che compare
+    // nel .env / config.json è quella che poi fa entrare dal login finto (23/10, JJ: «le credenziali del .env devono funzionare,
+    // sennò si capisce che non è roba vera»). WP_PASS lunga e verosimile.
+    const WP_USER = "admin";
+    const WP_PASS = (await esca64(env, "wp:pass")).slice(0, 16);
     if (/\.json$|credential|secret|config\.json/.test(p)) {
-      const [a, b, c] = await Promise.all([esca64(env, seme + 1), esca64(env, seme + 2), esca64(env, seme + 3)]);
-      return new Response(JSON.stringify({ aws_access_key_id: "AKIA" + a.toUpperCase().slice(0, 16), aws_secret_access_key: b, db_password: c.slice(0, 20), api_token: "sk_live_" + a }, null, 2),
+      const [a, b] = await Promise.all([esca64(env, seme + 1), esca64(env, seme + 2)]);
+      return new Response(JSON.stringify({ aws_access_key_id: "AKIA" + a.toUpperCase().slice(0, 16), aws_secret_access_key: b, wp_user: WP_USER, wp_password: WP_PASS, api_token: "sk_live_" + a }, null, 2),
         { status: 200, headers: { "content-type": "application/json" } });
     }
     if (/\.env/.test(p)) {
-      const [a, b, c] = await Promise.all([esca64(env, seme + 1), esca64(env, seme + 2), esca64(env, seme + 3)]);
-      return new Response(`APP_ENV=production\nDB_HOST=10.0.0.14\nDB_USER=admin\nDB_PASSWORD=${c.slice(0, 18)}\nSECRET_KEY=${a}\nSTRIPE_KEY=sk_live_${b.slice(0, 24)}\n`,
+      const [a, b] = await Promise.all([esca64(env, seme + 1), esca64(env, seme + 2)]);
+      return new Response(`APP_ENV=production\nDB_HOST=10.0.0.14\nWP_ADMIN_USER=${WP_USER}\nWP_ADMIN_PASSWORD=${WP_PASS}\nSECRET_KEY=${a}\nSTRIPE_KEY=sk_live_${b.slice(0, 24)}\n`,
         { status: 200, headers: { "content-type": "text/plain" } });
     }
     if (/wp-|wordpress|admin|administrator/.test(p)) {
       // IL SECONDO PEZZO (23/10, JJ: «quello che usa i dati finti per continuare la trappola e non farsi scoprire che sono finti»).
-      // Un vero pannello, dopo il login, porta a una dashboard. Qui il POST del login finto NON rimanda alla stessa pagina
-      // (sarebbe la firma di una trappola): accetta qualunque credenziale, mette un cookie di «sessione» e manda al labirinto.
+      // Un vero pannello, dopo il login, porta a una dashboard. Il POST del login finto NON rimanda alla stessa pagina
+      // (sarebbe la firma di una trappola). Chi ha letto le credenziali nel .env (admin / WP_PASS) entra: la trappola regge.
+      // Chi tira a indovinare riceve lo stesso «password errata» di un WordPress vero — anche il rifiuto non smaschera l'honeypot.
       if (req.method === "POST") {
+        const corpo = await req.text();
+        const campi = new URLSearchParams(corpo);
+        const giuste = campi.get("log") === WP_USER && campi.get("pwd") === WP_PASS;
+        if (!giuste) {
+          return new Response(`<!doctype html><html><head><title>Log In</title></head><body>` +
+            `<div id="login_error"><strong>Errore:</strong> la password inserita per l'utente <strong>${WP_USER}</strong> non è corretta.</div>` +
+            `<form method="post" action="${p}"><p><label>Username<br><input name="log" value="${WP_USER}"></label></p>` +
+            `<p><label>Password<br><input name="pwd" type="password"></label></p><p><input type="submit" value="Log In"></p></form></body></html>`,
+            { status: 200, headers: { "content-type": "text/html" } });
+        }
         const sess = await esca64(env, "sess:" + (req.headers.get("CF-Connecting-IP") || ""));
         return new Response(null, { status: 303, headers: { location: "/wp-admin/", "set-cookie": `wordpress_logged_in=${sess}; Path=/; HttpOnly; Max-Age=86400` } });
       }
