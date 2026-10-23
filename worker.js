@@ -151,6 +151,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/io/dal-conto") return ioDalConto(env, req, origine);
     if (req.method === "POST" && url.pathname === "/nato") return nato(env, req, origine);
     if (req.method === "POST" && url.pathname === "/ares") return aresParla(env, req);
+    const trappola = persefone(req, url, env, ctx); if (trappola) return trappola;
     if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente") return assistenteDallaChat(env, req, origine);
     if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
@@ -2944,6 +2945,62 @@ async function aresParla(env, req) {
   return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
 }
 export { aresParla };
+
+// ══ PERSEFONE — L'ESCA — 23 ottobre 2026 (Athena) ══════════════════════════
+// JJ, 23/10: «serve l'honeypot di persone [Persefone] che ti avevo detto». Nell'Olimpo (vault): sub-agente di Ade, reindirizza
+// l'attacco in un honeypot con dati verosimili ma falsi e lo tiene in un ciclo infinito. Qui: le strade che un attaccante prova
+// sempre e che da noi NON esistono (/.env, /.git/config, /wp-login.php, /admin, /phpmyadmin, config e backup). Un visitatore
+// normale non le tocca mai; chi le chiede sta sondando. Persefone non blocca (bloccare dice «qui c'è qualcosa»): dà sempre
+// qualcosa di verosimile e falso, lento, e avvisa JJ una volta per indirizzo al giorno. Non attacca nessuno: vale solo dentro la
+// porta, sulle richieste che arrivano a noi. I veri segreti non sono qui — sono finti, generati sul momento, inservibili.
+const ESCHE = [
+  /^\/\.env(\.|$)/, /^\/\.git\//, /^\/wp-(login|admin|config)/, /^\/wordpress\//, /^\/administrator?\b/, /^\/admin(\/|$|\.php)/,
+  /^\/phpmyadmin/i, /^\/pma\b/i, /^\/\.aws\//, /^\/\.ssh\//, /^\/config\.(php|json|ya?ml)$/, /^\/(backup|dump|db)\.(sql|zip|tar\.gz)$/,
+  /^\/\.vscode\//, /^\/credentials?(\.|$)/, /^\/secrets?(\.|$)/, /^\/\.htpasswd$/, /^\/server-status$/, /^\/actuator\//, /^\/\.well-known\/security/,
+];
+// nascondino: alla stessa richiesta rispondiamo sempre lo stesso finto, così non si capisce che è generato ogni volta
+async function esca64(env, seme) {
+  const dati = new TextEncoder().encode((env.PERSEFONE_SALE || "clio") + ":" + seme);
+  const h = [...new Uint8Array(await crypto.subtle.digest("SHA-256", dati))];
+  return btoa(String.fromCharCode(...h)).replace(/[+/=]/g, "").slice(0, 40);
+}
+function persefone(req, url, env, ctx) {
+  const p = url.pathname;
+  if (!ESCHE.some((r) => r.test(p))) return null;
+  return (async () => {
+    const chi = req.headers.get("CF-Connecting-IP") || "?";
+    // avviso a JJ una volta per indirizzo al giorno (un contatore KV se c'è; se no, sempre: meglio un avviso in più)
+    let primo = true;
+    if (env.PERSEFONE_VISTI) {
+      const k = `${new Date().toISOString().slice(0, 10)}:${chi}`;
+      primo = (await env.PERSEFONE_VISTI.get(k)) === null;
+      if (primo) ctx.waitUntil(env.PERSEFONE_VISTI.put(k, p, { expirationTtl: 172800 }));
+    }
+    if (primo) ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+      text: `🕸 Persefone: qualcuno sta sondando la porta.\nCercava: ${p}\nDa: ${chi}\n\nNon c'è niente di vero lì: gli ho dato dati finti. Nessuna azione da fare.` }).catch(() => {}));
+    // lento di proposito: tiene l'attaccante fermo qui invece che altrove (ma non così tanto da intasare noi)
+    await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 2500)));
+    const seme = p.toLowerCase();
+    if (/\.json$|credential|secret|config\.json/.test(p)) {
+      const [a, b, c] = await Promise.all([esca64(env, seme + 1), esca64(env, seme + 2), esca64(env, seme + 3)]);
+      return new Response(JSON.stringify({ aws_access_key_id: "AKIA" + a.toUpperCase().slice(0, 16), aws_secret_access_key: b, db_password: c.slice(0, 20), api_token: "sk_live_" + a }, null, 2),
+        { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (/\.env/.test(p)) {
+      const [a, b, c] = await Promise.all([esca64(env, seme + 1), esca64(env, seme + 2), esca64(env, seme + 3)]);
+      return new Response(`APP_ENV=production\nDB_HOST=10.0.0.14\nDB_USER=admin\nDB_PASSWORD=${c.slice(0, 18)}\nSECRET_KEY=${a}\nSTRIPE_KEY=sk_live_${b.slice(0, 24)}\n`,
+        { status: 200, headers: { "content-type": "text/plain" } });
+    }
+    if (/wp-|wordpress|admin|administrator/.test(p)) {
+      return new Response(`<!doctype html><html><head><title>Log In</title></head><body><form method="post" action="${p}">` +
+        `<p><label>Username<br><input name="log"></label></p><p><label>Password<br><input name="pwd" type="password"></label></p>` +
+        `<p><input type="submit" value="Log In"></p></form></body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+    }
+    const a = await esca64(env, seme);
+    return new Response(a + "\n", { status: 200, headers: { "content-type": "text/plain" } });
+  })();
+}
+export { persefone, ESCHE };
 async function documentoDallaChat(env, req, url, origine) {
   const mail = await mailDalConto(req, fetch, env);
   if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
