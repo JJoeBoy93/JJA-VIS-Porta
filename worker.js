@@ -1003,6 +1003,10 @@ Cosa fai DAVVERO, e nient'altro:
 - la sera prima, alle 20, le mandi per mail gli impegni del giorno dopo; ogni mattina alle 7 il programma della giornata; un'ora prima di ogni impegno con l'ora, un promemoria;
 - per ogni impegno nuovo le mandi (in una mail a parte, al primo giro dopo le 7) un invito del calendario: lo tocca e finisce nel SUO calendario, col suo avviso. Tu nel calendario non entri: è lei che lo aggiunge con un tocco;
 - puoi togliere o spostare un impegno se te lo chiede;
+- IMPEGNI PASSATI: quando un impegno è passato NON lo cancelli da solo, le CHIEDI se l'ha fatto (lo fa già il sistema la mattina).
+  Quando lei risponde a quella domanda: se dice di sì (fatto, andato, ok) metti il suo id in "tolti"; se dice di no o lo vuole
+  rifare, rimettilo in "nuovi" col nuovo giorno (se non te lo dice, chiediglielo) e intanto metti il vecchio id in "tolti". Un
+  impegno che lei conferma o sposta NON va più chiesto;
 - tieni l'elenco delle cose che deve portarsi SEMPRE dietro quando esce di casa (chiavi, occhiali, badge, caricatore…): ogni
   mattina alle 7 glielo mandi per mail insieme al programma del giorno. Quando te lo dice o lo cambia, metti in "da_portare"
   l'elenco COMPLETO aggiornato (sostituisce quello di prima; [] per svuotarlo); se non cambia, null. Le cose da portare per UN
@@ -1049,7 +1053,7 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
     `I suoi documenti archiviati:\n${(rec.documenti || []).map((x) => `- [${x.id}] ${x.titolo}${x.data ? " · " + x.data : ""}`).join("\n") || "(nessuno)"}\n\n` +
     `Le scadenze da pagare già segnate:\n${(filo && filo.scadenze || []).filter((x) => !x.pagata).map((x) => `- [${x.id}] ${x.giorno}${x.importo ? " · " + x.importo : ""}: ${x.cosa}${x.ogni_mese ? " (ogni mese)" : ""}`).join("\n") || "(nessuna)"}\n\n` +
     `Cosa si porta sempre dietro quando esce: ${(filo && filo.da_portare || []).join(", ") || "(non me l'ha ancora detto)"}\n\n` +
-    `Gli impegni già segnati:\n${impegni.length ? impegni.map((x) => `- [${x.id}] ${giornoBello(x.giorno)} (${x.giorno})${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n") : "(nessuno)"}\n\n` +
+    `Gli impegni già segnati${impegni.some((x) => x.giorno < oggi) ? " (quelli segnati PASSATO sono scaduti: se lei conferma che li ha fatti vanno in «tolti», se no vanno spostati)" : ""}:\n${impegni.length ? impegni.map((x) => `- [${x.id}] ${giornoBello(x.giorno)} (${x.giorno})${x.ora ? " alle " + x.ora : ""}: ${x.cosa}${x.giorno < oggi ? " ← PASSATO" : ""}`).join("\n") : "(nessuno)"}\n\n` +
     `La conversazione fin qui (dalla più vecchia):\n${turni.map((t) => `${t.chi === "lei" ? "LEI" : "TU"}: ${t.testo}`).join("\n---\n") || "(niente)"}\n\n` +
     `Il suo NUOVO messaggio, tra le righe di trattini:\n-----\n${rec.domanda}\n-----`;
   // 20/10: può cercare sul web (strumento dei server di Anthropic, web_search_20250305), al massimo 3 ricerche a risposta
@@ -1088,8 +1092,22 @@ export async function atlasPromemoria(env, adesso = new Date()) {
   let cancellati = []; try { cancellati = deb64((await gh(env, "GET", "cancellati.json")).content).map((x) => String(x).toLowerCase()); } catch (_) {}
   for (const [mail, f] of Object.entries(A.dati)) {
     if (cancellati.includes(mail)) continue;
-    const vecchio = new Date(adesso.getTime() - 2 * 864e5).toISOString().slice(0, 10);
-    const prima = f.impegni.length; f.impegni = f.impegni.filter((x) => x.giorno >= vecchio); if (f.impegni.length !== prima) cambiato = true;
+    // 23/10 (JJ): un impegno passato NON si cancella da solo e NON lo si lascia lì a confonderla. Si CHIEDE una volta: «l'hai
+    // fatto?». Se risponde sì → lo toglie; se no → lo riprogramma. Qui marco «da_confermare» quelli il cui giorno è passato e
+    // che non ho ancora chiesto; la domanda parte nel blocco qui sotto, una volta sola (chiesto = oggi).
+    for (const x of f.impegni) {
+      if (x.giorno < oggi && !x.da_confermare && !x.chiesto) { x.da_confermare = true; cambiato = true; }
+    }
+    const daConfermare = f.impegni.filter((x) => x.da_confermare && x.chiesto !== oggi);
+    if (h >= 7 && h < 22 && daConfermare.length) {
+      const righe = daConfermare.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n");
+      const uno = daConfermare.length === 1;
+      await atlasMail(env, mail, f.nome, uno ? `❓ L'hai fatto? ${daConfermare[0].cosa}` : `❓ ${daConfermare.length} impegni passati: li hai fatti?`,
+        `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, ${uno ? "questo impegno è passato" : "questi impegni sono passati"}:\n\n${righe}\n\n` +
+        `${uno ? "L'hai fatto" : "Li hai fatti"}? Rispondimi «sì» e ${uno ? "lo tolgo" : "li tolgo"}; se no, dimmi il nuovo giorno e ${uno ? "lo rimetto" : "li rimetto"} in programma.\n${nomeAss(f)}`);
+      for (const x of daConfermare) x.chiesto = oggi;
+      cambiato = true; fatti.push([mail, `❓ ${f.nome || mail}: chiesto conferma di ${daConfermare.length} impegni passati`]);
+    }
     const diOggi = f.impegni.filter((x) => x.giorno === oggi).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
     const porta = (f.da_portare || []).filter(Boolean);
     if (h >= 7 && h < 22 && f.riepilogo !== oggi && (diOggi.length || porta.length)) {

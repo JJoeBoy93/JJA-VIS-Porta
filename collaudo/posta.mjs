@@ -132,13 +132,18 @@ nuovo(); repo["atlas.json"] = { "jessica@p.it": { nome: "Jessica Crippa", turni:
 await atlasPromemoria(env, new Date("2026-10-14T04:07:00Z"));   // 06:07 a Roma (ora legale, +2): ancora niente
 ok(mandate.length === 0, "alle 6 di Roma non parte niente", mandate);
 await atlasPromemoria(env, new Date("2026-10-14T05:07:00Z"));   // 07:07 a Roma
-ok(mandate.length === 1 && /programma di oggi, mercoledì 14\/10/.test(mandate[0].subject) && /18:00 ricordare a Jacopo/.test(mandate[0].textContent) && /giubbotto/.test(mandate[0].textContent) && mandate[0].sender.name === "Atlas · JJA-VIS",
-   "alle 7 di Roma il programma del giorno, con e senza ora", mandate);
-ok(!repo["atlas.json"]["jessica@p.it"].impegni.some((x) => x.id === "a3"), "gli impegni vecchi di giorni si tolgono", repo["atlas.json"]);
-await atlasPromemoria(env, new Date("2026-10-14T06:07:00Z")); ok(mandate.length === 1, "il programma parte una volta sola al giorno", mandate.length);
+const programma = mandate.find((m) => /programma di oggi, mercoledì 14\/10/.test(m.subject));
+ok(programma && /18:00 ricordare a Jacopo/.test(programma.textContent) && /giubbotto/.test(programma.textContent) && programma.sender.name === "Atlas · JJA-VIS",
+   "alle 7 di Roma il programma del giorno, con e senza ora", mandate.map((m) => m.subject));
+// 23/10: l'impegno passato (a3, dell'1/10) NON si cancella più — Atlas chiede «l'hai fatto?»
+ok(repo["atlas.json"]["jessica@p.it"].impegni.some((x) => x.id === "a3"), "l'impegno passato non si cancella da solo (resta finché lei non risponde)", repo["atlas.json"]["jessica@p.it"].impegni.map((x) => x.id));
+ok(mandate.some((m) => /L'hai fatto/i.test(m.subject) && /vecchio/.test(m.textContent)), "Atlas chiede conferma dell'impegno passato", mandate.map((m) => m.subject));
+const dopo7 = mandate.length;
+await atlasPromemoria(env, new Date("2026-10-14T06:07:00Z")); ok(mandate.length === dopo7, "programma e domanda partono una volta sola al giorno", mandate.length);
 await atlasPromemoria(env, new Date("2026-10-14T15:07:00Z"));   // 17:07 a Roma: un'ora prima delle 18
-ok(mandate.length === 2 && /⏰ Alle 18:00: ricordare a Jacopo il parrucchiere/.test(mandate[1].subject), "alle 17:07 di Roma il promemoria delle 18", mandate[1]);
-await atlasPromemoria(env, new Date("2026-10-14T15:30:00Z")); ok(mandate.length === 2, "il promemoria parte una volta sola", mandate.length);
+ok(mandate.some((m) => /⏰ Alle 18:00: ricordare a Jacopo il parrucchiere/.test(m.subject)), "alle 17:07 di Roma il promemoria delle 18", mandate.map((m) => m.subject));
+const dopo17 = mandate.length;
+await atlasPromemoria(env, new Date("2026-10-14T15:30:00Z")); ok(mandate.length === dopo17, "il promemoria parte una volta sola", mandate.length);
 ok(tgMsg.some((t) => /Atlas ha mandato/.test(t.text)), "JJ sa cosa ha mandato Atlas", tgMsg);
 nuovo(); repo["atlas.json"] = { "x@p.it": { nome: "", turni: [], riepilogo: "", impegni: [{ id: "b", cosa: "y", giorno: "2026-12-10", ora: "09:00", avvisato: false, ics: true }] } };
 await atlasPromemoria(env, new Date("2026-12-10T07:07:00Z"));   // 08:07 a Roma d'inverno (+1): un'ora prima delle 9
