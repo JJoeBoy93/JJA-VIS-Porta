@@ -2969,14 +2969,18 @@ function persefone(req, url, env, ctx) {
   if (!ESCHE.some((r) => r.test(p))) return null;
   return (async () => {
     const chi = req.headers.get("CF-Connecting-IP") || "?";
+    // 23/10: NON avvisare sulle pagine interne del labirinto (/wp-admin/qualcosa). I bot di anteprima (Google, Telegram) seguono
+    // OGNI link del labirinto, ognuno da un IP diverso: avvisare su ciascuno sommergeva JJ di 🕸. L'avviso serve a dire «qualcuno
+    // sta sondando», e lo si sa già dal primo contatto esterno (/.env, /wp-login, …); la navigazione dentro la trappola è rumore.
+    const interna = /^\/wp-admin\/.+/.test(p);
     // avviso a JJ una volta per indirizzo al giorno (un contatore KV se c'è; se no, sempre: meglio un avviso in più)
     let primo = true;
     if (env.PERSEFONE_VISTI) {
       const k = `${new Date().toISOString().slice(0, 10)}:${chi}`;
       primo = (await env.PERSEFONE_VISTI.get(k)) === null;
-      if (primo) ctx.waitUntil(env.PERSEFONE_VISTI.put(k, p, { expirationTtl: 172800 }));
+      if (primo && !interna) ctx.waitUntil(env.PERSEFONE_VISTI.put(k, p, { expirationTtl: 172800 }));
     }
-    if (primo) ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+    if (primo && !interna) ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
       text: `🕸 Persefone: qualcuno sta sondando la porta.\nCercava: ${p}\nDa: ${chi}\n\nNon c'è niente di vero lì: gli ho dato dati finti. Nessuna azione da fare.` }).catch(() => {}));
     // lento di proposito: tiene l'attaccante fermo qui invece che altrove (ma non così tanto da intasare noi)
     await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 2500)));
@@ -3001,29 +3005,33 @@ function persefone(req, url, env, ctx) {
       // Un vero pannello, dopo il login, porta a una dashboard. Il POST del login finto NON rimanda alla stessa pagina
       // (sarebbe la firma di una trappola). Chi ha letto le credenziali nel .env (admin / WP_PASS) entra: la trappola regge.
       // Chi tira a indovinare riceve lo stesso «password errata» di un WordPress vero — anche il rifiuto non smaschera l'honeypot.
-      if (req.method === "POST") {
-        const corpo = await req.text();
-        const campi = new URLSearchParams(corpo);
+      // Il login vero, in WordPress, arriva SOLO su /wp-login.php. Un POST dentro /wp-admin/ (salva impostazioni, ecc.) è di
+      // uno GIÀ dentro: non va trattato come login, sennò si vede rimbalzare sul login e capisce la trappola (23/10).
+      const dentroPannello = /^\/wp-admin\//.test(p);
+      if (req.method === "POST" && !dentroPannello) {
+        const campi = new URLSearchParams(await req.text());
         const giuste = campi.get("log") === WP_USER && campi.get("pwd") === WP_PASS;
         if (!giuste) {
           // NEUTRALE (JJ 23/10): stessa pagina, identica byte per byte, per utente sbagliato o password sbagliata. Non nomina
           // l'utente, non ricompila il campo: chi tenta non deve capire quale dei due ha indovinato.
-          return new Response(`<!doctype html><html><head><title>Log In</title></head><body>` +
-            `<div id="login_error"><strong>Errore:</strong> nome utente o password non corretti.</div>` +
-            `<form method="post" action="${p}"><p><label>Username<br><input name="log"></label></p>` +
-            `<p><label>Password<br><input name="pwd" type="password"></label></p><p><input type="submit" value="Log In"></p></form></body></html>`,
-            { status: 200, headers: { "content-type": "text/html" } });
+          return new Response(paginaAccesso(p, "nome utente o password non corretti."), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
         }
+        // Entrato con le credenziali del .env: segnale FORTE (qualcuno le ha lette e le sta usando). Questo lo voglio sapere.
+        ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
+          text: `🕸 Persefone: qualcuno è ENTRATO col login finto (ha usato le credenziali del .env).\nDa: ${chi}\n\nÈ dentro la trappola, non c'è niente di vero. Nessuna azione da fare.` }).catch(() => {}));
         const sess = await esca64(env, "sess:" + (req.headers.get("CF-Connecting-IP") || ""));
         return new Response(null, { status: 303, headers: { location: "/wp-admin/", "set-cookie": `wordpress_logged_in=${sess}; Path=/; HttpOnly; Max-Age=86400` } });
       }
+      // POST dentro il pannello (salvataggio): WordPress salva e rimostra la pagina. Qui facciamo lo stesso — resta nel labirinto.
+      if (req.method === "POST" && dentroPannello) {
+        await req.text();   // consuma il corpo, come se avesse salvato
+        return new Response(labirinto(p, await esca64(env, seme)), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+      }
       // /wp-login → la pagina di accesso; /wp-admin/* e il resto → dentro il labirinto (la dashboard che risponde senza fine)
       if (/wp-login|^\/wp-config/.test(p)) {
-        return new Response(`<!doctype html><html><head><title>Log In</title></head><body><form method="post" action="${p}">` +
-          `<p><label>Username<br><input name="log"></label></p><p><label>Password<br><input name="pwd" type="password"></label></p>` +
-          `<p><input type="submit" value="Log In"></p></form></body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+        return new Response(paginaAccesso(p, null), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
       }
-      return new Response(labirinto(p, await esca64(env, seme), false), { status: 200, headers: { "content-type": "text/html" } });
+      return new Response(labirinto(p, await esca64(env, seme)), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
     }
     const a = await esca64(env, seme);
     return new Response(a + "\n", { status: 200, headers: { "content-type": "text/plain" } });
@@ -3033,19 +3041,120 @@ function persefone(req, url, env, ctx) {
 // Il labirinto di Persefone: una finta dashboard che risponde e rimanda sempre a OGNI altra pagina del labirinto, senza fine.
 // Ogni pagina è decisa dal percorso (stessa strada → stessa pagina: non si capisce che è generata) e i link puntano solo a
 // strade-esca (restano dentro Persefone, non toccano mai le strade vere della porta). Niente stato da difendere: è solo testo.
-function labirinto(p, seme, login) {
-  const n = parseInt(seme.slice(0, 6), 36) % 40 + 8;   // 8-47 voci, sempre le stesse per questa strada
-  const voci = Array.from({ length: n }, (_, i) =>
-    `<li><a href="/wp-admin/edit.php?post=${seme.slice(0, 8)}${i}">Articolo #${(parseInt(seme.slice(i % 20, i % 20 + 4), 36) || i)}</a> — bozza</li>`);
-  const menu = ["/wp-admin/users.php", "/wp-admin/options.php", "/wp-admin/plugins.php", "/wp-admin/upload.php", "/wp-admin/export.php"]
-    .map((m) => `<a href="${m}">${m.split("/").pop().replace(".php", "")}</a>`).join(" · ");
-  return `<!doctype html><html><head><title>Dashboard</title></head><body>` +
-    (login ? "" : "<p>Benvenuto, admin.</p>") +
-    `<nav>${menu}</nav><h1>Bacheca</h1><p>Hai ${n} elementi.</p><ul>${voci.join("")}</ul>` +
-    `<form method="post" action="/wp-admin/options.php"><input name="k"><input type="submit" value="Salva"></form>` +
-    `</body></html>`;
+// numeri/parole deterministici e UNICI per indice (prima si ripetevano: la lista aveva due volte lo stesso articolo)
+function pezzo(seme, tag, i) { let h = 2166136261; for (const ch of seme + ":" + tag + ":" + i) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0); }
+const CSS = `<style>
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif;color:#1d2327;background:#f0f0f1}
+#wpadminbar{height:32px;background:#1d2327;color:#f0f0f1;display:flex;align-items:center;padding:0 12px;font-size:13px;position:sticky;top:0}
+#wpadminbar b{color:#72aee6;margin-right:6px}
+.wrap{display:flex;min-height:calc(100vh - 32px)}
+#menu{width:160px;background:#1d2327;flex:0 0 160px}
+#menu a{display:block;color:#f0f0f1;text-decoration:none;padding:10px 14px;font-size:14px;border-left:3px solid transparent}
+#menu a:hover{background:#2c3338;color:#72aee6}#menu a.on{background:#2271b1;border-left-color:#72aee6}
+#main{flex:1;padding:16px 22px;min-width:0}
+h1{font-size:23px;font-weight:400;margin:4px 0 16px}
+.card{background:#fff;border:1px solid #c3c4c7;box-shadow:0 1px 1px rgba(0,0,0,.04);padding:0 16px;margin:0 0 16px}
+.card h2{font-size:14px;border-bottom:1px solid #f0f0f1;margin:0 -16px 10px;padding:12px 16px}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #c3c4c7}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #f0f0f1;font-size:13px}
+th{background:#f6f7f7}tr:last-child td{border-bottom:0}
+a{color:#2271b1}a:hover{color:#135e96}
+.btn{display:inline-block;background:#2271b1;color:#fff;border:0;padding:6px 12px;border-radius:3px;text-decoration:none;cursor:pointer;font-size:13px}
+input[type=text],input[type=password],input:not([type]){border:1px solid #8c8f94;border-radius:3px;padding:5px 8px;font-size:14px;max-width:260px;width:100%}
+label{display:block;margin:10px 0 3px;font-weight:600}
+.pill{background:#d63638;color:#fff;border-radius:9px;padding:1px 7px;font-size:11px}
+</style>`;
+
+function guscio(titolo, sezioneAttiva, corpo) {
+  const voci = [["index.php", "Bacheca"], ["edit.php", "Articoli"], ["upload.php", "Media"], ["users.php", "Utenti"], ["plugins.php", "Plugin"], ["options.php", "Impostazioni"], ["export.php", "Strumenti"]];
+  const menu = voci.map(([f, t]) => `<a href="/wp-admin/${f}"${f === sezioneAttiva ? ' class="on"' : ""}>${t}</a>`).join("");
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titolo} ‹ Il mio sito — WordPress</title>${CSS}</head><body>` +
+    `<div id="wpadminbar"><b>⊞</b> Il mio sito</div><div class="wrap"><nav id="menu">${menu}</nav><main id="main">${corpo}</main></div></body></html>`;
 }
-export { persefone, ESCHE, labirinto };
+
+// Il labirinto di Persefone: un finto pannello che risponde e rimanda sempre a OGNI altra sua pagina, senza fine. Ogni pagina è
+// decisa dal percorso (stessa strada → stessa pagina) e i link puntano solo a strade-esca (restano dentro Persefone). Ogni
+// sezione ha il SUO contenuto (prima erano tutte «Bacheca» identiche). Dati deterministici e unici. Niente stato da difendere.
+function labirinto(p, seme) {
+  const sez = (p.match(/\/wp-admin\/([\w-]+\.php)/) || [])[1] || "index.php";
+  const righe = (tag, quante, fila) => Array.from({ length: quante }, (_, i) => fila(pezzo(seme + sez, tag, i), i)).join("");
+  const n = (base, tag) => (base + pezzo(seme + sez, tag, 0) % 900).toString();
+
+  if (sez === "users.php") {
+    const ruoli = ["Amministratore", "Editore", "Autore", "Collaboratore", "Abbonato"];
+    return guscio("Utenti", "users.php",
+      `<h1>Utenti</h1><table><tr><th>Nome utente</th><th>E-mail</th><th>Ruolo</th><th>Articoli</th></tr>` +
+      `<tr><td><strong>admin</strong></td><td>admin@ilmiosito.it</td><td>Amministratore</td><td>${pezzo(seme, "a", 0) % 200}</td></tr>` +
+      righe("u", 6 + pezzo(seme, "nu", 0) % 10, (h, i) => {
+        const nomi = ["marco", "giulia", "luca", "sara", "andrea", "chiara", "paolo", "elena", "davide", "anna", "matteo", "laura", "stefano", "roberta", "fabio", "silvia"];
+        const nm = nomi[h % nomi.length] + (h % 90);
+        return `<tr><td><a href="/wp-admin/users.php?id=${h % 9000}">${nm}</a></td><td>${nm}@gmail.com</td><td>${ruoli[1 + h % 4]}</td><td>${h % 60}</td></tr>`;
+      }) + `</table>`);
+  }
+  if (sez === "plugins.php") {
+    const plug = [["Yoast SEO", "SEO"], ["Contact Form 7", "moduli"], ["WooCommerce", "e-commerce"], ["Elementor", "page builder"], ["Akismet", "anti-spam"], ["WP Super Cache", "cache"], ["Jetpack", "statistiche"], ["UpdraftPlus", "backup"], ["Wordfence Security", "sicurezza"], ["WPForms Lite", "moduli"]];
+    return guscio("Plugin", "plugins.php",
+      `<h1>Plugin</h1><table><tr><th>Plugin</th><th>Descrizione</th><th>Stato</th><th>Versione</th></tr>` +
+      righe("pl", 7 + pezzo(seme, "np", 0) % 4, (h, i) => {
+        const [nm, ds] = plug[i % plug.length], attivo = h % 3 !== 0;
+        return `<tr><td><strong>${nm}</strong></td><td>${ds}</td><td>${attivo ? "Attivo" : `<a href="/wp-admin/plugins.php?activate=${i}">Attiva</a>`}</td><td>${1 + h % 6}.${h % 10}.${h % 20}</td></tr>`;
+      }) + `</table>`);
+  }
+  if (sez === "upload.php") {
+    return guscio("Libreria Media", "upload.php",
+      `<h1>Libreria Media</h1><table><tr><th>File</th><th>Autore</th><th>Caricato il</th></tr>` +
+      righe("md", 8 + pezzo(seme, "nm", 0) % 12, (h, i) => {
+        const ext = ["jpg", "png", "pdf", "jpg", "jpg", "docx"][h % 6], nm = ["foto", "logo", "banner", "documento", "fattura", "listino", "copertina", "scansione"][h % 8];
+        return `<tr><td><a href="/wp-admin/upload.php?item=${h % 9000}">${nm}-${h % 9000}.${ext}</a></td><td>admin</td><td>${2023 + h % 3}-${1 + h % 12}-${1 + h % 28}</td></tr>`;
+      }) + `</table>`);
+  }
+  if (sez === "options.php") {
+    return guscio("Impostazioni", "options.php",
+      `<h1>Impostazioni generali</h1><div class="card"><h2>Generali</h2>` +
+      `<form method="post" action="/wp-admin/options.php">` +
+      `<label>Titolo del sito</label><input type="text" value="Il mio sito">` +
+      `<label>Motto</label><input type="text" value="Ancora un sito WordPress">` +
+      `<label>Indirizzo e-mail</label><input type="text" value="admin@ilmiosito.it">` +
+      `<label>Indirizzo WordPress (URL)</label><input type="text" value="https://ilmiosito.it">` +
+      `<p style="margin-top:14px"><button class="btn" type="submit">Salva le modifiche</button></p></form></div>`);
+  }
+  if (sez === "export.php") {
+    return guscio("Esporta", "export.php",
+      `<h1>Strumenti › Esporta</h1><div class="card"><h2>Esporta i contenuti</h2>` +
+      `<p>Scegli cosa scaricare in un file XML.</p>` +
+      `<p><label><input type="radio" name="c" checked> Tutti i contenuti</label></p>` +
+      `<p><label><input type="radio" name="c"> Solo gli articoli</label></p>` +
+      `<p><label><input type="radio" name="c"> Solo le pagine</label></p>` +
+      `<p style="margin-top:14px"><a class="btn" href="/wp-admin/export.php?download=1">Scarica il file di esportazione</a></p></div>`);
+  }
+  // index.php (bacheca) e edit.php (articoli): la lista degli articoli, con numeri UNICI
+  const quanti = 12 + pezzo(seme, "nart", 0) % 24;
+  const lista = righe("art", quanti, (h) =>
+    `<tr><td><a href="/wp-admin/post.php?post=${h % 90000}&action=edit">Articolo #${h % 90000}</a></td><td>admin</td><td><span class="pill">Bozza</span></td><td>${2024 + h % 2}/${1 + h % 12}/${1 + h % 28}</td></tr>`);
+  if (sez === "edit.php") {
+    return guscio("Articoli", "edit.php",
+      `<h1>Articoli <a class="btn" href="/wp-admin/post-new.php">Aggiungi</a></h1>` +
+      `<table><tr><th>Titolo</th><th>Autore</th><th>Stato</th><th>Data</th></tr>${lista}</table>`);
+  }
+  return guscio("Bacheca", "index.php",
+    `<h1>Bacheca</h1><div class="card"><h2>In breve</h2><p>${quanti} articoli · ${4 + pezzo(seme, "pag", 0) % 12} pagine · ${pezzo(seme, "com", 0) % 40} commenti</p></div>` +
+    `<div class="card"><h2>Bozze recenti</h2><table><tr><th>Titolo</th><th>Autore</th><th>Stato</th><th>Data</th></tr>${lista}</table></div>`);
+}
+
+// la pagina di accesso (errore = null → form pulito; altrimenti il messaggio neutro, senza nominare l'utente né ricompilare)
+function paginaAccesso(p, errore) {
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Accedi ‹ Il mio sito — WordPress</title>` +
+    `<style>body{background:#f0f0f1;font:14px -apple-system,"Segoe UI",Roboto,sans-serif;color:#3c434a}#login{width:320px;margin:8% auto;padding:0 24px}` +
+    `#logo{text-align:center;font-size:20px;color:#3c434a;margin-bottom:24px}form{background:#fff;border:1px solid #c3c4c7;box-shadow:0 1px 3px rgba(0,0,0,.04);padding:26px 24px}` +
+    `label{display:block;margin:0 0 3px;font-size:14px}input[type=text],input[type=password]{width:100%;border:1px solid #8c8f94;border-radius:3px;padding:8px;margin-bottom:16px;font-size:16px}` +
+    `.btn{width:100%;background:#2271b1;color:#fff;border:0;border-radius:3px;padding:9px;font-size:15px;cursor:pointer}` +
+    `#login_error{background:#fff;border-left:4px solid #d63638;box-shadow:0 1px 1px rgba(0,0,0,.04);padding:12px;margin-bottom:16px;font-size:13px}</style></head><body>` +
+    `<div id="login"><div id="logo">Il mio sito</div>` +
+    (errore ? `<div id="login_error"><strong>Errore:</strong> ${errore}</div>` : "") +
+    `<form method="post" action="${p}"><label>Nome utente o indirizzo e-mail</label><input type="text" name="log">` +
+    `<label>Password</label><input type="password" name="pwd"><button class="btn" type="submit">Accedi</button></form></div></body></html>`;
+}
+export { persefone, ESCHE, labirinto, paginaAccesso };
 async function documentoDallaChat(env, req, url, origine) {
   const mail = await mailDalConto(req, fetch, env);
   if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);

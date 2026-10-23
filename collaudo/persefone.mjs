@@ -21,7 +21,7 @@ let r = await chiama("/.env"); let corpo = await r.text();
 ok(r.status === 200 && /WP_ADMIN_PASSWORD=/.test(corpo) && /SECRET_KEY=/.test(corpo), "/.env: dati finti, stato 200 (non 403)", corpo.slice(0, 60));
 ok(Date.now() - t0 >= 1500, "la risposta è lenta di proposito (tiene fermo l'attaccante)");
 r = await chiama("/.git/config"); ok(r.status === 200 && (await r.text()).length > 10, "/.git/config: esca");
-r = await chiama("/wp-login.php"); corpo = await r.text(); ok(r.status === 200 && /Log In/.test(corpo) && /<form/.test(corpo), "/wp-login.php: una falsa pagina di accesso");
+r = await chiama("/wp-login.php"); corpo = await r.text(); ok(r.status === 200 && /Accedi/.test(corpo) && /<form/.test(corpo) && /name="pwd"/.test(corpo), "/wp-login.php: una falsa pagina di accesso");
 r = await chiama("/config.json"); corpo = await r.text(); ok(r.status === 200 && /aws_secret_access_key/.test(corpo), "/config.json: chiavi finte", corpo.slice(0, 50));
 const a = await (await chiama("/.aws/credentials")).text(), b = await (await chiama("/.aws/credentials")).text();
 ok(a === b, "la stessa strada dà sempre lo stesso finto (non si capisce che è generato)");
@@ -55,18 +55,46 @@ ok(!/admin/.test(corpo) && !/name="log" value=/.test(corpo), "il rifiuto non nom
 // credenziali GIUSTE (quelle del .env): si entra
 r = await postLogin(`log=${encodeURIComponent(u)}&pwd=${encodeURIComponent(pw)}`);
 ok(r.status === 303 && r.headers.get("location") === "/wp-admin/" && /wordpress_logged_in=/.test(r.headers.get("set-cookie") || ""), "credenziali prese dal .env: 303 verso la dashboard, col cookie di sessione", r.status);
+// ENTRARE con le credenziali del .env è un segnale forte: avvisa (telegram.length cresce di 1 rispetto a prima della chiamata)
+const primaDelLogin = telegram.length;
+r = await postLogin(`log=${encodeURIComponent(u)}&pwd=${encodeURIComponent(pw)}`, "7.7.7.7");
+await new Promise((res) => setTimeout(res, 20));   // l'avviso parte in ctx.waitUntil: lascio girare il microtask del fetch finto
+ok(telegram.slice(primaDelLogin).some((m) => /ENTRATO/.test(m.text || "")), "chi ENTRA con le credenziali del .env fa scattare un avviso forte «ENTRATO»");
 r = await chiama("/wp-admin/"); corpo = await r.text();
 ok(r.status === 200 && /Bacheca/.test(corpo) && /href="\/wp-admin\//.test(corpo), "la dashboard finta risponde con link interni (il labirinto)");
+ok(/charset=utf-8/.test(r.headers.get("content-type") || ""), "le pagine hanno charset=utf-8 (niente â€\" al posto di —)");
+ok(/<style>/.test(corpo) && /#menu/.test(corpo), "la dashboard ha una grafica (CSS inline, un menu laterale), non è testo nudo");
+// GLI AVVISI: le pagine INTERNE del labirinto non devono avvisare (i bot di anteprima seguono ogni link → valanga di 🕸)
+const primaInterne = telegram.length;
+await chiama("/wp-admin/users.php", "8.8.8.8"); await chiama("/wp-admin/options.php", "8.8.8.9"); await chiama("/wp-admin/edit.php?post=k", "8.8.8.10");
+ok(telegram.length === primaInterne, "le pagine interne del labirinto NON avvisano (basta il primo contatto esterno)", telegram.length - primaInterne);
+// OGNI SEZIONE il suo contenuto, diverso dalle altre (prima erano tutte «Bacheca» identiche)
+const sezUtenti = await (await chiama("/wp-admin/users.php")).text();
+const sezPlugin = await (await chiama("/wp-admin/plugins.php")).text();
+const sezImp = await (await chiama("/wp-admin/options.php")).text();
+ok(/Nome utente/.test(sezUtenti) && /@/.test(sezUtenti), "la sezione Utenti mostra una tabella di utenti");
+ok(/Yoast|WooCommerce|Akismet|Plugin/.test(sezPlugin), "la sezione Plugin mostra una lista di plugin");
+ok(/Titolo del sito|Impostazioni/.test(sezImp) && /Salva/.test(sezImp), "la sezione Impostazioni mostra un form di opzioni");
+ok(sezUtenti !== sezPlugin && sezPlugin !== sezImp && sezUtenti !== corpo, "le sezioni sono diverse fra loro (non più tutte «Bacheca» identiche)");
+// NESSUN DOPPIONE nella lista (prima lo stesso articolo compariva due volte)
+const numeri = [...corpo.matchAll(/Articolo #(\d+)/g)].map((m) => m[1]);
+ok(numeri.length > 0 && new Set(numeri).size === numeri.length, "nessun articolo duplicato nella stessa lista", { totali: numeri.length, unici: new Set(numeri).size });
 // un attaccante segue i link: devono restare TUTTI dentro Persefone, mai una strada vera della porta
 const linkDash = [...corpo.matchAll(/href="([^"]+)"/g)].map((m) => new URL("https://x" + m[1]).pathname).filter((pp) => !ESCHE.some((rx) => rx.test(pp)));
 ok(linkDash.length === 0, "ogni link del labirinto resta un'esca (non porta a una strada vera)", linkDash.slice(0, 3));
-const q1 = await (await chiama("/wp-admin/edit.php?post=zz")).text(), q2 = await (await chiama("/wp-admin/edit.php?post=yy")).text();
-ok(q1 !== q2, "articoli diversi = pagine diverse (il seme considera la query, non solo il percorso)");
-const q1b = await (await chiama("/wp-admin/edit.php?post=zz")).text();
-ok(q1 === q1b, "lo stesso articolo dà sempre la stessa pagina (deterministico)");
+const q1 = await (await chiama("/wp-admin/post.php?post=zz")).text(), q2 = await (await chiama("/wp-admin/post.php?post=yy")).text();
+ok(q1 !== q2, "pagine diverse per query diverse (il seme considera la query, non solo il percorso)");
+const q1b = await (await chiama("/wp-admin/post.php?post=zz")).text();
+ok(q1 === q1b, "la stessa strada dà sempre la stessa pagina (deterministico)");
 // XSS riflessa a casa nostra: un payload nella query NON deve comparire nell'HTML generato
-const veleno = await (await chiama("/wp-admin/edit.php?post=<script>alert(1)</script>")).text();
+const veleno = await (await chiama("/wp-admin/post.php?post=<script>alert(1)</script>")).text();
 ok(!veleno.includes("<script>alert"), "un payload nella query non finisce nell'HTML (niente XSS riflessa nel labirinto)");
+
+// un POST DENTRO il pannello (salva impostazioni) è di uno già entrato: deve rimostrare la pagina, NON rimandare al login
+// (sennò chi è «dentro» si vede richiedere la password e capisce la trappola — 23/10)
+const salva = await W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev/wp-admin/options.php", { method: "POST", headers: { "CF-Connecting-IP": "1.2.3.4", "content-type": "application/x-www-form-urlencoded" }, body: "blogname=x" }), env, { waitUntil: (p) => p });
+const salvaTxt = await salva.text();
+ok(salva.status === 200 && /Impostazioni/.test(salvaTxt) && !/non corretti|Accedi/.test(salvaTxt), "POST dentro il pannello: rimostra la pagina, non rimanda al login", salva.status);
 
 // controprova: il testo di /.env proviene da Persefone, non da una vera pagina della porta
 ok(readFileSync(join(qui, "..", "worker.js"), "utf8").includes("const trappola = persefone("), "Persefone è agganciata all'ingresso della porta");
