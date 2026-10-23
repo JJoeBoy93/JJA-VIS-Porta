@@ -46,9 +46,12 @@ const cfg = JSON.parse(await (await chiama("/config.json")).text());
 ok(cfg.wp_user === u && cfg.wp_password === pw, "config.json ha le STESSE credenziali del .env", { cfg_u: cfg.wp_user, cfg_p: cfg.wp_password });
 const postLogin = (body, ip = "5.5.5.5") => W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev/wp-login.php", { method: "POST", headers: { "CF-Connecting-IP": ip, "content-type": "application/x-www-form-urlencoded" }, body }), env, { waitUntil: (p) => p });
 // credenziali SBAGLIATE: «password errata», niente cookie (come un WordPress vero — il rifiuto non smaschera la trappola)
-r = await postLogin("log=admin&pwd=password123");
+r = await postLogin("log=admin&pwd=password123");               // utente giusto, password sbagliata
 corpo = await r.text();
-ok(!/wordpress_logged_in=/.test(r.headers.get("set-cookie") || "") && /non è corretta/.test(corpo), "credenziali a caso: respinte con «password errata», nessun cookie", r.status);
+ok(!/wordpress_logged_in=/.test(r.headers.get("set-cookie") || "") && /nome utente o password non corretti/.test(corpo), "credenziali sbagliate: respinte, nessun cookie", r.status);
+const corpoUtente = await (await postLogin("log=mario&pwd=password123")).text();   // utente sbagliato
+ok(corpo === corpoUtente, "risposta NEUTRA: identica byte per byte per utente sbagliato e password sbagliata (JJ 23/10)");
+ok(!/admin/.test(corpo) && !/name="log" value=/.test(corpo), "il rifiuto non nomina l'utente e non ricompila il campo utente");
 // credenziali GIUSTE (quelle del .env): si entra
 r = await postLogin(`log=${encodeURIComponent(u)}&pwd=${encodeURIComponent(pw)}`);
 ok(r.status === 303 && r.headers.get("location") === "/wp-admin/" && /wordpress_logged_in=/.test(r.headers.get("set-cookie") || ""), "credenziali prese dal .env: 303 verso la dashboard, col cookie di sessione", r.status);

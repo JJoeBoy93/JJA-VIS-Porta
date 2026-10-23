@@ -3006,9 +3006,11 @@ function persefone(req, url, env, ctx) {
         const campi = new URLSearchParams(corpo);
         const giuste = campi.get("log") === WP_USER && campi.get("pwd") === WP_PASS;
         if (!giuste) {
+          // NEUTRALE (JJ 23/10): stessa pagina, identica byte per byte, per utente sbagliato o password sbagliata. Non nomina
+          // l'utente, non ricompila il campo: chi tenta non deve capire quale dei due ha indovinato.
           return new Response(`<!doctype html><html><head><title>Log In</title></head><body>` +
-            `<div id="login_error"><strong>Errore:</strong> la password inserita per l'utente <strong>${WP_USER}</strong> non è corretta.</div>` +
-            `<form method="post" action="${p}"><p><label>Username<br><input name="log" value="${WP_USER}"></label></p>` +
+            `<div id="login_error"><strong>Errore:</strong> nome utente o password non corretti.</div>` +
+            `<form method="post" action="${p}"><p><label>Username<br><input name="log"></label></p>` +
             `<p><label>Password<br><input name="pwd" type="password"></label></p><p><input type="submit" value="Log In"></p></form></body></html>`,
             { status: 200, headers: { "content-type": "text/html" } });
         }
