@@ -40,3 +40,7 @@ service = "hermes"
 # manda solo con la CHIAVE della posta. Se lo script non risponde o la quota (100 al giorno) è finita, si torna a Brevo.
 [vars]
 GMAIL_URL = "https://script.google.com/macros/s/AKfycbyD4h3JgjHrcx03qEiZUJskfT3OMQEtFw7PMH2No62vfyDvAdHWBuI82HyLpUWvNp6C/exec"
+
+[[kv_namespaces]]
+binding = "PERSEFONE_VISTI"
+id = "910efc8a65184a9484e5ef806006f5fb"
