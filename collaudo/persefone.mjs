@@ -90,6 +90,23 @@ ok(q1 === q1b, "la stessa strada dà sempre la stessa pagina (deterministico)");
 const veleno = await (await chiama("/wp-admin/post.php?post=<script>alert(1)</script>")).text();
 ok(!veleno.includes("<script>alert"), "un payload nella query non finisce nell'HTML (niente XSS riflessa nel labirinto)");
 
+// CLIC SU UN ARTICOLO → la pagina dell'articolo, non la bacheca (23/10, JJ: «se premo sugli articoli apre la bacheca»)
+const art = await (await chiama("/wp-admin/post.php?post=64345&action=edit")).text();
+ok(/Modifica articolo/.test(art) && /Articolo #64345/.test(art) && /Tutti gli articoli/.test(art) && !/Bozze recenti/.test(art), "clic su un articolo apre QUEL articolo (editor), non la bacheca");
+ok(art === await (await chiama("/wp-admin/post.php?post=64345&action=edit")).text() && art !== await (await chiama("/wp-admin/post.php?post=11964&action=edit")).text(), "l'articolo è deterministico e diverso per numero diverso");
+// CLIC SU UN UTENTE → il profilo di quell'utente, non un'altra lista (JJ: «se premo sugli account apre la stessa pagina con altri account»)
+const prof = await (await chiama("/wp-admin/users.php?user=matteo66")).text();
+ok(/Profilo/.test(prof) && /matteo66/.test(prof) && /Tutti gli utenti/.test(prof), "clic su un utente apre il SUO profilo");
+ok(prof === await (await chiama("/wp-admin/users.php?user=matteo66")).text(), "lo stesso utente dà sempre lo stesso profilo (non una lista diversa ogni volta)");
+const profAdmin = await (await chiama("/wp-admin/users.php?user=admin")).text();
+ok(/Amministratore/.test(profAdmin), "il profilo di admin dice Amministratore (coerente con la lista)");
+// BRANDING: il finto sito porta il nome JJA-VIS, niente «Il mio sito», niente la mail di contatto REALE
+const insieme = (await Promise.all(["/wp-admin/", "/wp-admin/users.php", "/wp-login.php", "/wp-admin/options.php", "/.env", "/config.json"].map(async (x) => await (await chiama(x)).text()))).join("");
+ok(/JJA-VIS/.test(insieme) && !/Il mio sito/.test(insieme), "il finto sito porta il nome JJA-VIS, non più «Il mio sito»");
+ok(!/19\.jja\.vis\.93@gmail\.com/.test(insieme), "la mail di contatto REALE di JJA-VIS non compare da nessuna parte (solo finta admin@jja-vis.it)");
+// no XSS nei nuovi dettagli
+ok(!(await (await chiama("/wp-admin/users.php?user=<script>alert(1)</script>")).text()).includes("<script>alert"), "payload in ?user= non entra nell'HTML");
+
 // un POST DENTRO il pannello (salva impostazioni) è di uno già entrato: deve rimostrare la pagina, NON rimandare al login
 // (sennò chi è «dentro» si vede richiedere la password e capisce la trappola — 23/10)
 const salva = await W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev/wp-admin/options.php", { method: "POST", headers: { "CF-Connecting-IP": "1.2.3.4", "content-type": "application/x-www-form-urlencoded" }, body: "blogname=x" }), env, { waitUntil: (p) => p });

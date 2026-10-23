@@ -3025,13 +3025,13 @@ function persefone(req, url, env, ctx) {
       // POST dentro il pannello (salvataggio): WordPress salva e rimostra la pagina. Qui facciamo lo stesso — resta nel labirinto.
       if (req.method === "POST" && dentroPannello) {
         await req.text();   // consuma il corpo, come se avesse salvato
-        return new Response(labirinto(p, await esca64(env, seme)), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+        return new Response(labirinto(p, url.search, await esca64(env, seme)), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
       }
       // /wp-login → la pagina di accesso; /wp-admin/* e il resto → dentro il labirinto (la dashboard che risponde senza fine)
       if (/wp-login|^\/wp-config/.test(p)) {
         return new Response(paginaAccesso(p, null), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
       }
-      return new Response(labirinto(p, await esca64(env, seme)), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+      return new Response(labirinto(p, url.search, await esca64(env, seme)), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
     }
     const a = await esca64(env, seme);
     return new Response(a + "\n", { status: 200, headers: { "content-type": "text/plain" } });
@@ -3065,30 +3065,78 @@ label{display:block;margin:10px 0 3px;font-weight:600}
 .pill{background:#d63638;color:#fff;border-radius:9px;padding:1px 7px;font-size:11px}
 </style>`;
 
+// Marca del finto sito: porta il nome JJA-VIS (l'attaccante è arrivato dalla porta jjavis, un sito anonimo stonerebbe), ma
+// NESSUN dato vero — email e dominio sono verosimili e FINTI (jja-vis.it non è posseduto), mai la mail di contatto reale.
+const SITO = "JJA-VIS";
+const DOMINIO = "jja-vis.it";
+const MAIL_ADMIN = "admin@" + DOMINIO;
+const MOTTO = "Assistente personale intelligente";
+
 function guscio(titolo, sezioneAttiva, corpo) {
   const voci = [["index.php", "Bacheca"], ["edit.php", "Articoli"], ["upload.php", "Media"], ["users.php", "Utenti"], ["plugins.php", "Plugin"], ["options.php", "Impostazioni"], ["export.php", "Strumenti"]];
   const menu = voci.map(([f, t]) => `<a href="/wp-admin/${f}"${f === sezioneAttiva ? ' class="on"' : ""}>${t}</a>`).join("");
-  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titolo} ‹ Il mio sito — WordPress</title>${CSS}</head><body>` +
-    `<div id="wpadminbar"><b>⊞</b> Il mio sito</div><div class="wrap"><nav id="menu">${menu}</nav><main id="main">${corpo}</main></div></body></html>`;
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titolo} ‹ ${SITO} — WordPress</title>${CSS}</head><body>` +
+    `<div id="wpadminbar"><b>⊞</b> ${SITO}</div><div class="wrap"><nav id="menu">${menu}</nav><main id="main">${corpo}</main></div></body></html>`;
 }
 
 // Il labirinto di Persefone: un finto pannello che risponde e rimanda sempre a OGNI altra sua pagina, senza fine. Ogni pagina è
 // decisa dal percorso (stessa strada → stessa pagina) e i link puntano solo a strade-esca (restano dentro Persefone). Ogni
 // sezione ha il SUO contenuto (prima erano tutte «Bacheca» identiche). Dati deterministici e unici. Niente stato da difendere.
-function labirinto(p, seme) {
+function labirinto(p, search, seme) {
   const sez = (p.match(/\/wp-admin\/([\w-]+\.php)/) || [])[1] || "index.php";
+  const q = new URLSearchParams(search || "");
   const righe = (tag, quante, fila) => Array.from({ length: quante }, (_, i) => fila(pezzo(seme + sez, tag, i), i)).join("");
   const n = (base, tag) => (base + pezzo(seme + sez, tag, 0) % 900).toString();
+  // pulisce un valore che arriva dalla query prima di rimetterlo nell'HTML: solo lettere/numeri (niente XSS, niente < >)
+  const soloAN = (v, max) => (v || "").replace(/[^a-z0-9]/gi, "").slice(0, max || 24);
+
+  // ── PAGINE DI DETTAGLIO: cliccando un articolo/utente/file si apre la SUA pagina, non la lista di nuovo (23/10, JJ) ──
+  if ((sez === "post.php" && q.get("action") === "edit") || sez === "post-new.php") {
+    const num = soloAN(q.get("post"), 8) || (pezzo(seme, "new", 0) % 90000).toString();
+    const s2 = seme + ":post:" + num;
+    const parole = ["sistema", "cliente", "consegna", "progetto", "mercato", "utente", "rete", "servizio", "dato", "valore", "tempo", "lavoro", "persona", "mondo", "idea"];
+    const frase = (k) => Array.from({ length: 18 + pezzo(s2, "fl", k) % 14 }, (_, j) => parole[pezzo(s2, "w" + k, j) % parole.length]).join(" ");
+    const corpo = Array.from({ length: 3 + pezzo(s2, "np", 0) % 3 }, (_, k) => `<p>${frase(k).charAt(0).toUpperCase() + frase(k).slice(1)}.</p>`).join("");
+    return guscio("Modifica articolo", "edit.php",
+      `<h1>Modifica articolo</h1><div class="card"><h2>Articolo #${num}</h2>` +
+      `<form method="post" action="/wp-admin/post.php?post=${num}&action=edit">` +
+      `<label>Titolo</label><input type="text" value="Articolo #${num}">` +
+      `<label>Contenuto</label><div style="border:1px solid #c3c4c7;background:#fff;padding:10px;min-height:120px">${corpo}</div>` +
+      `<p style="margin-top:12px"><button class="btn" type="submit">Aggiorna</button> &nbsp; <span class="pill">Bozza</span></p>` +
+      `<p style="margin-top:10px"><a href="/wp-admin/edit.php">← Tutti gli articoli</a></p></form></div>`);
+  }
+  if (sez === "users.php" && (q.get("user") || q.get("id"))) {
+    const ruoli = ["Editore", "Autore", "Collaboratore", "Abbonato"];
+    const nm = soloAN(q.get("user"), 20) || ("utente" + soloAN(q.get("id"), 6));
+    const h = pezzo(seme, "prof:" + nm, 0);
+    const admin = nm === "admin";
+    return guscio("Profilo", "users.php",
+      `<h1>Profilo</h1><div class="card"><h2>${nm}</h2><table>` +
+      `<tr><th>Nome utente</th><td>${nm}</td></tr><tr><th>E-mail</th><td>${admin ? MAIL_ADMIN : nm + "@gmail.com"}</td></tr>` +
+      `<tr><th>Ruolo</th><td>${admin ? "Amministratore" : ruoli[h % 4]}</td></tr><tr><th>Articoli pubblicati</th><td>${admin ? pezzo(seme, "a", 0) % 200 : h % 60}</td></tr>` +
+      `<tr><th>Registrato il</th><td>${2022 + h % 3}-${1 + h % 12}-${1 + h % 28}</td></tr></table>` +
+      `<p style="margin-top:10px"><a href="/wp-admin/users.php">← Tutti gli utenti</a></p></div>`);
+  }
+  if (sez === "upload.php" && q.get("item")) {
+    const it = soloAN(q.get("item"), 8), h = pezzo(seme, "media:" + it, 0);
+    const ext = ["jpg", "png", "pdf"][h % 3], nm = ["foto", "logo", "banner", "documento", "fattura"][h % 5];
+    return guscio("Dettaglio media", "upload.php",
+      `<h1>Dettaglio allegato</h1><div class="card"><h2>${nm}-${it}.${ext}</h2><table>` +
+      `<tr><th>File</th><td>${nm}-${it}.${ext}</td></tr><tr><th>Tipo</th><td>${ext === "pdf" ? "application/pdf" : "image/" + ext}</td></tr>` +
+      `<tr><th>Caricato da</th><td>admin</td></tr><tr><th>Dimensione</th><td>${100 + h % 4000} KB</td></tr>` +
+      `<tr><th>Data</th><td>${2023 + h % 3}-${1 + h % 12}-${1 + h % 28}</td></tr></table>` +
+      `<p style="margin-top:10px"><a href="/wp-admin/upload.php">← Libreria Media</a></p></div>`);
+  }
 
   if (sez === "users.php") {
     const ruoli = ["Amministratore", "Editore", "Autore", "Collaboratore", "Abbonato"];
     return guscio("Utenti", "users.php",
       `<h1>Utenti</h1><table><tr><th>Nome utente</th><th>E-mail</th><th>Ruolo</th><th>Articoli</th></tr>` +
-      `<tr><td><strong>admin</strong></td><td>admin@ilmiosito.it</td><td>Amministratore</td><td>${pezzo(seme, "a", 0) % 200}</td></tr>` +
+      `<tr><td><a href="/wp-admin/users.php?user=admin"><strong>admin</strong></a></td><td>${MAIL_ADMIN}</td><td>Amministratore</td><td>${pezzo(seme, "a", 0) % 200}</td></tr>` +
       righe("u", 6 + pezzo(seme, "nu", 0) % 10, (h, i) => {
         const nomi = ["marco", "giulia", "luca", "sara", "andrea", "chiara", "paolo", "elena", "davide", "anna", "matteo", "laura", "stefano", "roberta", "fabio", "silvia"];
         const nm = nomi[h % nomi.length] + (h % 90);
-        return `<tr><td><a href="/wp-admin/users.php?id=${h % 9000}">${nm}</a></td><td>${nm}@gmail.com</td><td>${ruoli[1 + h % 4]}</td><td>${h % 60}</td></tr>`;
+        return `<tr><td><a href="/wp-admin/users.php?user=${nm}">${nm}</a></td><td>${nm}@gmail.com</td><td>${ruoli[1 + h % 4]}</td><td>${h % 60}</td></tr>`;
       }) + `</table>`);
   }
   if (sez === "plugins.php") {
@@ -3112,10 +3160,10 @@ function labirinto(p, seme) {
     return guscio("Impostazioni", "options.php",
       `<h1>Impostazioni generali</h1><div class="card"><h2>Generali</h2>` +
       `<form method="post" action="/wp-admin/options.php">` +
-      `<label>Titolo del sito</label><input type="text" value="Il mio sito">` +
-      `<label>Motto</label><input type="text" value="Ancora un sito WordPress">` +
-      `<label>Indirizzo e-mail</label><input type="text" value="admin@ilmiosito.it">` +
-      `<label>Indirizzo WordPress (URL)</label><input type="text" value="https://ilmiosito.it">` +
+      `<label>Titolo del sito</label><input type="text" value="${SITO}">` +
+      `<label>Motto</label><input type="text" value="${MOTTO}">` +
+      `<label>Indirizzo e-mail</label><input type="text" value="${MAIL_ADMIN}">` +
+      `<label>Indirizzo WordPress (URL)</label><input type="text" value="https://${DOMINIO}">` +
       `<p style="margin-top:14px"><button class="btn" type="submit">Salva le modifiche</button></p></form></div>`);
   }
   if (sez === "export.php") {
@@ -3143,13 +3191,13 @@ function labirinto(p, seme) {
 
 // la pagina di accesso (errore = null → form pulito; altrimenti il messaggio neutro, senza nominare l'utente né ricompilare)
 function paginaAccesso(p, errore) {
-  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Accedi ‹ Il mio sito — WordPress</title>` +
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Accedi ‹ ${SITO} — WordPress</title>` +
     `<style>body{background:#f0f0f1;font:14px -apple-system,"Segoe UI",Roboto,sans-serif;color:#3c434a}#login{width:320px;margin:8% auto;padding:0 24px}` +
     `#logo{text-align:center;font-size:20px;color:#3c434a;margin-bottom:24px}form{background:#fff;border:1px solid #c3c4c7;box-shadow:0 1px 3px rgba(0,0,0,.04);padding:26px 24px}` +
     `label{display:block;margin:0 0 3px;font-size:14px}input[type=text],input[type=password]{width:100%;border:1px solid #8c8f94;border-radius:3px;padding:8px;margin-bottom:16px;font-size:16px}` +
     `.btn{width:100%;background:#2271b1;color:#fff;border:0;border-radius:3px;padding:9px;font-size:15px;cursor:pointer}` +
     `#login_error{background:#fff;border-left:4px solid #d63638;box-shadow:0 1px 1px rgba(0,0,0,.04);padding:12px;margin-bottom:16px;font-size:13px}</style></head><body>` +
-    `<div id="login"><div id="logo">Il mio sito</div>` +
+    `<div id="login"><div id="logo">${SITO}</div>` +
     (errore ? `<div id="login_error"><strong>Errore:</strong> ${errore}</div>` : "") +
     `<form method="post" action="${p}"><label>Nome utente o indirizzo e-mail</label><input type="text" name="log">` +
     `<label>Password</label><input type="password" name="pwd"><button class="btn" type="submit">Accedi</button></form></div></body></html>`;
