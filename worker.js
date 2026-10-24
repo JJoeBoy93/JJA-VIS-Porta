@@ -115,8 +115,11 @@ export const DEI = {
   hera: "✅ Hera", hermes: "📨 Hermes", afrodite: "🎬 Afrodite", dioniso: "🍇 Dioniso",
   clio: "📜 Clio", zeus: "⚡ Zeus",
   // Niente «atlas»: JJ, 24/10 — Atlas (come Nova) è solo il nome che lui ha dato al SUO assistente
-  // JJA-VIS; ognuno chiama il suo come vuole. Nell'organizzazione l'assistente personale di ognuno
-  // è ⚡ Zeus. Quello di JJ è JARVIS, che nell'Olimpo entra col SUO bot e scrive lui nell'argomento Zeus.
+  // JJA-VIS; ognuno chiama il suo come vuole, e per l'utente resta solo quello: il suo JJA-VIS.
+  // ⚡ Zeus NON è l'assistente di tutti (JJ, 24/10, correzione): è il ruolo di JARVIS, l'assistente
+  // di JJ, a capo degli agenti. Gli agenti sono di JARVIS; nella città sono raccontati per il loro
+  // ruolo, ma gli utenti hanno a che fare solo col proprio JJA-VIS. JARVIS entra nell'Olimpo col SUO
+  // bot e scrive lui nell'argomento Zeus.
 };
 async function argomentoOlimpo(env, dio) {
   if (!DEI[dio]) return undefined;                       // generale: niente thread
