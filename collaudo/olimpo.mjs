@@ -96,6 +96,14 @@ tgm = []; await W.olimpo(e2, "afrodite", "🎬 prova");
 ok(inviati()[0].message_thread_id === 888 && tgm.some((m) => m.metodo === "deleteForumTopic"), "lo stesso dio creato due volte: si scrive nel primo, il doppione si cancella", tgm);
 ok(!("atlas" in W.DEI) && !("nova" in W.DEI), "Atlas e Nova non sono dèi (nomi di prova di JJ)");
 
+console.log("── Zeus sa (eco a JARVIS via Hermes)");
+const eco = []; const eZ = { ...env, TG_OLIMPO: "-1004388748905", JJAVIS_SEGRETO: "js", HERMES: { fetch: async (rq) => { eco.push({ url: rq.url, seg: rq.headers.get("X-JJAVIS-Segreto"), ...(await rq.json()) }); return new Response("ok"); } } };
+tgm = []; await W.olimpo(eZ, "ares", "🛡 rosso trovato");
+ok(eco.length === 1 && eco[0].url === "https://hermes/jjavis/olimpo" && eco[0].dio === "ares" && eco[0].seg === "js" && inviati().length === 1, "ogni messaggio dell'Olimpo va anche a Zeus, col segreto", eco);
+eco.length = 0; const eZrotto = { ...eZ, HERMES: { fetch: async () => { throw new Error("hermes giù"); } } };
+tgm = []; await W.olimpo(eZrotto, "hera", "✅ verde");
+ok(inviati().length === 1 && inviati()[0].chat_id === "-1004388748905", "Hermes giù: il messaggio nell'Olimpo parte lo stesso");
+
 console.log("── controprove");
 repo = {}; rotto = true; tgm = []; r = await ares(env, "🛡 ARES — Olimpo rotto");
 s = inviati().filter((m) => m.chat_id === "42");

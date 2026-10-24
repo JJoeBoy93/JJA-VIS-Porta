@@ -148,8 +148,20 @@ async function argomentoOlimpo(env, dio) {
 }
 // Scrive nell'argomento del dio. Se l'Olimpo manca o fallisce, scrive a JJ
 // in privato col motivo in testa. Ritorna dove è finito.
+// Zeus deve sapere (24/10): JARVIS su Telegram non vede i messaggi degli altri
+// bot, quindi ogni cosa scritta nell'Olimpo va anche a lui, via Hermes, nel
+// registro dell'Olimpo dello Space. Non ferma mai il messaggio vero.
+async function ecoAZeus(env, dio, testo) {
+  if (!env.HERMES || !env.JJAVIS_SEGRETO || dio === "zeus") return;
+  try {
+    await env.HERMES.fetch(new Request("https://hermes/jjavis/olimpo", { method: "POST",
+      headers: { "Content-Type": "application/json", "X-JJAVIS-Segreto": env.JJAVIS_SEGRETO },
+      body: JSON.stringify({ dio, testo: String(testo).slice(0, 1500) }) }));
+  } catch (e) { console.log("eco a Zeus", e); }
+}
 export async function olimpo(env, dio, testo) {
   if (!(dio in DEI)) throw new Error(`dio sconosciuto: ${dio}`);
+  await ecoAZeus(env, dio, testo);
   if (env.TG_OLIMPO) {
     try {
       const thread = await argomentoOlimpo(env, dio);
