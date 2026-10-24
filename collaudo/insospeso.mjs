@@ -11,8 +11,8 @@ const W = await import(join(dir, "worker.mjs"));
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
 const leggi = (p) => JSON.parse(Buffer.from(repo[p], "base64").toString());
-let repo = {}, telegram = [], guasto = "";
-globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url));
+let repo = {}, telegram = [], guasto = "", chiamate = 0;
+globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url)); chiamate++;
   if (u.host === "api.telegram.org") { telegram.push({ metodo: u.pathname.split("/").pop(), ...JSON.parse(o.body || "{}") }); return new Response('{"ok":true,"result":{"message_id":1}}'); }
   if (u.host === "api.github.com") { const p = decodeURIComponent(u.pathname.split("/contents/")[1] || ""), m = o.method || "GET";
     if (p === guasto) return new Response('{"message":"finto guasto"}', { status: 500 });
@@ -58,5 +58,13 @@ repo = {}; telegram = []; await scrivi("/insospeso");
 ok(telegram.filter((m) => m.metodo === "sendMessage").length === 1 && /Nessuno aspetta/.test(telegram[0].text), "senza attesa.json: «nessuno aspetta», non un errore");
 prepara(); await scrivi("/insospeso", 666);
 ok(!telegram.length && leggi("attesa.json").ids.length === 5, "uno sconosciuto non riceve niente e non tocca la lista");
+
+console.log("── il tetto delle richieste (Cloudflare gratis: 50 a giro)");
+prepara(); const tanti = Array.from({ length: 30 }, (_, i) => String(i).padStart(8, "1"));
+for (const id of tanti) repo[`bozze/${id}.json`] = b64({ id, nome: "P" + id, stato: "arrivata", domanda: "?" });
+repo["attesa.json"] = b64({ ids: [...tanti.slice(0, 25), "dddddddd", ...tanti.slice(25)] }); chiamate = 0;
+await scrivi("/insospeso");
+ok(chiamate <= 50, `30 in attesa: ${chiamate} richieste esterne, dentro le 50`, chiamate);
+ok(/conto parziale/.test(telegram.find((m) => m.metodo === "sendMessage").text), "e dice che il conto è parziale");
 
 console.log(errori ? `\n❌ ${errori} rossi` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);

@@ -1887,20 +1887,33 @@ async function segnaAttesa(env, id, dentro) {
 // inviata/scartata gonfiavano «domande in attesa» nel briefing di JARVIS.
 // Un errore di lettura che NON è «non esiste» resta in lista e si mostra:
 // non si toglie quello che non si è riusciti a leggere.
+// 20 bozze + attesa.json + una lettura e una scrittura per pulire + 21 messaggi a Telegram = 44, dentro i 50 di Cloudflare.
+const SOSPESO_LETTURE = 20;
 export async function inSospeso(env) {
   let ids = [];
   try { ids = deb64((await gh(env, "GET", "attesa.json")).content).ids || []; }
   catch (e) { if (!/GitHub 404/.test(String(e.message))) return { testa: `⏳ In sospeso: lista non letta (${e.message || e})`, voci: [] }; }
   const voci = [], tolte = [], illeggibili = [];
-  for (const id of ids.slice(-TETTO_LETTURE)) {
+  for (const id of ids.slice(-SOSPESO_LETTURE)) {
     let d;
     try { d = (await leggiBozza(env, id)).dati; }
     catch (e) { if (/GitHub 404/.test(String(e.message))) tolte.push(`${id} (senza bozza)`); else illeggibili.push(`${id}: ${e.message || e}`); continue; }
     if (d.stato === "inviata" || d.stato === "scartata") { tolte.push(`${id} (già ${d.stato})`); continue; }
     voci.push({ id, d });
   }
+  // Una sola scrittura per tutte, non una per id: Cloudflare gratis dà 50
+  // richieste esterne a giro, e ogni segnaAttesa ne costa due.
   const nonTolte = [];
-  for (const t of tolte) { const id = t.slice(0, 8); try { await segnaAttesa(env, id, false); } catch (e) { nonTolte.push(`${id}: ${e.message || e}`); } }
+  if (tolte.length) {
+    const via = new Set(tolte.map((t) => t.slice(0, 8)));
+    try {
+      for (let giro = 0; ; giro++) {
+        const d = await gh(env, "GET", "attesa.json");
+        try { await gh(env, "PUT", "attesa.json", { message: `insospeso: tolte ${via.size}`, content: b64({ ids: (deb64(d.content).ids || []).filter((x) => !via.has(x)) }), sha: d.sha }); break; }
+        catch (e) { if (giro >= 2 || !/GitHub (409|422)/.test(String(e.message))) throw e; }
+      }
+    } catch (e) { nonTolte.push(`${[...via].join(", ")}: ${e.message || e}`); }
+  }
   const giorni = (q) => { const t = Date.parse(q || ""); return isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5); };
   const msg = voci.map(({ id, d }) => {
     const chi = [d.nome || (d.contatto && d.contatto.nome), d.nome_assistente && `assistente «${d.nome_assistente}»`].filter(Boolean).join(" · ") || "Qualcuno";
@@ -1912,7 +1925,7 @@ export async function inSospeso(env) {
       reply_markup: { inline_keyboard: [[{ text: "✍️ Bozza", callback_data: `bozza:${id}` }, { text: "📋 Per un'altra IA", callback_data: `copia:${id}` }, { text: "🗑 Ignora", callback_data: `scarta:${id}` }]] } };
   });
   const righe = [voci.length ? `⏳ In sospeso: ${voci.length} ${voci.length === 1 ? "persona aspetta" : "persone aspettano"} una risposta` : "⏳ Nessuno aspetta una risposta."];
-  if (ids.length > TETTO_LETTURE) righe.push(`(lette le ultime ${TETTO_LETTURE} su ${ids.length}: conto parziale)`);
+  if (ids.length > SOSPESO_LETTURE) righe.push(`(lette le ultime ${SOSPESO_LETTURE} su ${ids.length}: conto parziale — /insospeso di nuovo dopo aver risposto)`);
   if (tolte.length) righe.push(`🧹 Tolte dalla lista perché non aspettano più nessuno: ${tolte.join(", ")}`);
   if (nonTolte.length) righe.push(`⚠️ Da togliere ma NON tolte: ${nonTolte.join("; ")}`);
   if (illeggibili.length) righe.push(`⚠️ Non lette (restano in lista): ${illeggibili.join("; ")}`);
