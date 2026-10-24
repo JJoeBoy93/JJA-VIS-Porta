@@ -1417,6 +1417,12 @@ async function telegram(req, env) {
       await tg(env, "sendMessage", { ...qui, text: testoNova });
       return new Response("ok");
     }
+    if (m.text && /^\/insospeso\b/.test(m.text)) {
+      const { testa, voci } = await inSospeso(env);
+      await tg(env, "sendMessage", { ...qui, text: testa });
+      for (const v of voci) await tg(env, "sendMessage", { ...qui, ...v });
+      return new Response("ok");
+    }
     if (m.text && /^\/numeri/.test(m.text)) {
       let raccolti = null;
       try { raccolti = await raccogli(env); } catch {}
@@ -1869,6 +1875,48 @@ async function segnaAttesa(env, id, dentro) {
       return;
     } catch (e) { if (!/GitHub (409|422)/.test(String(e.message))) throw e; }
   }
+}
+
+// ══ /insospeso — 24 ottobre 2026 ══
+// JJ, 23/10: per i giorni in cui non segue gli utenti, un comando che dice
+// chi aspetta ancora una risposta. La lista sta in attesa.json (segnaAttesa);
+// qui si legge ogni bozza e si manda UN messaggio per domanda, col #id e i
+// tasti di sempre: così si risponde rispondendo a quel messaggio, come a
+// quello originale. Le voci che non aspettano più nessuno si tolgono, e lo
+// si dice: un id senza bozza (profilo tolto il 18/10) o una bozza già
+// inviata/scartata gonfiavano «domande in attesa» nel briefing di JARVIS.
+// Un errore di lettura che NON è «non esiste» resta in lista e si mostra:
+// non si toglie quello che non si è riusciti a leggere.
+export async function inSospeso(env) {
+  let ids = [];
+  try { ids = deb64((await gh(env, "GET", "attesa.json")).content).ids || []; }
+  catch (e) { if (!/GitHub 404/.test(String(e.message))) return { testa: `⏳ In sospeso: lista non letta (${e.message || e})`, voci: [] }; }
+  const voci = [], tolte = [], illeggibili = [];
+  for (const id of ids.slice(-TETTO_LETTURE)) {
+    let d;
+    try { d = (await leggiBozza(env, id)).dati; }
+    catch (e) { if (/GitHub 404/.test(String(e.message))) tolte.push(`${id} (senza bozza)`); else illeggibili.push(`${id}: ${e.message || e}`); continue; }
+    if (d.stato === "inviata" || d.stato === "scartata") { tolte.push(`${id} (già ${d.stato})`); continue; }
+    voci.push({ id, d });
+  }
+  const nonTolte = [];
+  for (const t of tolte) { const id = t.slice(0, 8); try { await segnaAttesa(env, id, false); } catch (e) { nonTolte.push(`${id}: ${e.message || e}`); } }
+  const giorni = (q) => { const t = Date.parse(q || ""); return isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5); };
+  const msg = voci.map(({ id, d }) => {
+    const chi = [d.nome || (d.contatto && d.contatto.nome), d.nome_assistente && `assistente «${d.nome_assistente}»`].filter(Boolean).join(" · ") || "Qualcuno";
+    const da = d.da_dove === "posta" ? "✉️ mail" : [d.a && "✉️ mail", d.chi && "💬 pagina"].filter(Boolean).join(" + ") || "?";
+    const g = giorni(d.quando || d.creata);
+    const attesa = g === null ? "" : g === 0 ? " · da oggi" : ` · da ${g} ${g === 1 ? "giorno" : "giorni"}`;
+    const bozza = d.bozza ? `\n\n✍️ Bozza pronta:\n${d.bozza}` : "";
+    return { text: (`⏳ ${chi}  #${id}\n${da}${attesa}${d.contesto ? " · " + d.contesto : ""}\n«${String(d.domanda || "").slice(0, 1200)}»${bozza}\n\nRispondi a questo messaggio col tuo testo: parte quello.`).slice(0, 4000),
+      reply_markup: { inline_keyboard: [[{ text: "✍️ Bozza", callback_data: `bozza:${id}` }, { text: "📋 Per un'altra IA", callback_data: `copia:${id}` }, { text: "🗑 Ignora", callback_data: `scarta:${id}` }]] } };
+  });
+  const righe = [voci.length ? `⏳ In sospeso: ${voci.length} ${voci.length === 1 ? "persona aspetta" : "persone aspettano"} una risposta` : "⏳ Nessuno aspetta una risposta."];
+  if (ids.length > TETTO_LETTURE) righe.push(`(lette le ultime ${TETTO_LETTURE} su ${ids.length}: conto parziale)`);
+  if (tolte.length) righe.push(`🧹 Tolte dalla lista perché non aspettano più nessuno: ${tolte.join(", ")}`);
+  if (nonTolte.length) righe.push(`⚠️ Da togliere ma NON tolte: ${nonTolte.join("; ")}`);
+  if (illeggibili.length) righe.push(`⚠️ Non lette (restano in lista): ${illeggibili.join("; ")}`);
+  return { testa: righe.join("\n"), voci: msg };
 }
 
 function numeriPerJarvis(letti, inAttesa) {
@@ -2350,6 +2398,7 @@ export const COMANDI = [
   ["apri", "Riapri un giorno: /apri 12/10"],
   ["annulla", "Annulla una prenotazione: /annulla p1a2b3c4d (il # lo trovi in /calendario)"],
   ["numeri", "Il conto della pagina JJA-VIS (e aggiorna vetrina e briefing)"],
+  ["insospeso", "Chi aspetta ancora una risposta, uno per messaggio (rispondi lì)"],
   ["nova", "Nova che risponde subito in chat: /nova prova · /nova acceso · /nova spento"],
   ["video", "Un video sulla pagina: /video <link> <titolo>"],
   ["togli", "Togli un video: /togli 2 (senza numero li elenca)"],
@@ -2376,6 +2425,7 @@ const RIEPILOGO = [
   "",
   "🌐 LA PAGINA JJA-VIS",
   "/numeri — persone, domande, voti",
+  "/insospeso — chi aspetta ancora una risposta: un messaggio per persona, rispondi lì",
   "/nova — Nova risponde subito in chat: /nova prova (12 domande di prova) · /nova acceso · /nova spento",
   "/video <link> <titolo> — aggiunge un video (basta anche incollare il link)",
   "/togli — elenca i video · /togli 2 toglie il secondo",
@@ -2393,7 +2443,7 @@ const RIEPILOGO = [
 ].join("\n");
 const TASTI_MENU = [
   [{ text: "📅 Calendario", callback_data: "menu:calendario" }, { text: "📊 Numeri", callback_data: "menu:numeri" }],
-  [{ text: "💶 Come si fa una stima", callback_data: "menu:stima" }],
+  [{ text: "⏳ In sospeso", callback_data: "menu:insospeso" }, { text: "💶 Come si fa una stima", callback_data: "menu:stima" }],
   [{ text: "🎬 Video sulla pagina", callback_data: "menu:togli" }, { text: "✨ Novità", callback_data: "menu:novita" }],
 ];
 
