@@ -49,7 +49,7 @@ await new Promise((x) => setTimeout(x, 50));
 const sera = inviati().find((m) => /Numeri|Ancora nessuno/.test(m.text));
 ok(sera && sera.chat_id === "-1004388748905" && tgm.find((m) => m.metodo === "createForumTopic" && m.name === "📊 Numeri"), "il conto della sera nell'Olimpo, in «📊 Numeri»", inviati());
 ok(!inviati().some((m) => m.chat_id === "-1001111111111"), "e non più nei Profili");
-let errato = false; try { await W.olimpo(env, "zeus", "x"); } catch { errato = true; } ok(errato, "un dio che non esiste non scrive da nessuna parte a caso");
+let errato = false; try { await W.olimpo(env, "poseidone", "x"); } catch { errato = true; } ok(errato, "un dio che non esiste non scrive da nessuna parte a caso");
 
 console.log("── JJ che scrive nell'Olimpo");
 const SEG = createHash("sha256").update("bot").digest("hex").slice(0, 32);
@@ -68,8 +68,11 @@ tgm = []; r = await porta("olimpo-di-prova", { dio: "generale", testo: "📚 han
 ok(r.status === 200 && !("message_thread_id" in inviati()[0]), "Athena nel Generale");
 tgm = []; r = await porta("", { dio: "hera", testo: "x" }); ok(r.status === 403 && !tgm.length, "senza chiave: 403, niente Telegram");
 r = await porta("chiave-di-prova", { dio: "hera", testo: "x" }); ok(r.status === 403 && !tgm.length, "la chiave di Ares non apre l'Olimpo");
-r = await porta("olimpo-di-prova", { dio: "zeus", testo: "x" }); ok(r.status === 400 && !tgm.length, "un dio che non c'è: 400, nessun argomento nuovo");
-r = await porta("olimpo-di-prova", { dio: "hera", testo: "  " }); ok(r.status === 400 && !tgm.length, "testo vuoto: 400");
+r = await porta("olimpo-di-prova", { dio: "poseidone", testo: "x" }); ok(r.status === 400 && !tgm.length, "un dio che non c'è: 400, nessun argomento nuovo");
+tgm = []; r = await porta("olimpo-di-prova", { dio: "zeus", solo_argomento: true }); const dz = await r.json();
+ok(r.status === 200 && dz.gruppo === "-1004388748905" && dz.thread && !inviati().length && tgm.some((m) => m.metodo === "createForumTopic" && m.name === "⚡ Zeus"), "Zeus chiede solo dove: l'argomento nasce, nessun messaggio dal bot della porta", dz);
+r = await porta("", { dio: "zeus", solo_argomento: true }); ok(r.status === 403, "anche «dove» vuole la chiave");
+tgm = []; r = await porta("olimpo-di-prova", { dio: "hera", testo: "  " }); ok(r.status === 400 && !tgm.length, "testo vuoto: 400");
 
 console.log("── Persefone ENTRATO: solo nell'Olimpo (JJ, 24/10)");
 const chiamaP = (path, init = {}) => W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev" + path, init), env, { waitUntil: (p) => p });

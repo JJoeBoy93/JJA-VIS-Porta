@@ -113,9 +113,10 @@ function conGruppo(env) {
 export const DEI = {
   generale: null, ares: "🛡 Ares", persefone: "🕸 Persefone", numeri: "📊 Numeri",
   hera: "✅ Hera", hermes: "📨 Hermes", afrodite: "🎬 Afrodite", dioniso: "🍇 Dioniso",
-  clio: "📜 Clio",
+  clio: "📜 Clio", zeus: "⚡ Zeus",
   // Niente «atlas»: JJ, 24/10 — Atlas (come Nova) è solo il nome che lui ha dato al SUO assistente
-  // JJA-VIS; ognuno chiama il suo come vuole. Non è un agente e non ha un argomento.
+  // JJA-VIS; ognuno chiama il suo come vuole. Nell'organizzazione l'assistente personale di ognuno
+  // è ⚡ Zeus. Quello di JJ è JARVIS, che nell'Olimpo entra col SUO bot e scrive lui nell'argomento Zeus.
 };
 async function argomentoOlimpo(env, dio) {
   if (!DEI[dio]) return undefined;                       // generale: niente thread
@@ -3113,6 +3114,12 @@ async function olimpoParla(env, req) {
   let d = {}; try { d = await req.json(); } catch (_) {}
   const dio = String(d.dio || "").toLowerCase(), testo = String(d.testo || "").trim().slice(0, 4000);
   if (!(dio in DEI)) return j({ errore: `dio sconosciuto: ${dio}`, dei: Object.keys(DEI) }, 400);
+  // Chi scrive col suo bot (JARVIS = Zeus) chiede solo dove: gruppo e argomento.
+  if (d.solo_argomento) {
+    if (!env.TG_OLIMPO) return j({ errore: "manca TG_OLIMPO" }, 503);
+    try { return j({ ok: true, gruppo: env.TG_OLIMPO, thread: (await argomentoOlimpo(env, dio)) || null }); }
+    catch (e) { return j({ errore: String(e.message || e) }, 502); }
+  }
   if (!testo) return j({ errore: "vuoto" }, 400);
   try { return j({ ok: true, dove: await olimpo(env, dio, testo) }); }
   catch (e) { return j({ errore: String(e.message || e) }, 502); }
