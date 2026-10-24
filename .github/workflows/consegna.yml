@@ -11,6 +11,7 @@
 #   BREVO_API_KEY         la chiave API di Brevo (non quella SMTP)   per mandare
 #   MITTENTE              la mail di JJA-VIS verificata su Brevo
 #   TG_GRUPPO             il supergruppo con gli Argomenti: una persona per argomento
+#   TG_OLIMPO             il supergruppo «JJA-VIS Olimpo»: un argomento per agente (24/10)
 # Quelli che mancano non si inventano: la porta li elenca su GET /.
 name: consegna porta
 
@@ -100,6 +101,7 @@ jobs:
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           MITTENTE: ${{ secrets.MITTENTE }}
           TG_GRUPPO: ${{ secrets.TG_GRUPPO }}
+          TG_OLIMPO: ${{ secrets.TG_OLIMPO }}
           JJAVIS_SEGRETO: ${{ secrets.JJAVIS_SEGRETO }}
           ORS_KEY: ${{ secrets.ORS_KEY }}
           DOC_CHIAVE: ${{ secrets.DOC_CHIAVE }}
@@ -117,7 +119,7 @@ jobs:
           python3 - <<'PY'
           import json, os
           nomi = {"GH_TOKEN": "GH_TOKEN_V", "TG_BOT_TOKEN": "TG_BOT_TOKEN", "TG_CHAT": "TG_CHAT",
-                  "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY", "BREVO_API_KEY": "BREVO_API_KEY", "MITTENTE": "MITTENTE", "TG_GRUPPO": "TG_GRUPPO", "JJAVIS_SEGRETO": "JJAVIS_SEGRETO", "ORS_KEY": "ORS_KEY", "DOC_CHIAVE": "DOC_CHIAVE", "PARTENZA": "PARTENZA", "GOOGLE_SA": "GOOGLE_SA", "CAL_JJ": "CAL_JJ", "CAL_ATHENA": "CAL_ATHENA", "IBAN": "IBAN", "CF_AI_ACCOUNT": "CF_AI_ACCOUNT", "CF_AI_TOKEN": "CF_AI_TOKEN", "CLIO_CHIAVE": "CLIO_CHIAVE"}
+                  "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY", "BREVO_API_KEY": "BREVO_API_KEY", "MITTENTE": "MITTENTE", "TG_GRUPPO": "TG_GRUPPO", "TG_OLIMPO": "TG_OLIMPO", "JJAVIS_SEGRETO": "JJAVIS_SEGRETO", "ORS_KEY": "ORS_KEY", "DOC_CHIAVE": "DOC_CHIAVE", "PARTENZA": "PARTENZA", "GOOGLE_SA": "GOOGLE_SA", "CAL_JJ": "CAL_JJ", "CAL_ATHENA": "CAL_ATHENA", "IBAN": "IBAN", "CF_AI_ACCOUNT": "CF_AI_ACCOUNT", "CF_AI_TOKEN": "CF_AI_TOKEN", "CLIO_CHIAVE": "CLIO_CHIAVE"}
           d = {k: os.environ[v].strip() for k, v in nomi.items() if os.environ.get(v, "").strip()}
           mancano = [k for k in nomi if k not in d]
           json.dump(d, open("/tmp/segreti.json", "w"))

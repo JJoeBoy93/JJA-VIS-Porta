@@ -95,7 +95,54 @@ function normalizzaGruppo(v) {
   if (!cifre) return "";
   return cifre.startsWith("100") && cifre.length >= 13 ? `-${cifre}` : `-100${cifre}`;
 }
-function conGruppo(env) { return env.TG_GRUPPO ? { ...env, TG_GRUPPO: normalizzaGruppo(env.TG_GRUPPO) } : env; }
+function conGruppo(env) {
+  let e = env.TG_GRUPPO ? { ...env, TG_GRUPPO: normalizzaGruppo(env.TG_GRUPPO) } : env;
+  if (e.TG_OLIMPO) e = { ...e, TG_OLIMPO: normalizzaGruppo(e.TG_OLIMPO) };
+  return e;
+}
+
+// ══ L'OLIMPO — 24 ottobre 2026 ══
+// JJ, 24/10: «un super gruppo … dove tutti gli agenti hanno un proprio topic
+// e nel generale è dove comunicate tra di voi, tu compresa». Il supergruppo
+// «JJA-VIS Olimpo» (TG_OLIMPO) è distinto da «JJAVIS•Profili» (TG_GRUPPO):
+// lì le persone, qui gli agenti. Ogni agente scrive nel SUO argomento, che
+// il bot crea da solo la prima volta e ricorda in olimpo.json (archivio).
+// Non è una chat dal vivo: gli agenti girano a orario e lasciano qui il loro
+// risultato. Senza TG_OLIMPO, o se l'Olimpo non risponde, si torna dove si
+// scriveva prima e lo si dice: un messaggio non deve sparire nel nulla.
+export const DEI = {
+  generale: null, ares: "🛡 Ares", persefone: "🕸 Persefone", numeri: "📊 Numeri",
+  hera: "✅ Hera", hermes: "📨 Hermes", afrodite: "🎬 Afrodite", dioniso: "🍇 Dioniso",
+  clio: "📜 Clio", atlas: "🌍 Atlas",
+};
+async function argomentoOlimpo(env, dio) {
+  if (!DEI[dio]) return undefined;                       // generale: niente thread
+  let o = {}, sha;
+  try { const d = await gh(env, "GET", "olimpo.json"); o = deb64(d.content); sha = d.sha; } catch (_) {}
+  if (o.gruppo !== env.TG_OLIMPO) o = { gruppo: env.TG_OLIMPO, argomenti: {} };
+  if (o.argomenti[dio]) return o.argomenti[dio];
+  const t = await tg(env, "createForumTopic", { chat_id: env.TG_OLIMPO, name: DEI[dio] });
+  o.argomenti[dio] = t.message_thread_id;
+  await gh(env, "PUT", "olimpo.json", { message: `olimpo: argomento ${dio}`, content: b64(o), ...(sha ? { sha } : {}) });
+  return t.message_thread_id;
+}
+// Scrive nell'argomento del dio. Se l'Olimpo manca o fallisce, scrive a JJ
+// in privato col motivo in testa. Ritorna dove è finito.
+export async function olimpo(env, dio, testo) {
+  if (!(dio in DEI)) throw new Error(`dio sconosciuto: ${dio}`);
+  if (env.TG_OLIMPO) {
+    try {
+      const thread = await argomentoOlimpo(env, dio);
+      await tg(env, "sendMessage", { chat_id: env.TG_OLIMPO, ...(thread ? { message_thread_id: thread } : {}), text: testo.slice(0, 4000) });
+      return "olimpo";
+    } catch (e) {
+      await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: (`⚠️ Olimpo non raggiungibile (${e.message || e}) — scrivo qui\n\n` + testo).slice(0, 4000) });
+      return "privato (olimpo rotto)";
+    }
+  }
+  await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: testo.slice(0, 4000) });
+  return "privato";
+}
 
 export default {
   async scheduled(evento, env, ctx) {
@@ -1297,6 +1344,11 @@ async function telegram(req, env) {
     const nelGruppo = m.chat.type === "group" || m.chat.type === "supergroup";
     const qui = { chat_id: m.chat.id, ...(m.message_thread_id ? { message_thread_id: m.message_thread_id } : {}) };
     if (String(m.from && m.from.id) !== String(env.TG_CHAT)) return new Response("ok");   // solo JJ
+    if (nelGruppo && env.TG_OLIMPO && String(m.chat.id) === env.TG_OLIMPO) {
+      // Nell'Olimpo scrivono gli agenti; ai messaggi di JJ lì il bot non risponde, tranne /start.
+      if (m.text && /^\/start\b/.test(m.text)) await tg(env, "sendMessage", { ...qui, text: "🏛 Olimpo collegato. Qui scrivono gli agenti, ognuno nel suo argomento; nel Generale gli eventi." });
+      return new Response("ok");
+    }
     if (nelGruppo && String(m.chat.id) !== String(env.TG_GRUPPO || "")) {
       // Il primo messaggio di JJ in un gruppo nuovo dice il numero da mettere nei secret.
       await tg(env, "sendMessage", { ...qui, text: `Il numero di questo gruppo è ${m.chat.id}: mettilo nel secret TG_GRUPPO di JJA-VIS-Porta e rilancia la consegna.` +
@@ -1781,6 +1833,7 @@ async function contoDellaSera(env) {
   const aJarvis = raccolti ? await mandaAJarvis(env, raccolti) : "numeri non letti";
   const vetrina = await aggiornaVetrina(env);
   const testo = (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}\n→ vetrina della pagina: ${vetrina}`;
+  if (env.TG_OLIMPO) return olimpo(env, "numeri", testo);
   if (env.TG_GRUPPO) {
     try { return await tg(env, "sendMessage", { chat_id: env.TG_GRUPPO, message_thread_id: await argomentoNumeri(env), text: testo }); }
     catch (e) { return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `⚠️ argomento Numeri non raggiungibile (${e.message || e})\n\n${testo}` }); }
@@ -3021,9 +3074,10 @@ async function aresParla(env, req) {
   let d = {}; try { d = await req.json(); } catch (_) {}
   const testo = String(d.testo || "").trim().slice(0, 4000);
   if (!testo) return new Response('{"errore":"vuoto"}', { status: 400, headers: { "content-type": "application/json" } });
-  try { await tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: testo }); }
+  let dove;
+  try { dove = await olimpo(env, "ares", testo); }
   catch (e) { return new Response(JSON.stringify({ errore: String(e.message || e) }), { status: 502, headers: { "content-type": "application/json" } }); }
-  return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify({ ok: true, dove }), { headers: { "content-type": "application/json" } });
 }
 export { aresParla };
 
@@ -3061,8 +3115,8 @@ function persefone(req, url, env, ctx) {
       primo = (await env.PERSEFONE_VISTI.get(k)) === null;
       if (primo && !interna) ctx.waitUntil(env.PERSEFONE_VISTI.put(k, p, { expirationTtl: 172800 }));
     }
-    if (primo && !interna) ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
-      text: `🕸 Persefone: qualcuno sta sondando la porta.\nCercava: ${p}\nDa: ${chi}\n\nNon c'è niente di vero lì: gli ho dato dati finti. Nessuna azione da fare.` }).catch(() => {}));
+    if (primo && !interna) ctx.waitUntil(olimpo(env, "persefone",
+      `🕸 Persefone: qualcuno sta sondando la porta.\nCercava: ${p}\nDa: ${chi}\n\nNon c'è niente di vero lì: gli ho dato dati finti. Nessuna azione da fare.`).catch(() => {}));
     // lento di proposito: tiene l'attaccante fermo qui invece che altrove (ma non così tanto da intasare noi)
     await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 2500)));
     const seme = (p + url.search).toLowerCase();   // anche la query: ?post=zz e ?post=yy devono dare pagine diverse
@@ -3098,8 +3152,9 @@ function persefone(req, url, env, ctx) {
           return new Response(paginaAccesso(p, "nome utente o password non corretti."), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
         }
         // Entrato con le credenziali del .env: segnale FORTE (qualcuno le ha lette e le sta usando). Questo lo voglio sapere.
-        ctx.waitUntil(tg(env, "sendMessage", { chat_id: env.TG_CHAT,
-          text: `🕸 Persefone: qualcuno è ENTRATO col login finto (ha usato le credenziali del .env).\nDa: ${chi}\n\nÈ dentro la trappola, non c'è niente di vero. Nessuna azione da fare.` }).catch(() => {}));
+        // Questo è un segnale forte: va nell'Olimpo E a JJ in privato (il Generale può essere silenziato).
+        const entrato = `🕸 Persefone: qualcuno è ENTRATO col login finto (ha usato le credenziali del .env).\nDa: ${chi}\n\nÈ dentro la trappola, non c'è niente di vero. Nessuna azione da fare.`;
+        ctx.waitUntil(olimpo(env, "persefone", entrato).then((dove) => dove === "olimpo" ? tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: entrato }) : null).catch(() => {}));
         const sess = await esca64(env, "sess:" + (req.headers.get("CF-Connecting-IP") || ""));
         return new Response(null, { status: 303, headers: { location: "/wp-admin/", "set-cookie": `wordpress_logged_in=${sess}; Path=/; HttpOnly; Max-Age=86400` } });
       }
