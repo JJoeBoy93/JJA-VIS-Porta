@@ -113,7 +113,9 @@ function conGruppo(env) {
 export const DEI = {
   generale: null, ares: "🛡 Ares", persefone: "🕸 Persefone", numeri: "📊 Numeri",
   hera: "✅ Hera", hermes: "📨 Hermes", afrodite: "🎬 Afrodite", dioniso: "🍇 Dioniso",
-  clio: "📜 Clio", atlas: "🌍 Atlas",
+  clio: "📜 Clio",
+  // Niente «atlas»: JJ, 24/10 — Atlas (come Nova) è solo il nome che lui ha dato al SUO assistente
+  // JJA-VIS; ognuno chiama il suo come vuole. Non è un agente e non ha un argomento.
 };
 async function argomentoOlimpo(env, dio) {
   if (!DEI[dio]) return undefined;                       // generale: niente thread
@@ -122,9 +124,23 @@ async function argomentoOlimpo(env, dio) {
   if (o.gruppo !== env.TG_OLIMPO) o = { gruppo: env.TG_OLIMPO, argomenti: {} };
   if (o.argomenti[dio]) return o.argomenti[dio];
   const t = await tg(env, "createForumTopic", { chat_id: env.TG_OLIMPO, name: DEI[dio] });
-  o.argomenti[dio] = t.message_thread_id;
-  await gh(env, "PUT", "olimpo.json", { message: `olimpo: argomento ${dio}`, content: b64(o), ...(sha ? { sha } : {}) });
-  return t.message_thread_id;
+  // Due dèi che nascono insieme (le consegne partono in parallelo) scrivono
+  // olimpo.json nello stesso momento: chi perde rilegge e riprova, e se nel
+  // frattempo il SUO argomento l'ha creato un altro, tiene quello e cancella
+  // il doppione — se no il prossimo messaggio aprirebbe un terzo argomento.
+  for (let giro = 0; ; giro++) {
+    if (o.argomenti[dio] && o.argomenti[dio] !== t.message_thread_id) {
+      await tg(env, "deleteForumTopic", { chat_id: env.TG_OLIMPO, message_thread_id: t.message_thread_id }).catch(() => {});
+      return o.argomenti[dio];
+    }
+    o.argomenti[dio] = t.message_thread_id;
+    try { await gh(env, "PUT", "olimpo.json", { message: `olimpo: argomento ${dio}`, content: b64(o), ...(sha ? { sha } : {}) }); return t.message_thread_id; }
+    catch (e) {
+      if (giro >= 3 || !/GitHub (409|422)/.test(String(e.message))) throw e;
+      const d = await gh(env, "GET", "olimpo.json"); const letto = deb64(d.content); sha = d.sha;
+      o = letto.gruppo === env.TG_OLIMPO ? { ...letto, argomenti: { ...letto.argomenti } } : { gruppo: env.TG_OLIMPO, argomenti: {} };
+    }
+  }
 }
 // Scrive nell'argomento del dio. Se l'Olimpo manca o fallisce, scrive a JJ
 // in privato col motivo in testa. Ritorna dove è finito.

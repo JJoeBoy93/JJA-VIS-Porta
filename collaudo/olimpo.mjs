@@ -14,13 +14,14 @@ writeFileSync(join(dir, "worker.mjs"), readFileSync(join(qui, "..", "worker.js")
 const W = await import(join(dir, "worker.mjs"));
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const leggi = (p) => JSON.parse(Buffer.from(repo[p], "base64").toString());
-let repo = {}, tgm = [], rotto = false, prossimo = 100;
+let repo = {}, tgm = [], rotto = false, prossimo = 100, conflitto = null;
 globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url));
   if (u.host === "api.telegram.org") { const c = { metodo: u.pathname.split("/").pop(), ...JSON.parse(o.body || "{}") }; tgm.push(c);
     if (rotto && String(c.chat_id) === "-1004388748905") return new Response('{"ok":false,"description":"Bad Request: chat not found"}');
     return new Response(JSON.stringify({ ok: true, result: c.metodo === "createForumTopic" ? { message_thread_id: prossimo++ } : { message_id: 1 } })); }
   if (u.host === "api.github.com") { const p = decodeURIComponent(u.pathname.split("/contents/")[1] || ""), m = o.method || "GET";
     if (p === "utenti") return new Response("[]");
+    if (m === "PUT" && conflitto && p === "olimpo.json") { const c = conflitto; conflitto = null; repo[p] = c; return new Response('{"message":"sha non combacia"}', { status: 409 }); }
     if (m === "PUT") { repo[p] = JSON.parse(o.body).content; return new Response("{}"); }
     if (!repo[p]) return new Response("{}", { status: 404 }); return new Response(JSON.stringify({ content: repo[p], sha: "s" })); }
   return new Response("{}", { status: 404 }); };
@@ -69,6 +70,18 @@ tgm = []; r = await porta("", { dio: "hera", testo: "x" }); ok(r.status === 403 
 r = await porta("chiave-di-prova", { dio: "hera", testo: "x" }); ok(r.status === 403 && !tgm.length, "la chiave di Ares non apre l'Olimpo");
 r = await porta("olimpo-di-prova", { dio: "zeus", testo: "x" }); ok(r.status === 400 && !tgm.length, "un dio che non c'è: 400, nessun argomento nuovo");
 r = await porta("olimpo-di-prova", { dio: "hera", testo: "  " }); ok(r.status === 400 && !tgm.length, "testo vuoto: 400");
+
+console.log("── due dèi che nascono insieme");
+const e2 = { ...env, TG_OLIMPO: "-1004388748905" };
+// mentre Clio crea il suo, un altro ha appena scritto olimpo.json con Dioniso: il conflitto non deve perdere Dioniso
+conflitto = Buffer.from(JSON.stringify({ gruppo: "-1004388748905", argomenti: { ...leggi("olimpo.json").argomenti, dioniso: 777 } })).toString("base64");
+tgm = []; await W.olimpo(e2, "clio", "📜 prova");
+ok(leggi("olimpo.json").argomenti.dioniso === 777 && leggi("olimpo.json").argomenti.clio, "409: rilegge, tiene l'argomento dell'altro e aggiunge il suo", leggi("olimpo.json"));
+// mentre Afrodite crea il suo, un'altra Afrodite l'ha già creato: si tiene quello, il doppione si cancella
+conflitto = Buffer.from(JSON.stringify({ gruppo: "-1004388748905", argomenti: { ...leggi("olimpo.json").argomenti, afrodite: 888 } })).toString("base64");
+tgm = []; await W.olimpo(e2, "afrodite", "🎬 prova");
+ok(inviati()[0].message_thread_id === 888 && tgm.some((m) => m.metodo === "deleteForumTopic"), "lo stesso dio creato due volte: si scrive nel primo, il doppione si cancella", tgm);
+ok(!("atlas" in W.DEI) && !("nova" in W.DEI), "Atlas e Nova non sono dèi (nomi di prova di JJ)");
 
 console.log("── controprove");
 repo = {}; rotto = true; tgm = []; r = await ares(env, "🛡 ARES — Olimpo rotto");
