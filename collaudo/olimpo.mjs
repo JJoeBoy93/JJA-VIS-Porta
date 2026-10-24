@@ -71,6 +71,16 @@ r = await porta("chiave-di-prova", { dio: "hera", testo: "x" }); ok(r.status ===
 r = await porta("olimpo-di-prova", { dio: "zeus", testo: "x" }); ok(r.status === 400 && !tgm.length, "un dio che non c'è: 400, nessun argomento nuovo");
 r = await porta("olimpo-di-prova", { dio: "hera", testo: "  " }); ok(r.status === 400 && !tgm.length, "testo vuoto: 400");
 
+console.log("── Persefone ENTRATO: solo nell'Olimpo (JJ, 24/10)");
+const chiamaP = (path, init = {}) => W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev" + path, init), env, { waitUntil: (p) => p });
+const envTxt = await (await chiamaP("/.env", { headers: { "CF-Connecting-IP": "5.90.203.21" } })).text();
+const U = (envTxt.match(/WP_ADMIN_USER=(.*)/) || [])[1], PW = (envTxt.match(/WP_ADMIN_PASSWORD=(.*)/) || [])[1];
+await new Promise((x) => setTimeout(x, 30)); tgm = [];
+const rl = await chiamaP("/wp-login.php", { method: "POST", headers: { "CF-Connecting-IP": "5.90.203.21", "content-type": "application/x-www-form-urlencoded" }, body: `log=${encodeURIComponent(U)}&pwd=${encodeURIComponent(PW)}` });
+await new Promise((x) => setTimeout(x, 50));
+ok(rl.status === 303 && inviati().some((m) => /ENTRATO/.test(m.text) && m.chat_id === "-1004388748905"), "ENTRATO arriva nell'Olimpo", inviati());
+const entr = inviati().filter((m) => /ENTRATO/.test(m.text));
+ok(entr.length === 0 || entr.every((m) => m.chat_id === "-1004388748905"), "ENTRATO non arriva in privato", entr);
 console.log("── due dèi che nascono insieme");
 const e2 = { ...env, TG_OLIMPO: "-1004388748905" };
 // mentre Clio crea il suo, un altro ha appena scritto olimpo.json con Dioniso: il conflitto non deve perdere Dioniso

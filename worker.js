@@ -3190,9 +3190,9 @@ function persefone(req, url, env, ctx) {
           return new Response(paginaAccesso(p, "nome utente o password non corretti."), { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
         }
         // Entrato con le credenziali del .env: segnale FORTE (qualcuno le ha lette e le sta usando). Questo lo voglio sapere.
-        // Questo è un segnale forte: va nell'Olimpo E a JJ in privato (il Generale può essere silenziato).
-        const entrato = `🕸 Persefone: qualcuno è ENTRATO col login finto (ha usato le credenziali del .env).\nDa: ${chi}\n\nÈ dentro la trappola, non c'è niente di vero. Nessuna azione da fare.`;
-        ctx.waitUntil(olimpo(env, "persefone", entrato).then((dove) => dove === "olimpo" ? tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: entrato }) : null).catch(() => {}));
+        // Solo nell'Olimpo (JJ, 24/10: «mi invia anche su quello normale, non solo nel topic»).
+        // In privato arriva solo se l'Olimpo non risponde, col ⚠️: lo fa olimpo() da sé.
+        ctx.waitUntil(olimpo(env, "persefone", `🕸 Persefone: qualcuno è ENTRATO col login finto (ha usato le credenziali del .env).\nDa: ${chi}\n\nÈ dentro la trappola, non c'è niente di vero. Nessuna azione da fare.`).catch(() => {}));
         const sess = await esca64(env, "sess:" + (req.headers.get("CF-Connecting-IP") || ""));
         return new Response(null, { status: 303, headers: { location: "/wp-admin/", "set-cookie": `wordpress_logged_in=${sess}; Path=/; HttpOnly; Max-Age=86400` } });
       }
