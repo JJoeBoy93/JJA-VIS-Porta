@@ -139,3 +139,22 @@ jobs:
                 --data-urlencode "secret_token=${SEG}" \
                 --data-urlencode 'allowed_updates=["message","callback_query"]')
           echo "$R" | grep -q '"ok":true' && echo "::notice::webhook del bot a posto" || { echo "::error::setWebhook: $R"; exit 1; }
+      # Hera nell'Olimpo (24/10): l'esito di questa consegna, verde o rosso, nel suo argomento.
+      # Non ferma niente: se l'Olimpo non risponde, la consegna resta com'era.
+      - name: Hera nell'Olimpo
+        if: always()
+        continue-on-error: true
+        env:
+          OLIMPO_CHIAVE: ${{ secrets.OLIMPO_CHIAVE }}
+          ESITO: ${{ job.status }}
+          MSG: ${{ github.event.head_commit.message }}
+          COSA: "la porta"
+        run: |
+          if [ -z "$OLIMPO_CHIAVE" ]; then echo "::notice::niente OLIMPO_CHIAVE: l'Olimpo non lo sa"; exit 0; fi
+          if [ "$ESITO" = success ]; then E="✅ $COSA: verde"; else E="🔴 $COSA: ROSSA ($ESITO)"; fi
+          RIGA=$(printf '%s' "${MSG:-a mano}" | head -1 | cut -c1-160)
+          T=$(printf '%s · %s\n«%s»' "$E" "${GITHUB_SHA:0:7}" "$RIGA")
+          [ "$ESITO" = success ] || T=$(printf '%s\n%s/%s/actions/runs/%s' "$T" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+          T="$T" python3 -c 'import json,os; print(json.dumps({"dio": "hera", "testo": os.environ["T"]}))' | curl -s -m 15 -o /tmp/olimpo.txt -w "olimpo %{http_code}\n" -X POST \
+            https://jjavis-porta.19-jjardito93.workers.dev/olimpo -H "content-type: application/json" -H "X-Chiave: $OLIMPO_CHIAVE" --data @- || true
+          cat /tmp/olimpo.txt 2>/dev/null; echo

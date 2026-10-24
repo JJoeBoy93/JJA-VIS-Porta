@@ -198,6 +198,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/io/dal-conto") return ioDalConto(env, req, origine);
     if (req.method === "POST" && url.pathname === "/nato") return nato(env, req, origine);
     if (req.method === "POST" && url.pathname === "/ares") return aresParla(env, req);
+    if (req.method === "POST" && url.pathname === "/olimpo") return olimpoParla(env, req);
     const trappola = persefone(req, url, env, ctx); if (trappola) return trappola;
     if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente") return assistenteDallaChat(env, req, origine);
@@ -3080,6 +3081,27 @@ async function aresParla(env, req) {
   return new Response(JSON.stringify({ ok: true, dove }), { headers: { "content-type": "application/json" } });
 }
 export { aresParla };
+
+// ══ /olimpo — 24 ottobre 2026 ══ JJ: «anche gli altri devono fare lì».
+// La porta d'ingresso dell'Olimpo per chi non vive nella porta: le consegne
+// delle Actions (Hera), il vault (Athena, nel Generale), e più avanti Hermes.
+// Chiave nell'header X-Chiave; qui sta solo la sua impronta (repo pubblico),
+// la chiave vera sta nei secret OLIMPO_CHIAVE dei repository che scrivono.
+// Il dio deve essere uno di DEI: uno sconosciuto non apre argomenti a caso.
+const IMPRONTA_OLIMPO = "efae594287ca809600f523b09ca14d7b6d3ca07e3e30c186997335a78ee1e5cb";
+async function olimpoParla(env, req) {
+  const j = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
+  const dati = new TextEncoder().encode(req.headers.get("X-Chiave") || "");
+  const impronta = [...new Uint8Array(await crypto.subtle.digest("SHA-256", dati))].map((x) => x.toString(16).padStart(2, "0")).join("");
+  if (impronta !== IMPRONTA_OLIMPO) return j({ errore: "chiave" }, 403);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const dio = String(d.dio || "").toLowerCase(), testo = String(d.testo || "").trim().slice(0, 4000);
+  if (!(dio in DEI)) return j({ errore: `dio sconosciuto: ${dio}`, dei: Object.keys(DEI) }, 400);
+  if (!testo) return j({ errore: "vuoto" }, 400);
+  try { return j({ ok: true, dove: await olimpo(env, dio, testo) }); }
+  catch (e) { return j({ errore: String(e.message || e) }, 502); }
+}
+export { olimpoParla };
 
 // ══ PERSEFONE — L'ESCA — 23 ottobre 2026 (Athena) ══════════════════════════
 // JJ, 23/10: «serve l'honeypot di persone [Persefone] che ti avevo detto». Nell'Olimpo (vault): sub-agente di Ade, reindirizza

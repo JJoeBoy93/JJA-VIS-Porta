@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 const qui = dirname(fileURLToPath(import.meta.url)); const dir = mkdtempSync(join(tmpdir(), "olimpo-"));
 for (const [a, b] of [["preventivo.js", "preventivo.js"], ["google.js", "google.js"]]) copyFileSync(join(qui, "..", a), join(dir, b));
 writeFileSync(join(dir, "worker.mjs"), readFileSync(join(qui, "..", "worker.js"), "utf8")
-  .replace(/const IMPRONTA_ARES = "[0-9a-f]{64}";/, `const IMPRONTA_ARES = "${createHash("sha256").update("chiave-di-prova").digest("hex")}";`));
+  .replace(/const IMPRONTA_ARES = "[0-9a-f]{64}";/, `const IMPRONTA_ARES = "${createHash("sha256").update("chiave-di-prova").digest("hex")}";`)
+  .replace(/const IMPRONTA_OLIMPO = "[0-9a-f]{64}";/, `const IMPRONTA_OLIMPO = "${createHash("sha256").update("olimpo-di-prova").digest("hex")}";`));
 const W = await import(join(dir, "worker.mjs"));
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const leggi = (p) => JSON.parse(Buffer.from(repo[p], "base64").toString());
@@ -57,6 +58,17 @@ tgm = []; await scrivi("/start");
 ok(inviati().length === 1 && /Olimpo collegato/.test(inviati()[0].text) && !/TG_GRUPPO/.test(inviati()[0].text), "/start: «Olimpo collegato», niente invito a TG_GRUPPO");
 tgm = []; await scrivi("ciao");
 ok(!inviati().length, "un messaggio qualsiasi: il bot tace");
+
+console.log("── /olimpo: chi non vive nella porta (Hera dalle Actions, Athena dal vault)");
+const porta = (k, corpo, e = env) => W.default.fetch(new Request("https://porta/olimpo", { method: "POST", headers: { "content-type": "application/json", ...(k ? { "X-Chiave": k } : {}) }, body: JSON.stringify(corpo) }), e, { waitUntil() {} });
+tgm = []; r = await porta("olimpo-di-prova", { dio: "hera", testo: "✅ consegna verde" });
+ok(r.status === 200 && inviati().length === 1 && inviati()[0].chat_id === "-1004388748905" && tgm.find((m) => m.metodo === "createForumTopic" && m.name === "✅ Hera"), "Hera nel suo argomento");
+tgm = []; r = await porta("olimpo-di-prova", { dio: "generale", testo: "📚 handoff" });
+ok(r.status === 200 && !("message_thread_id" in inviati()[0]), "Athena nel Generale");
+tgm = []; r = await porta("", { dio: "hera", testo: "x" }); ok(r.status === 403 && !tgm.length, "senza chiave: 403, niente Telegram");
+r = await porta("chiave-di-prova", { dio: "hera", testo: "x" }); ok(r.status === 403 && !tgm.length, "la chiave di Ares non apre l'Olimpo");
+r = await porta("olimpo-di-prova", { dio: "zeus", testo: "x" }); ok(r.status === 400 && !tgm.length, "un dio che non c'è: 400, nessun argomento nuovo");
+r = await porta("olimpo-di-prova", { dio: "hera", testo: "  " }); ok(r.status === 400 && !tgm.length, "testo vuoto: 400");
 
 console.log("── controprove");
 repo = {}; rotto = true; tgm = []; r = await ares(env, "🛡 ARES — Olimpo rotto");
