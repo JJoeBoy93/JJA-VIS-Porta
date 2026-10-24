@@ -3060,7 +3060,42 @@ function persefone(req, url, env, ctx) {
 // Ogni pagina è decisa dal percorso (stessa strada → stessa pagina: non si capisce che è generata) e i link puntano solo a
 // strade-esca (restano dentro Persefone, non toccano mai le strade vere della porta). Niente stato da difendere: è solo testo.
 // numeri/parole deterministici e UNICI per indice (prima si ripetevano: la lista aveva due volte lo stesso articolo)
-function pezzo(seme, tag, i) { let h = 2166136261; for (const ch of seme + ":" + tag + ":" + i) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0); }
+function pezzo(seme, tag, i) { let h = 2166136261; for (const ch of "" + seme + ":" + tag + ":" + i) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0); }
+// 24/10 (Athena): le righe adiacenti non devono marciare in fila. pezzo è FNV-1a: fra la riga i e la i+1 cambia solo l'ultimo
+// carattere dell'indice, che FNV diffonde male — così suffisso del nome e conteggio articoli avanzavano di 1 a ogni riga
+// (JJ: «i numeri in ordine decrescente di 1, sia utente che articoli»). Cura: l'indice passa da un avalanche (murmur3 finalizer)
+// PRIMA di entrare in pezzo, diventa un token lungo e sparso e le righe decorrelano. Deterministico come prima (riga i → stesso dato).
+function mescola(x) { x = Math.imul(x ^ (x >>> 16), 2246822507); x = Math.imul(x ^ (x >>> 13), 3266489909); return (x ^ (x >>> 16)) >>> 0; }
+function riga(seme, tag, i) { return pezzo(seme, tag, mescola(i + 0x9e3779b9).toString(36)); }
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+// una data verosimile e deterministica, formato UNICO in tutto il finto sito (prima «2025/4/28» e «2023-10-6» mischiati e non pad)
+function dataDa(h, annoBase = 2022, anni = 4) { return `${annoBase + h % anni}/${pad2(1 + (h >>> 5) % 12)}/${pad2(1 + (h >>> 9) % 28)}`; }
+
+const NOMI_P = ["marco", "giulia", "luca", "sara", "andrea", "chiara", "paolo", "elena", "davide", "anna", "matteo", "laura", "stefano", "roberta", "fabio", "silvia"];
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+// autore / stato / titolo di un articolo: deterministici per numero, così lista e pagina di dettaglio coincidono
+function autoreDi(num) { const h = pezzo("autore", String(num), 0); return h % 5 === 0 ? "admin" : NOMI_P[h % NOMI_P.length] + (10 + (h >>> 5) % 80); }
+const STATI = [["Pubblicato", "ok"], ["Pubblicato", "ok"], ["Pubblicato", "ok"], ["Pubblicato", "ok"], ["Pubblicato", "ok"], ["Bozza", ""], ["Bozza", ""], ["Programmato", "plan"]];
+function statoDi(num) { return STATI[pezzo("stato", String(num), 0) % STATI.length]; }  // un sito di anni è per lo più Pubblicato, non tutto Bozza
+const TEMI_P = ["le consegne a domicilio", "la logistica dell'ultimo miglio", "gli assistenti personali", "l'ottimizzazione del giro", "i corrieri indipendenti", "la gestione del magazzino", "le spedizioni internazionali", "il lavoro da remoto", "la produttività quotidiana", "i piccoli trasporti"];
+function titoloDi(num) {
+  const h = pezzo("tit", String(num), 0), t = TEMI_P[h % TEMI_P.length];
+  const forme = [`${cap(t)}: una guida pratica`, `${cap(t)}, cosa sapere davvero`, `Capire ${t}`, `Migliorare ${t}`, `${cap(t)} nel ${2023 + (h >>> 6) % 3}`, `${3 + (h >>> 4) % 8} cose da sapere su ${t}`];
+  return forme[(h >>> 2) % forme.length];
+}
+// il contenuto: frasi vere (soggetto-verbo-complemento), non più un sacco di parole a caso (JJ: «parole messe a caso senza senso compiuto»)
+function contenutoDi(num) {
+  const s2 = "corpo:" + num;
+  const sogg = ["Un buon servizio", "L'organizzazione del lavoro", "La tecnologia giusta", "Ogni cliente", "Il tempo ben speso", "Un sistema ben fatto", "La pianificazione", "L'esperienza sul campo", "Una buona abitudine", "L'attenzione ai dettagli"];
+  const verbo = ["permette di", "aiuta a", "serve a", "si traduce in un modo per", "è la chiave per"];
+  const compl = ["risparmiare tempo prezioso.", "ridurre gli errori.", "migliorare il risultato finale.", "rendere tutto più semplice.", "fare la differenza ogni giorno.", "aumentare la soddisfazione di chi lavora.", "tenere tutto sotto controllo.", "evitare sprechi inutili.", "costruire un rapporto di fiducia.", "crescere con continuità."];
+  const frase = (k, j) => { const v = verbo[pezzo(s2, "v" + k, j) % verbo.length], c = compl[pezzo(s2, "c" + k, j) % compl.length];
+    const vv = (/ a$/.test(v) && /^[aeiou]/i.test(c)) ? v + "d" : v;   // d eufonica: «aiuta ad aumentare», non «aiuta a aumentare»
+    return `${sogg[pezzo(s2, "s" + k, j) % sogg.length]} ${vv} ${c}`; };
+  return Array.from({ length: 2 + pezzo(s2, "np", 0) % 3 }, (_, k) =>
+    `<p>${Array.from({ length: 3 + pezzo(s2, "fl", k) % 3 }, (_, j) => frase(k, j)).join(" ")}</p>`).join("");
+}
+
 const CSS = `<style>
 *{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif;color:#1d2327;background:#f0f0f1}
 #wpadminbar{height:32px;background:#1d2327;color:#f0f0f1;display:flex;align-items:center;padding:0 12px;font-size:13px;position:sticky;top:0}
@@ -3081,6 +3116,7 @@ a{color:#2271b1}a:hover{color:#135e96}
 input[type=text],input[type=password],input:not([type]){border:1px solid #8c8f94;border-radius:3px;padding:5px 8px;font-size:14px;max-width:260px;width:100%}
 label{display:block;margin:10px 0 3px;font-weight:600}
 .pill{background:#d63638;color:#fff;border-radius:9px;padding:1px 7px;font-size:11px}
+.pill.ok{background:#00a32a}.pill.plan{background:#dba617;color:#1d2327}
 </style>`;
 
 // Marca del finto sito: porta il nome JJA-VIS (l'attaccante è arrivato dalla porta jjavis, un sito anonimo stonerebbe), ma
@@ -3093,35 +3129,31 @@ const MOTTO = "Assistente personale intelligente";
 function guscio(titolo, sezioneAttiva, corpo) {
   const voci = [["index.php", "Bacheca"], ["edit.php", "Articoli"], ["upload.php", "Media"], ["users.php", "Utenti"], ["plugins.php", "Plugin"], ["options.php", "Impostazioni"], ["export.php", "Strumenti"]];
   const menu = voci.map(([f, t]) => `<a href="/wp-admin/${f}"${f === sezioneAttiva ? ' class="on"' : ""}>${t}</a>`).join("");
-  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titolo} ‹ ${SITO} — WordPress</title>${CSS}</head><body>` +
-    `<div id="wpadminbar"><b>⊞</b> ${SITO}</div><div class="wrap"><nav id="menu">${menu}</nav><main id="main">${corpo}</main></div></body></html>`;
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titolo} \u2039 ${SITO}</title>${CSS}</head><body>` +
+    `<div id="wpadminbar"><b>\u229e</b> ${SITO}</div><div class="wrap"><nav id="menu">${menu}</nav><main id="main">${corpo}</main></div></body></html>`;
 }
 
 // Il labirinto di Persefone: un finto pannello che risponde e rimanda sempre a OGNI altra sua pagina, senza fine. Ogni pagina è
 // decisa dal percorso (stessa strada → stessa pagina) e i link puntano solo a strade-esca (restano dentro Persefone). Ogni
-// sezione ha il SUO contenuto (prima erano tutte «Bacheca» identiche). Dati deterministici e unici. Niente stato da difendere.
+// sezione ha il SUO contenuto. Dati deterministici e unici, verosimili (non in fila, non tutti Bozza, non parole a caso).
 function labirinto(p, search, seme) {
   const sez = (p.match(/\/wp-admin\/([\w-]+\.php)/) || [])[1] || "index.php";
   const q = new URLSearchParams(search || "");
-  const righe = (tag, quante, fila) => Array.from({ length: quante }, (_, i) => fila(pezzo(seme + sez, tag, i), i)).join("");
-  const n = (base, tag) => (base + pezzo(seme + sez, tag, 0) % 900).toString();
+  const righe = (tag, quante, fila) => Array.from({ length: quante }, (_, i) => fila(riga(seme + sez, tag, i), i)).join("");
   // pulisce un valore che arriva dalla query prima di rimetterlo nell'HTML: solo lettere/numeri (niente XSS, niente < >)
   const soloAN = (v, max) => (v || "").replace(/[^a-z0-9]/gi, "").slice(0, max || 24);
 
   // ── PAGINE DI DETTAGLIO: cliccando un articolo/utente/file si apre la SUA pagina, non la lista di nuovo (23/10, JJ) ──
   if ((sez === "post.php" && q.get("action") === "edit") || sez === "post-new.php") {
     const num = soloAN(q.get("post"), 8) || (pezzo(seme, "new", 0) % 90000).toString();
-    const s2 = seme + ":post:" + num;
-    const parole = ["sistema", "cliente", "consegna", "progetto", "mercato", "utente", "rete", "servizio", "dato", "valore", "tempo", "lavoro", "persona", "mondo", "idea"];
-    const frase = (k) => Array.from({ length: 18 + pezzo(s2, "fl", k) % 14 }, (_, j) => parole[pezzo(s2, "w" + k, j) % parole.length]).join(" ");
-    const corpo = Array.from({ length: 3 + pezzo(s2, "np", 0) % 3 }, (_, k) => `<p>${frase(k).charAt(0).toUpperCase() + frase(k).slice(1)}.</p>`).join("");
+    const titolo = titoloDi(num), [stato, cl] = statoDi(num);
     return guscio("Modifica articolo", "edit.php",
       `<h1>Modifica articolo</h1><div class="card"><h2>Articolo #${num}</h2>` +
       `<form method="post" action="/wp-admin/post.php?post=${num}&action=edit">` +
-      `<label>Titolo</label><input type="text" value="Articolo #${num}">` +
-      `<label>Contenuto</label><div style="border:1px solid #c3c4c7;background:#fff;padding:10px;min-height:120px">${corpo}</div>` +
-      `<p style="margin-top:12px"><button class="btn" type="submit">Aggiorna</button> &nbsp; <span class="pill">Bozza</span></p>` +
-      `<p style="margin-top:10px"><a href="/wp-admin/edit.php">← Tutti gli articoli</a></p></form></div>`);
+      `<label>Titolo</label><input type="text" value="${titolo}">` +
+      `<label>Contenuto</label><div style="border:1px solid #c3c4c7;background:#fff;padding:10px;min-height:120px">${contenutoDi(num)}</div>` +
+      `<p style="margin-top:12px"><button class="btn" type="submit">Aggiorna</button> &nbsp; <span class="pill ${cl}">${stato}</span> &nbsp; <span style="color:#646970">Autore: ${autoreDi(num)}</span></p>` +
+      `<p style="margin-top:10px"><a href="/wp-admin/edit.php">\u2190 Tutti gli articoli</a></p></form></div>`);
   }
   if (sez === "users.php" && (q.get("user") || q.get("id"))) {
     const ruoli = ["Editore", "Autore", "Collaboratore", "Abbonato"];
@@ -3131,30 +3163,32 @@ function labirinto(p, search, seme) {
     return guscio("Profilo", "users.php",
       `<h1>Profilo</h1><div class="card"><h2>${nm}</h2><table>` +
       `<tr><th>Nome utente</th><td>${nm}</td></tr><tr><th>E-mail</th><td>${admin ? MAIL_ADMIN : nm + "@gmail.com"}</td></tr>` +
-      `<tr><th>Ruolo</th><td>${admin ? "Amministratore" : ruoli[h % 4]}</td></tr><tr><th>Articoli pubblicati</th><td>${admin ? pezzo(seme, "a", 0) % 200 : h % 60}</td></tr>` +
-      `<tr><th>Registrato il</th><td>${2022 + h % 3}-${1 + h % 12}-${1 + h % 28}</td></tr></table>` +
-      `<p style="margin-top:10px"><a href="/wp-admin/users.php">← Tutti gli utenti</a></p></div>`);
+      `<tr><th>Ruolo</th><td>${admin ? "Amministratore" : ruoli[h % 4]}</td></tr><tr><th>Articoli pubblicati</th><td>${admin ? 120 + pezzo(seme, "a", 0) % 80 : 3 + h % 70}</td></tr>` +
+      `<tr><th>Registrato il</th><td>${dataDa(h, 2021, 4)}</td></tr></table>` +
+      `<p style="margin-top:10px"><a href="/wp-admin/users.php">\u2190 Tutti gli utenti</a></p></div>`);
   }
   if (sez === "upload.php" && q.get("item")) {
     const it = soloAN(q.get("item"), 8), h = pezzo(seme, "media:" + it, 0);
-    const ext = ["jpg", "png", "pdf"][h % 3], nm = ["foto", "logo", "banner", "documento", "fattura"][h % 5];
+    const ext = ["jpg", "png", "pdf", "docx"][h % 4], nm = ["foto", "logo", "banner", "documento", "fattura"][h % 5];
+    const mime = { jpg: "image/jpeg", png: "image/png", pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }[ext];
     return guscio("Dettaglio media", "upload.php",
       `<h1>Dettaglio allegato</h1><div class="card"><h2>${nm}-${it}.${ext}</h2><table>` +
-      `<tr><th>File</th><td>${nm}-${it}.${ext}</td></tr><tr><th>Tipo</th><td>${ext === "pdf" ? "application/pdf" : "image/" + ext}</td></tr>` +
+      `<tr><th>File</th><td>${nm}-${it}.${ext}</td></tr><tr><th>Tipo</th><td>${mime}</td></tr>` +
       `<tr><th>Caricato da</th><td>admin</td></tr><tr><th>Dimensione</th><td>${100 + h % 4000} KB</td></tr>` +
-      `<tr><th>Data</th><td>${2023 + h % 3}-${1 + h % 12}-${1 + h % 28}</td></tr></table>` +
-      `<p style="margin-top:10px"><a href="/wp-admin/upload.php">← Libreria Media</a></p></div>`);
+      `<tr><th>Data</th><td>${dataDa(h)}</td></tr></table>` +
+      `<p style="margin-top:10px"><a href="/wp-admin/upload.php">\u2190 Libreria Media</a></p></div>`);
   }
 
   if (sez === "users.php") {
     const ruoli = ["Amministratore", "Editore", "Autore", "Collaboratore", "Abbonato"];
+    const base = pezzo(seme, "un", 0);
     return guscio("Utenti", "users.php",
       `<h1>Utenti</h1><table><tr><th>Nome utente</th><th>E-mail</th><th>Ruolo</th><th>Articoli</th></tr>` +
-      `<tr><td><a href="/wp-admin/users.php?user=admin"><strong>admin</strong></a></td><td>${MAIL_ADMIN}</td><td>Amministratore</td><td>${pezzo(seme, "a", 0) % 200}</td></tr>` +
+      `<tr><td><a href="/wp-admin/users.php?user=admin"><strong>admin</strong></a></td><td>${MAIL_ADMIN}</td><td>Amministratore</td><td>${120 + pezzo(seme, "a", 0) % 80}</td></tr>` +
       righe("u", 6 + pezzo(seme, "nu", 0) % 10, (h, i) => {
-        const nomi = ["marco", "giulia", "luca", "sara", "andrea", "chiara", "paolo", "elena", "davide", "anna", "matteo", "laura", "stefano", "roberta", "fabio", "silvia"];
-        const nm = nomi[h % nomi.length] + (h % 90);
-        return `<tr><td><a href="/wp-admin/users.php?user=${nm}">${nm}</a></td><td>${nm}@gmail.com</td><td>${ruoli[1 + h % 4]}</td><td>${h % 60}</td></tr>`;
+        const nm = NOMI_P[(base + i * 7) % NOMI_P.length] + (10 + h % 80);   // nome unico per riga (stride 7, coprimo con 16), suffisso sparso
+        const art = riga(seme + "users.php", "ua", i) % 80;                   // conteggio articoli staccato dal suffisso (prima coincidevano)
+        return `<tr><td><a href="/wp-admin/users.php?user=${nm}">${nm}</a></td><td>${nm}@gmail.com</td><td>${ruoli[1 + h % 4]}</td><td>${art}</td></tr>`;
       }) + `</table>`);
   }
   if (sez === "plugins.php") {
@@ -3163,7 +3197,7 @@ function labirinto(p, search, seme) {
       `<h1>Plugin</h1><table><tr><th>Plugin</th><th>Descrizione</th><th>Stato</th><th>Versione</th></tr>` +
       righe("pl", 7 + pezzo(seme, "np", 0) % 4, (h, i) => {
         const [nm, ds] = plug[i % plug.length], attivo = h % 3 !== 0;
-        return `<tr><td><strong>${nm}</strong></td><td>${ds}</td><td>${attivo ? "Attivo" : `<a href="/wp-admin/plugins.php?activate=${i}">Attiva</a>`}</td><td>${1 + h % 6}.${h % 10}.${h % 20}</td></tr>`;
+        return `<tr><td><strong>${nm}</strong></td><td>${ds}</td><td>${attivo ? "Attivo" : `<a href="/wp-admin/plugins.php?activate=${i}">Attiva</a>`}</td><td>${1 + h % 6}.${(h >>> 4) % 10}.${(h >>> 8) % 20}</td></tr>`;
       }) + `</table>`);
   }
   if (sez === "upload.php") {
@@ -3171,7 +3205,7 @@ function labirinto(p, search, seme) {
       `<h1>Libreria Media</h1><table><tr><th>File</th><th>Autore</th><th>Caricato il</th></tr>` +
       righe("md", 8 + pezzo(seme, "nm", 0) % 12, (h, i) => {
         const ext = ["jpg", "png", "pdf", "jpg", "jpg", "docx"][h % 6], nm = ["foto", "logo", "banner", "documento", "fattura", "listino", "copertina", "scansione"][h % 8];
-        return `<tr><td><a href="/wp-admin/upload.php?item=${h % 9000}">${nm}-${h % 9000}.${ext}</a></td><td>admin</td><td>${2023 + h % 3}-${1 + h % 12}-${1 + h % 28}</td></tr>`;
+        return `<tr><td><a href="/wp-admin/upload.php?item=${h % 9000}">${nm}-${h % 9000}.${ext}</a></td><td>admin</td><td>${dataDa(h)}</td></tr>`;
       }) + `</table>`);
   }
   if (sez === "options.php") {
@@ -3186,39 +3220,51 @@ function labirinto(p, search, seme) {
   }
   if (sez === "export.php") {
     return guscio("Esporta", "export.php",
-      `<h1>Strumenti › Esporta</h1><div class="card"><h2>Esporta i contenuti</h2>` +
+      `<h1>Strumenti \u203a Esporta</h1><div class="card"><h2>Esporta i contenuti</h2>` +
       `<p>Scegli cosa scaricare in un file XML.</p>` +
       `<p><label><input type="radio" name="c" checked> Tutti i contenuti</label></p>` +
       `<p><label><input type="radio" name="c"> Solo gli articoli</label></p>` +
       `<p><label><input type="radio" name="c"> Solo le pagine</label></p>` +
       `<p style="margin-top:14px"><a class="btn" href="/wp-admin/export.php?download=1">Scarica il file di esportazione</a></p></div>`);
   }
-  // index.php (bacheca) e edit.php (articoli): la lista degli articoli, con numeri UNICI
+  // index.php (bacheca) e edit.php (articoli): la lista degli articoli, numeri UNICI, titoli veri, stati misti, autori variati
   const quanti = 12 + pezzo(seme, "nart", 0) % 24;
-  const lista = righe("art", quanti, (h) =>
-    `<tr><td><a href="/wp-admin/post.php?post=${h % 90000}&action=edit">Articolo #${h % 90000}</a></td><td>admin</td><td><span class="pill">Bozza</span></td><td>${2024 + h % 2}/${1 + h % 12}/${1 + h % 28}</td></tr>`);
+  const lista = righe("art", quanti, (h) => {
+    const num = h % 90000, [stato, cl] = statoDi(num);
+    return `<tr><td><a href="/wp-admin/post.php?post=${num}&action=edit">${titoloDi(num)}</a></td><td>${autoreDi(num)}</td><td><span class="pill ${cl}">${stato}</span></td><td>${dataDa(h, 2022, 4)}</td></tr>`;
+  });
   if (sez === "edit.php") {
     return guscio("Articoli", "edit.php",
       `<h1>Articoli <a class="btn" href="/wp-admin/post-new.php">Aggiungi</a></h1>` +
       `<table><tr><th>Titolo</th><th>Autore</th><th>Stato</th><th>Data</th></tr>${lista}</table>`);
   }
   return guscio("Bacheca", "index.php",
-    `<h1>Bacheca</h1><div class="card"><h2>In breve</h2><p>${quanti} articoli · ${4 + pezzo(seme, "pag", 0) % 12} pagine · ${pezzo(seme, "com", 0) % 40} commenti</p></div>` +
-    `<div class="card"><h2>Bozze recenti</h2><table><tr><th>Titolo</th><th>Autore</th><th>Stato</th><th>Data</th></tr>${lista}</table></div>`);
+    `<h1>Bacheca</h1><div class="card"><h2>In breve</h2><p>${quanti} articoli \u00b7 ${4 + pezzo(seme, "pag", 0) % 12} pagine \u00b7 ${pezzo(seme, "com", 0) % 40} commenti</p></div>` +
+    `<div class="card"><h2>Articoli recenti</h2><table><tr><th>Titolo</th><th>Autore</th><th>Stato</th><th>Data</th></tr>${lista}</table></div>`);
 }
 
-// la pagina di accesso (errore = null → form pulito; altrimenti il messaggio neutro, senza nominare l'utente né ricompilare)
+// la pagina di accesso: rifatta UGUALE alla vera login di JJA-VIS (24/10, JJ: «deve essere uguale alla nostra vera di login per non
+// destare sospetti»). Tema scuro/ciano, titolo JJA-VIS, tab Accedi/Registrati, campi «Mail o nome utente»/«Password», oppure+Google,
+// Privacy·Regole. Resta un vero form POST con name=log/pwd, così le credenziali del .env fanno entrare e la trappola regge senza JS.
+// errore = null → form pulito; altrimenti il messaggio NEUTRO (non nomina l'utente, non ricompila il campo).
 function paginaAccesso(p, errore) {
-  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Accedi ‹ ${SITO} — WordPress</title>` +
-    `<style>body{background:#f0f0f1;font:14px -apple-system,"Segoe UI",Roboto,sans-serif;color:#3c434a}#login{width:320px;margin:8% auto;padding:0 24px}` +
-    `#logo{text-align:center;font-size:20px;color:#3c434a;margin-bottom:24px}form{background:#fff;border:1px solid #c3c4c7;box-shadow:0 1px 3px rgba(0,0,0,.04);padding:26px 24px}` +
-    `label{display:block;margin:0 0 3px;font-size:14px}input[type=text],input[type=password]{width:100%;border:1px solid #8c8f94;border-radius:3px;padding:8px;margin-bottom:16px;font-size:16px}` +
-    `.btn{width:100%;background:#2271b1;color:#fff;border:0;border-radius:3px;padding:9px;font-size:15px;cursor:pointer}` +
-    `#login_error{background:#fff;border-left:4px solid #d63638;box-shadow:0 1px 1px rgba(0,0,0,.04);padding:12px;margin-bottom:16px;font-size:13px}</style></head><body>` +
-    `<div id="login"><div id="logo">${SITO}</div>` +
-    (errore ? `<div id="login_error"><strong>Errore:</strong> ${errore}</div>` : "") +
-    `<form method="post" action="${p}"><label>Nome utente o indirizzo e-mail</label><input type="text" name="log">` +
-    `<label>Password</label><input type="password" name="pwd"><button class="btn" type="submit">Accedi</button></form></div></body></html>`;
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Accedi \u2039 ${SITO}</title>` +
+    `<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:#020B18;color:#E8F7FF;font:500 16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}` +
+    `.ingresso-scheda{width:100%;max-width:380px}.ingresso-scheda h1{font:800 26px/1.15 system-ui,sans-serif;margin:0 0 10px;letter-spacing:.06em;text-align:center}` +
+    `.ingresso-schede{display:flex;gap:8px;margin:6px 0 4px}.ingresso-schede button{flex:1;margin:0;padding:11px;border:0;border-radius:8px;font:800 15px system-ui,sans-serif;cursor:pointer;background:#0b2a40;color:#cfefff}.ingresso-schede button.su{background:#00B4D8;color:#02121f}` +
+    `label{display:block;margin:14px 0 6px;font-weight:700}input{width:100%;box-sizing:border-box;padding:12px;font-size:18px;border-radius:8px;border:1px solid #00B4D8;background:#071a2c;color:#fff}` +
+    `button.entra{width:100%;margin-top:16px;padding:13px;font:800 17px system-ui,sans-serif;border:0;border-radius:8px;background:#00B4D8;color:#02121f;cursor:pointer}` +
+    `button.ingresso-link{width:100%;margin-top:10px;background:transparent;border:0;color:#7FDBFF;font-weight:600;font-size:15px;cursor:pointer}` +
+    `.ingresso-o{text-align:center;opacity:.7;margin:16px 0 8px}.g{display:flex;justify-content:center;min-height:44px}.g button{background:#fff;color:#3c4043;border:1px solid #747775;border-radius:8px;padding:10px 20px;font:600 15px system-ui,sans-serif;cursor:pointer}` +
+    `#ingresso-esito{min-height:1.4em;color:#FFD60A;text-align:center;margin:14px 0 4px}.ingresso-piccolo{font-size:13px;opacity:.75;text-align:center}.ingresso-piccolo a{color:#7FDBFF}</style></head><body>` +
+    `<div class="ingresso-scheda"><h1>${SITO}</h1>` +
+    `<div class="ingresso-schede"><button type="button" class="su">Accedi</button><button type="button">Registrati</button></div>` +
+    `<form method="post" action="${p}"><label>Mail o nome utente</label><input type="text" name="log" autocomplete="username">` +
+    `<label>Password</label><input type="password" name="pwd" autocomplete="current-password"><button class="entra" type="submit">Accedi</button></form>` +
+    `<button type="button" class="ingresso-link">Password dimenticata?</button>` +
+    `<div class="ingresso-o">oppure</div><div class="g"><button type="button">Accedi con Google</button></div>` +
+    (errore ? `<p id="ingresso-esito">${errore}</p>` : `<p id="ingresso-esito"></p>`) +
+    `<p class="ingresso-piccolo"><a href="#">Privacy</a> \u00b7 <a href="#">Regole</a></p></div></body></html>`;
 }
 export { persefone, ESCHE, labirinto, paginaAccesso };
 async function documentoDallaChat(env, req, url, origine) {

@@ -76,9 +76,37 @@ ok(/Nome utente/.test(sezUtenti) && /@/.test(sezUtenti), "la sezione Utenti most
 ok(/Yoast|WooCommerce|Akismet|Plugin/.test(sezPlugin), "la sezione Plugin mostra una lista di plugin");
 ok(/Titolo del sito|Impostazioni/.test(sezImp) && /Salva/.test(sezImp), "la sezione Impostazioni mostra un form di opzioni");
 ok(sezUtenti !== sezPlugin && sezPlugin !== sezImp && sezUtenti !== corpo, "le sezioni sono diverse fra loro (non più tutte «Bacheca» identiche)");
-// NESSUN DOPPIONE nella lista (prima lo stesso articolo compariva due volte)
-const numeri = [...corpo.matchAll(/Articolo #(\d+)/g)].map((m) => m[1]);
+// NESSUN DOPPIONE nella lista (prima lo stesso articolo compariva due volte). I titoli ora sono veri, i numeri stanno negli href.
+const numeri = [...corpo.matchAll(/post\.php\?post=(\d+)/g)].map((m) => m[1]);
 ok(numeri.length > 0 && new Set(numeri).size === numeri.length, "nessun articolo duplicato nella stessa lista", { totali: numeri.length, unici: new Set(numeri).size });
+// 24/10: i titoli sono VERI (non «Articolo #N»), gli stati sono MISTI (non tutti Bozza), gli autori variano — un sito di anni non è tutto bozze di admin
+const edit = await (await chiama("/wp-admin/edit.php")).text();
+ok(/Guida a|cosa sapere|guida pratica|Capire|Migliorare|cose da sapere/.test(edit) && !/>Articolo #\d+</.test(edit), "gli articoli hanno titoli veri, non «Articolo #N»");
+ok(/Pubblicato/.test(edit) && (edit.match(/>Pubblicato</g) || []).length > (edit.match(/>Bozza</g) || []).length, "gli articoli sono per lo più Pubblicati, non tutti Bozza (JJ: «dopo anni sono tutte bozze»)");
+const autoriLista = [...edit.matchAll(/<td>([a-z]+\d*|admin)<\/td><td><span/g)].map((m) => m[1]);
+ok(new Set(autoriLista).size > 1, "l'autore degli articoli varia, non è sempre admin", autoriLista.slice(0, 6));
+// 24/10: i NUMERI non vanno più in fila (−1 a ogni riga). Dalla tabella Utenti prendo la colonna Articoli e controllo che non sia una scaletta di ±1
+const utentiTab = await (await chiama("/wp-admin/users.php")).text();
+const colArt = [...utentiTab.matchAll(/<td>(\d+)<\/td><\/tr>/g)].map((m) => +m[1]);
+const tuttiPassoUno = colArt.length >= 4 && colArt.slice(1).every((v, k) => Math.abs(v - colArt[k]) <= 1);
+ok(colArt.length >= 4 && !tuttiPassoUno, "i conteggi articoli degli utenti NON sono in fila (±1 a riga)", colArt);
+const suffissi = [...utentiTab.matchAll(/user=[a-z]+(\d+)"/g)].map((m) => +m[1]);
+const suffInFila = suffissi.length >= 4 && suffissi.slice(1).every((v, k) => Math.abs(v - suffissi[k]) === 1);
+ok(suffissi.length >= 4 && !suffInFila, "i suffissi dei nomi utente NON sono in fila (86,85,84…)", suffissi);
+const nomiUtenti = [...utentiTab.matchAll(/user=([a-z]+\d+)"/g)].map((m) => m[1]);
+ok(new Set(nomiUtenti).size === nomiUtenti.length, "nessun nome utente duplicato nella tabella", nomiUtenti);
+// 24/10: il contenuto dell'articolo è fatto di FRASI, non di parole a caso (JJ: «parole messe a caso senza senso compiuto»)
+const artC = await (await chiama("/wp-admin/post.php?post=83273&action=edit")).text();
+ok(/permette di|aiuta a|serve a|è la chiave/.test(artC) && /\.<\/p>|\. /.test(artC), "il contenuto dell'articolo è fatto di frasi di senso compiuto, non di parole a caso");
+// 24/10: la login è rifatta UGUALE alla vera di JJA-VIS (tab Accedi/Registrati, campi veri, Google, Privacy·Regole), non il WordPress generico
+const login = await (await chiama("/wp-login.php")).text();
+ok(/Registrati/.test(login) && /Mail o nome utente/.test(login) && /Accedi con Google/.test(login) && /Privacy/.test(login), "la login finta ha la faccia della vera JJA-VIS (tab, Google, Privacy)");
+ok(!/WordPress/.test(login), "la login finta non dice più «WordPress» nel titolo");
+ok(/name="log"/.test(login) && /name="pwd"/.test(login), "sotto la faccia resta il form POST log/pwd: le credenziali del .env fanno ancora entrare");
+// 24/10: niente MIME inesistente «image/jpg» (è image/jpeg); date in UN solo formato zero-padded
+const med = await (await chiama("/wp-admin/upload.php?item=4303")).text();
+ok(!/image\/jpg\b/.test(med) && /image\/jpeg|image\/png|application\/pdf|wordprocessingml/.test(med), "il tipo del file è un MIME vero (image/jpeg, non image/jpg)", (med.match(/<td>(image|application)[^<]*/) || [])[0]);
+ok(!/\d{4}-\d{1,2}-\d{1,2}/.test(utentiTab + med + edit) && /\d{4}\/\d{2}\/\d{2}/.test(med), "le date sono in un solo formato zero-padded (YYYY/MM/DD), non più «2023-10-6»");
 // un attaccante segue i link: devono restare TUTTI dentro Persefone, mai una strada vera della porta
 const linkDash = [...corpo.matchAll(/href="([^"]+)"/g)].map((m) => new URL("https://x" + m[1]).pathname).filter((pp) => !ESCHE.some((rx) => rx.test(pp)));
 ok(linkDash.length === 0, "ogni link del labirinto resta un'esca (non porta a una strada vera)", linkDash.slice(0, 3));
