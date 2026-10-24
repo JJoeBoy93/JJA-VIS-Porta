@@ -113,7 +113,7 @@ function conGruppo(env) {
 export const DEI = {
   generale: null, ares: "🛡 Ares", persefone: "🕸 Persefone", numeri: "📊 Numeri",
   hera: "✅ Hera", hermes: "📨 Hermes", afrodite: "🎬 Afrodite", dioniso: "🍇 Dioniso",
-  clio: "📜 Clio", zeus: "⚡ Zeus",
+  clio: "📜 Clio", zeus: "⚡ Zeus", efesto: "🔨 Efesto",
   // Niente «atlas»: JJ, 24/10 — Atlas (come Nova) è solo il nome che lui ha dato al SUO assistente
   // JJA-VIS; ognuno chiama il suo come vuole, e per l'utente resta solo quello: il suo JJA-VIS.
   // ⚡ Zeus NON è l'assistente di tutti (JJ, 24/10, correzione): è il ruolo di JARVIS, l'assistente
