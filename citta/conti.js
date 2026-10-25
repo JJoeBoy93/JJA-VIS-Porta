@@ -317,9 +317,11 @@ export class Conti extends DurableObject {
       this.sql.exec("UPDATE conti SET gettoni = gettoni - ?, skin = ? WHERE uid = ?", prezzo, JSON.stringify(sk), uid);
       return aggiorna();
     }
-    if (via === "/conto/partita") {   // a fine partita: il record resta se è più alto. Tetto: in 25 secondi oltre 200 non si fa
-      const gioco = parola(corpo.gioco) || "acchiappa", punti = corpo.punti;
-      if (!Number.isInteger(punti) || punti < 0 || punti > 200) return risposta({ no: "punti" }, 400);
+    if (via === "/conto/partita") {   // a fine partita: il record resta se è più alto
+      // Il tetto è per gioco (25/10): Acchiappa dura 25 secondi e oltre 200 non si fa; gli altri giochi della Sala
+      // fanno migliaia di punti (Incastri, Raffica…), e col tetto unico a 200 la classifica si fermava lì per tutti.
+      const gioco = parola(corpo.gioco) || "acchiappa", punti = corpo.punti, tetto = gioco === "acchiappa" ? 200 : 1000000;
+      if (!Number.isInteger(punti) || punti < 0 || punti > tetto) return risposta({ no: "punti" }, 400);
       const prima = this.sql.exec("SELECT punti FROM record WHERE uid = ? AND gioco = ?", uid, gioco).toArray()[0];
       const nuovo = !prima || punti > prima.punti;
       if (nuovo) this.sql.exec("INSERT INTO record(uid, gioco, punti, quando) VALUES (?, ?, ?, ?) ON CONFLICT(uid, gioco) DO UPDATE SET punti = excluded.punti, quando = excluded.quando", uid, gioco, punti, Date.now());
