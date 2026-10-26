@@ -239,6 +239,9 @@ export default {
     if (req.method === "GET" && url.pathname === "/assistente/calendario") return calendarioDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente/fatto") return fattoDallaChat(env, req, origine, false);
     if (req.method === "POST" && url.pathname === "/assistente/annulla") return fattoDallaChat(env, req, origine, true);
+    if (req.method === "POST" && url.pathname === "/assistente/aggiungi") return aggiungiDallaChat(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/assistente/elimina") return eliminaDallaChat(env, req, origine);
+    if (req.method === "GET" && url.pathname === "/assistente/ics") return icsDallaChat(env, req, url, origine);
     if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
@@ -1204,11 +1207,11 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
 // e un avviso un'ora prima; senza ora: tutto il giorno, avviso alle 20 della sera prima. Le ore si scrivono in UTC (Z)
 function icsImpegno(x) {
   const z = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-  const testo = (t) => String(t).replace(/\\/g, "\\\\").replace(/([,;])/g, "\\$1").replace(/\n/g, "\\n");
+  const testo = (t) => String(t).replace(/\\/g, "\\\\").replace(/([,;])/g, "\\$1").replace(/\r\n|\r|\n/g, "\\n");
   const g = x.giorno.replace(/-/g, ""), dopo = new Date(Date.UTC(+x.giorno.slice(0, 4), +x.giorno.slice(5, 7) - 1, +x.giorno.slice(8, 10) + 1)).toISOString().slice(0, 10).replace(/-/g, "");
   const quando = x.ora ? [`DTSTART:${z(daRoma(x.giorno, x.ora))}`, `DTEND:${z(new Date(daRoma(x.giorno, x.ora).getTime() + 30 * 60000))}`] : [`DTSTART;VALUE=DATE:${g}`, `DTEND;VALUE=DATE:${dopo}`];
   return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//JJA-VIS//Atlas//IT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
-    `UID:${x.id}-${g}@atlas.jja-vis`, `DTSTAMP:${z(new Date())}`, ...quando, `SUMMARY:${testo(x.cosa)}`, "DESCRIPTION:Segnato da Atlas (JJA-VIS)",
+    `UID:${x.id}-${g}@atlas.jja-vis`, `DTSTAMP:${z(new Date())}`, ...quando, `SUMMARY:${testo(x.cosa)}`, `DESCRIPTION:${x.nota ? testo(x.nota) : "Segnato da Atlas (JJA-VIS)"}`,
     "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${testo(x.cosa)}`, x.ora ? "TRIGGER:-PT60M" : "TRIGGER:-PT4H", "END:VALARM", "END:VEVENT", "END:VCALENDAR"].join("\r\n") + "\r\n";
 }
 async function atlasMail(env, a, nome, oggetto, testo, allegati) {
@@ -3130,6 +3133,7 @@ async function voceDallaChat(env, req, origine) {
 // li chiude con un tocco: un impegno fatto esce da f.impegni (e quindi non viene più chiesto «l'hai fatto?», né per mail né in chat)
 // ed entra in f.fatti per 30 giorni, da dove «annulla» lo riporta; una scadenza si segna pagata come in chat (scadenzaPagata).
 const FATTI_GIORNI = 30;
+const conNota = (x) => (x.nota ? { nota: x.nota } : {});   // la nota c'è solo se è stata scritta: gli impegni dell'assistente restano {id, cosa, giorno, ora}
 const perGiornoOra = (a, b) => (a.giorno + (a.ora || "")).localeCompare(b.giorno + (b.ora || ""));
 async function calendarioDallaChat(env, req, origine) {
   const mail = await mailDalConto(req, fetch, env);
@@ -3139,10 +3143,10 @@ async function calendarioDallaChat(env, req, origine) {
   catch (e) { if (!/GitHub 404/.test(String(e && e.message))) return risposta({ errore: "non riesco a leggere il tuo calendario: riprova tra poco" }, 502, origine); A = {}; }
   const f = A[mail] || {}, limite = Date.now() - FATTI_GIORNI * 864e5;
   return risposta({
-    impegni: (f.impegni || []).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, ora: x.ora || null })).sort(perGiornoOra),
-    scadenze: (f.scadenze || []).filter((x) => !x.pagata).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, importo: x.importo || null, ogni_mese: !!x.ogni_mese })).sort(perGiornoOra),
+    impegni: (f.impegni || []).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, ora: x.ora || null, ...conNota(x) })).sort(perGiornoOra),
+    scadenze: (f.scadenze || []).filter((x) => !x.pagata).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, importo: x.importo || null, ogni_mese: !!x.ogni_mese, ...conNota(x) })).sort(perGiornoOra),
     fatti: (f.fatti || []).filter((x) => Date.parse(x.quando_fatto) >= limite).sort((a, b) => b.quando_fatto.localeCompare(a.quando_fatto))
-      .map((x) => ({ id: x.id, tipo: x.tipo || "impegno", cosa: x.cosa, giorno: x.giorno, ora: x.ora || null, importo: x.importo || null, quando_fatto: x.quando_fatto })),
+      .map((x) => ({ id: x.id, tipo: x.tipo || "impegno", cosa: x.cosa, giorno: x.giorno, ora: x.ora || null, importo: x.importo || null, quando_fatto: x.quando_fatto, ...conNota(x) })),
   }, 200, origine);
 }
 class ErroreCalendario extends Error { constructor(stato, msg) { super(msg); this.stato = stato; } }
@@ -3176,7 +3180,7 @@ async function fattoDallaChat(env, req, origine, annulla) {
       const s = f.scadenze.find((x) => x.id === id && !x.pagata);
       if (s) {
         const prima = { giorno: s.giorno, avvisi: s.avvisi || {} }, fid = `${s.id}@${adesso}`;
-        f.fatti.push({ id: fid, da: s.id, tipo: "scadenza", cosa: s.cosa, giorno: s.giorno, importo: s.importo || null, prima, quando_fatto: adesso });
+        f.fatti.push({ id: fid, da: s.id, tipo: "scadenza", cosa: s.cosa, giorno: s.giorno, importo: s.importo || null, ...conNota(s), prima, quando_fatto: adesso });
         scadenzaPagata(s); return { id: fid };
       }
       throw new ErroreCalendario(f.fatti.some((x) => x.id === id || x.da === id) || f.scadenze.some((x) => x.id === id) ? 409 : 404,
@@ -3187,6 +3191,100 @@ async function fattoDallaChat(env, req, origine, annulla) {
     if (e instanceof ErroreCalendario) return risposta({ errore: e.message }, e.stato, origine);
     return risposta({ errore: "non riesco a salvare: riprova tra poco" }, 502, origine);
   }
+}
+// ══ AGGIUNGERE, APRIRE, ELIMINARE A MANO — 26 ottobre 2026 ════════════════════════════════════════════════════════════════
+// JJ: «poter aggiungere in quel calendario l'appuntamento manualmente, e che si possa riaprire per vedere l'impegno per esteso, con un
+// tasto rapido come quello della mail per aggiungere nel tuo calendario vero l'impegno». Stesso account e stessa scheda di /assistente:
+// quello che si aggiunge qui ha la stessa forma di quello che segna l'assistente (applicaEsito: stessi id, `avvisato: false`), quindi
+// i promemoria lo trattano come gli altri; in più, facoltativa, la `nota`.
+const CAL_COSA_MAX = 200, CAL_NOTA_MAX = 500, CAL_APERTI_MAX = 500;
+const giornoVero = (g) => { if (typeof g !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(g)) return false; const d = new Date(g + "T12:00:00Z"); return !isNaN(d) && d.toISOString().slice(0, 10) === g; };
+async function aggiungiDallaChat(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  d = d && typeof d === "object" ? d : {};
+  const no = (m) => risposta({ errore: m }, 400, origine);
+  if (d.tipo !== "impegno" && d.tipo !== "scadenza") return no("il tipo è «impegno» o «scadenza»");
+  const cosa = typeof d.cosa === "string" ? d.cosa.trim() : "";
+  if (!cosa) return no("scrivi cosa c'è da fare");
+  if (cosa.length > CAL_COSA_MAX) return no(`«cosa» è troppo lungo: al massimo ${CAL_COSA_MAX} caratteri`);
+  if (!giornoVero(d.giorno)) return no("la data non è valida: serve il giorno nella forma AAAA-MM-GG");
+  let nota = null;
+  if (d.nota !== undefined && d.nota !== null) {
+    if (typeof d.nota !== "string") return no("la nota deve essere un testo");
+    nota = d.nota.trim() || null;
+    if (nota && nota.length > CAL_NOTA_MAX) return no(`la nota è troppo lunga: al massimo ${CAL_NOTA_MAX} caratteri`);
+  }
+  let riga;
+  if (d.tipo === "impegno") {
+    let ora = null;
+    if (d.ora !== undefined && d.ora !== null && d.ora !== "") {
+      if (typeof d.ora !== "string" || !/^([01]?\d|2[0-3]):[0-5]\d$/.test(d.ora.trim())) return no("l'ora non è valida: serve HH:MM, fra 00:00 e 23:59");
+      ora = d.ora.trim().padStart(5, "0");
+    }
+    riga = { id: nuovoId().slice(0, 6), cosa, giorno: d.giorno, ora, avvisato: false, ...(nota ? { nota } : {}) };
+  } else {
+    let importo = null;
+    if (d.importo !== undefined && d.importo !== null && d.importo !== "") {
+      if (typeof d.importo !== "string" && typeof d.importo !== "number") return no("l'importo deve essere un testo");
+      importo = String(d.importo).trim() || null;
+      if (importo && importo.length > 30) return no("l'importo è troppo lungo: al massimo 30 caratteri");
+    }
+    riga = { id: "s" + nuovoId().slice(0, 5), cosa, importo, giorno: d.giorno, ogni_mese: d.ogni_mese === true, pagata: false, avvisi: {}, ...(nota ? { nota } : {}) };
+  }
+  try {
+    await atlasAggiorna(env, mail, (f) => {
+      f.impegni = f.impegni || []; f.scadenze = f.scadenze || [];
+      if (f.impegni.length + f.scadenze.length >= CAL_APERTI_MAX) throw new ErroreCalendario(400, `ci sono già ${CAL_APERTI_MAX} cose aperte: chiudine o eliminane qualcuna`);
+      (d.tipo === "impegno" ? f.impegni : f.scadenze).push(riga); return riga;
+    }, true);
+  } catch (e) {
+    if (e instanceof ErroreCalendario) return risposta({ errore: e.message }, e.stato, origine);
+    return risposta({ errore: "non riesco a salvare: riprova tra poco" }, 502, origine);
+  }
+  // la riga com'è nel GET /assistente/calendario
+  const fuori = d.tipo === "impegno" ? { id: riga.id, cosa: riga.cosa, giorno: riga.giorno, ora: riga.ora, ...conNota(riga) }
+    : { id: riga.id, cosa: riga.cosa, giorno: riga.giorno, importo: riga.importo, ogni_mese: riga.ogni_mese, ...conNota(riga) };
+  return risposta({ ok: true, tipo: d.tipo, ...fuori }, 201, origine);
+}
+// POST /assistente/elimina {id}: toglie un impegno o una scadenza APERTI di chi chiede; di un altro (o chiusi) → 404, e non si scrive niente
+async function eliminaDallaChat(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const id = d && typeof d.id === "string" ? d.id.trim().slice(0, 40) : "";
+  if (!id) return risposta({ errore: "manca l'id" }, 400, origine);
+  try {
+    await atlasAggiorna(env, mail, (f) => {
+      f.impegni = f.impegni || []; f.scadenze = f.scadenze || [];
+      const i = f.impegni.findIndex((x) => x.id === id);
+      if (i >= 0) { f.impegni.splice(i, 1); return true; }
+      const j = f.scadenze.findIndex((x) => x.id === id && !x.pagata);
+      if (j >= 0) { f.scadenze.splice(j, 1); return true; }
+      throw new ErroreCalendario(404, "non è tuo, o non esiste");
+    }, true);
+    return risposta({ ok: true, id }, 200, origine);
+  } catch (e) {
+    if (e instanceof ErroreCalendario) return risposta({ errore: e.message }, e.stato, origine);
+    return risposta({ errore: "non riesco a salvare: riprova tra poco" }, 502, origine);
+  }
+}
+// GET /assistente/ics?id=…: l'invito di quell'impegno, lo stesso della mail (icsImpegno). Una scadenza diventa un evento di tutto il giorno.
+// Il token sta nell'intestazione come le altre rotte: la pagina scarica il file e lo dà al telefono
+async function icsDallaChat(env, req, url, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  const id = String(url.searchParams.get("id") || "").trim().slice(0, 40);
+  if (!id) return risposta({ errore: "manca l'id" }, 400, origine);
+  let A; try { A = deb64((await gh(env, "GET", "atlas.json")).content); }
+  catch (e) { return risposta({ errore: /GitHub 404/.test(String(e && e.message)) ? "non è tuo, o non esiste" : "non riesco a leggere il tuo calendario: riprova tra poco" }, /GitHub 404/.test(String(e && e.message)) ? 404 : 502, origine); }
+  const f = A[mail] || {};
+  const x = (f.impegni || []).find((y) => y.id === id);
+  const s = x ? null : (f.scadenze || []).find((y) => y.id === id && !y.pagata);
+  if (!x && !s) return risposta({ errore: "non è tuo, o non esiste" }, 404, origine);
+  const ev = x || { id: s.id, giorno: s.giorno, ora: null, cosa: `💶 ${s.cosa}${s.importo ? " " + s.importo : ""}`, nota: s.nota };
+  return new Response(icsImpegno(ev), { status: 200, headers: { "Content-Type": "text/calendar; charset=utf-8", "Content-Disposition": 'attachment; filename="impegno.ics"', ...cors(origine) } });
 }
 // ══ IL PRIMO INCONTRO — 22 ottobre 2026 (Athena) ══════════════════════════
 // JJ: «quando viene usato per la prima volta, è proprio quando deve colpire per la sua utilità… in questo caso non ha neanche

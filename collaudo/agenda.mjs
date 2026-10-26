@@ -6,6 +6,11 @@
 // su una singola la chiude; «annulla» li rimette; id di un altro account 404, già fatto 409, senza token 401 (e gli errori non scrivono nulla);
 // oltre 30 giorni i fatti spariscono; il CORS è quello di /assistente; archivio giù → il GET dice 502, non «non hai niente».
 // CONTROPROVA: con «fatto» che NON toglie l'impegno dagli aperti la prova «non lo chiede più» diventa rossa.
+// 26/10, il calendario vero (JJ: «poter aggiungere in quel calendario l'appuntamento manualmente»): POST /assistente/aggiungi, POST /assistente/elimina,
+// GET /assistente/ics. «Aggiungi» mette un impegno (o una scadenza) con la forma di quelli dell'assistente (stesso id, `avvisato: false`) e il giro
+// dei promemoria lo tratta come gli altri; i dati sbagliati danno 400 col motivo e non scrivono; «elimina» lo toglie, 404 se non è suo; «ics» dà
+// l'invito della mail (text/calendar, VEVENT, SUMMARY); senza token 401; la `nota` si conserva e torna nel GET.
+// CONTROPROVA: se «aggiungi» non mette l'`id`, la prova «il giro dei promemoria lo vede» diventa rossa.
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -19,6 +24,12 @@ const sorgente = readFileSync(join(qui, "..", "worker.js"), "utf8");
 if (!sorgente.includes(MARCA)) { console.log("  ❌ la riga di «fatto» non è più quella: aggiorna MARCA nella controprova"); process.exit(1); }
 writeFileSync(join(dir, "worker-rotto.mjs"), sorgente.replace(MARCA, "const x = f.impegni[j];"));
 const Rotto = await import(join(dir, "worker-rotto.mjs"));
+
+// la copia che sbaglia: «aggiungi» non mette l'id all'impegno
+const MARCA2 = "riga = { id: nuovoId().slice(0, 6), cosa, giorno: d.giorno, ora, avvisato: false";
+if (sorgente.split(MARCA2).length !== 2) { console.log("  ❌ la riga di «aggiungi» non è più quella: aggiorna MARCA2 nella controprova"); process.exit(1); }
+writeFileSync(join(dir, "worker-senza-id.mjs"), sorgente.replace(MARCA2, "riga = { cosa, giorno: d.giorno, ora, avvisato: false"));
+const SenzaId = await import(join(dir, "worker-senza-id.mjs"));
 
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
@@ -142,6 +153,119 @@ console.log("── dopo «fatto» non si chiede più «l'hai fatto?»");
 console.log("── CONTROPROVA: se «fatto» non toglie l'impegno dagli aperti, «non lo chiede più» diventa rossa");
 { const n = await prova(Rotto, "essenziale");
   ok(n > 0, "con «fatto» rotto la mail «l'hai fatto?» parte ancora: la prova è rossa", posta.map((m) => m.subject)); }
+
+// ══ AGGIUNGERE, ELIMINARE, L'INVITO — 26/10 ═════════════════════════════════════════════════════════════════════════════
+const aggiungi = (corpo, tok = A, Mod = W) => chiama(Mod, "POST", "/assistente/aggiungi", tok, corpo);
+const elimina = (id, tok = A, Mod = W) => chiama(Mod, "POST", "/assistente/elimina", tok, { id });
+const ics = (id, tok = A, Mod = W) => chiama(Mod, "GET", "/assistente/ics?id=" + encodeURIComponent(id), tok);
+console.log("── aggiungi un impegno: stessa forma di quelli dell'assistente");
+nuova();
+{ const r = await aggiungi({ tipo: "impegno", cosa: "  la dentista  ", giorno: "2027-03-05", ora: "9:30" }); const j = await r.json();
+  ok(r.status === 201 && j.ok === true && /^[0-9a-f]{6}$/.test(j.id) && j.cosa === "la dentista" && j.giorno === "2027-03-05" && j.ora === "09:30", "201 con la riga creata (id di 6 caratteri, cosa pulita, ora 09:30)", [r.status, j]);
+  ok(scritture === 1, "UNA scrittura su atlas.json", scritture);
+  const c = await cal(); const x = c.impegni.find((y) => y.id === j.id);
+  ok(x && Object.keys(x).sort().join() === "cosa,giorno,id,ora", "nel GET ha la stessa forma degli impegni dell'assistente: {id, cosa, giorno, ora}", x);
+  const chiavi = c.impegni.map((y) => y.giorno + (y.ora || ""));
+  ok(chiavi.join() === [...chiavi].sort().join(), "e sta al suo posto nell'ordine", c.impegni.map((y) => y.id));
+  const nelFilo = scheda().impegni.find((y) => y.id === j.id);
+  ok(nelFilo && nelFilo.avvisato === false && Object.keys(nelFilo).sort().join() === "avvisato,cosa,giorno,id,ora", "nella scheda: {id, cosa, giorno, ora, avvisato:false} come applicaEsito", nelFilo);
+  const senzaOra = await (await aggiungi({ tipo: "impegno", cosa: "la revisione", giorno: "2027-03-06", ora: null })).json();
+  ok(senzaOra.ora === null && scheda().impegni.find((y) => y.id === senzaOra.id).ora === null, "senza ora: ora null (evento di tutto il giorno)", senzaOra);
+  const f = await fatto(j.id); ok(f.status === 200, "e si chiude con «fatto» come gli altri", f.status); }
+
+console.log("── aggiungi: la nota si conserva e torna nel GET");
+nuova();
+{ const j = await (await aggiungi({ tipo: "impegno", cosa: "il notaio", giorno: "2027-03-05", ora: "11:00", nota: "porta la carta d'identità\ne il codice fiscale" })).json();
+  const c = await cal(); const x = c.impegni.find((y) => y.id === j.id);
+  ok(j.nota === "porta la carta d'identità\ne il codice fiscale" && x && x.nota === j.nota, "la nota c'è nella risposta e nel GET", [j, x]);
+  await fatto(j.id); const c2 = await cal(); ok(c2.fatti.find((y) => y.id === j.id)?.nota === j.nota, "…e anche fra i fatti", c2.fatti);
+  await annulla(j.id); ok(scheda().impegni.find((y) => y.id === j.id)?.nota === j.nota, "…e dopo «annulla» è ancora lì"); }
+
+console.log("── aggiungi una scadenza");
+nuova();
+{ const r = await aggiungi({ tipo: "scadenza", cosa: "la luce", giorno: "2027-03-20", importo: "€ 64,10", ogni_mese: true }); const j = await r.json();
+  ok(r.status === 201 && /^s[0-9a-f]{5}$/.test(j.id) && j.importo === "€ 64,10" && j.ogni_mese === true, "201 con la riga (id «s…», importo, ogni mese)", [r.status, j]);
+  const c = await cal(); const x = c.scadenze.find((y) => y.id === j.id);
+  ok(x && Object.keys(x).sort().join() === "cosa,giorno,id,importo,ogni_mese", "nel GET: {id, cosa, giorno, importo, ogni_mese}", x);
+  const s = scheda().scadenze.find((y) => y.id === j.id); ok(s && s.pagata === false && JSON.stringify(s.avvisi) === "{}", "nella scheda: come quelle dell'assistente (pagata:false, avvisi:{})", s);
+  const j2 = await (await aggiungi({ tipo: "scadenza", cosa: "il bollo", giorno: "2027-03-21" })).json();
+  ok(j2.importo === null && j2.ogni_mese === false, "senza importo né «ogni mese»: null e false", j2);
+  const p = await fatto(j.id); ok(p.status === 200 && (await cal()).scadenze.find((y) => y.id === j.id).giorno === "2027-04-20", "«pagata» la porta al mese dopo, come le altre"); }
+
+console.log("── il giro dei promemoria lo vede come gli altri");
+const aggiuntoPartono = async (Mod) => { nuova({ scadenze: [], impegni: [] });
+  const j = await (await aggiungi({ tipo: "impegno", cosa: "il dentista", giorno: "2026-10-28", ora: "15:00" }, A, Mod)).json();
+  await giri(Mod); return { j, mail: posta.filter((m) => /Alle 15:00: il dentista/.test(m.subject)) }; };
+{ const { j, mail } = await aggiuntoPartono(W);
+  ok(/^[0-9a-f]{6}$/.test(j.id), "ha un id", j);
+  ok(mail.length === 1, "il promemoria «un'ora prima» parte, una volta sola", posta.map((m) => m.subject));
+  const nomi = (mail[0]?.attachment || []).map((a) => a.name);
+  ok(nomi.length === 1 && new RegExp(`^atlas-2026-10-28-${j.id}\\.ics$`).test(nomi[0]), "con l'invito .ics col suo id", nomi);
+  ok(scheda().impegni.find((y) => y.id === j.id)?.avvisato === true, "e dopo, l'impegno è segnato «avvisato» (si trova per id)", scheda().impegni); }
+
+console.log("── dati sbagliati: 400 col motivo, e non scrivono");
+nuova();
+{ const prove = [["data «32/13»", { tipo: "impegno", cosa: "x", giorno: "32/13" }, /data/i],
+    ["data che non esiste (30 febbraio)", { tipo: "impegno", cosa: "x", giorno: "2027-02-30" }, /data/i],
+    ["data mancante", { tipo: "impegno", cosa: "x" }, /data/i],
+    ["cosa vuota", { tipo: "impegno", cosa: "   ", giorno: "2027-03-05" }, /cosa/i],
+    ["cosa mancante", { tipo: "scadenza", giorno: "2027-03-05" }, /cosa/i],
+    ["cosa di 201 caratteri", { tipo: "impegno", cosa: "a".repeat(201), giorno: "2027-03-05" }, /200/],
+    ["ora «25:00»", { tipo: "impegno", cosa: "x", giorno: "2027-03-05", ora: "25:00" }, /ora/i],
+    ["ora «10:75»", { tipo: "impegno", cosa: "x", giorno: "2027-03-05", ora: "10:75" }, /ora/i],
+    ["ora «mattina»", { tipo: "impegno", cosa: "x", giorno: "2027-03-05", ora: "mattina" }, /ora/i],
+    ["tipo sbagliato", { tipo: "promemoria", cosa: "x", giorno: "2027-03-05" }, /tipo/i],
+    ["importo di 31 caratteri", { tipo: "scadenza", cosa: "x", giorno: "2027-03-05", importo: "1".repeat(31) }, /importo/i],
+    ["nota di 501 caratteri", { tipo: "impegno", cosa: "x", giorno: "2027-03-05", nota: "n".repeat(501) }, /nota/i]];
+  for (const [nome, corpo, motivo] of prove) { const r = await aggiungi(corpo); const j = await r.json();
+    ok(r.status === 400 && motivo.test(j.errore || ""), `${nome}: 400 col motivo`, [r.status, j]); }
+  const r0 = await chiama(W, "POST", "/assistente/aggiungi", A); ok(r0.status === 400, "corpo vuoto: 400", r0.status);
+  ok(scritture === 0 && scheda().impegni.length === 3, "nessuno di questi errori ha scritto sull'archivio", [scritture, scheda().impegni.length]);
+  const l = await aggiungi({ tipo: "impegno", cosa: "a".repeat(200), giorno: "2027-03-05" }); ok(l.status === 201, "200 caratteri: va (il limite è 200)", l.status);
+  const ge = await aggiungi({ tipo: "impegno", cosa: "x", giorno: "2028-02-29", ora: "00:00" }); ok(ge.status === 201, "29 febbraio di un anno bisestile e ora 00:00: vanno", ge.status);
+  ok(r0.headers.get("Access-Control-Allow-Origin") === "https://jjoeboy93.github.io", "gli errori hanno il CORS"); }
+
+console.log("── senza token: 401, e non scrive");
+nuova();
+{ const a = await aggiungi({ tipo: "impegno", cosa: "x", giorno: "2027-03-05" }, ""), e = await elimina("i1", ""), c = await ics("i1", ""), a2 = await aggiungi({ tipo: "impegno", cosa: "x", giorno: "2027-03-05" }, "c".repeat(64));
+  ok([a, e, c, a2].every((r) => r.status === 401) && scritture === 0 && scheda().impegni.length === 3, "aggiungi, elimina, ics senza token (o con uno sconosciuto): 401", [a.status, e.status, c.status, a2.status]); }
+
+console.log("── elimina");
+nuova();
+{ scritture = 0; const r = await elimina("i2"); const j = await r.json();
+  ok(r.status === 200 && j.ok === true && scritture === 1, "un impegno: 200, UNA scrittura", [r.status, scritture]);
+  ok(!(await cal()).impegni.some((x) => x.id === "i2") && (await cal()).fatti.length === 0, "sparisce dal calendario (e non finisce fra i fatti)");
+  const r2 = await elimina("s1"); ok(r2.status === 200 && !(await cal()).scadenze.some((x) => x.id === "s1"), "una scadenza: sparisce");
+  const m = await (await aggiungi({ tipo: "impegno", cosa: "da togliere", giorno: "2027-03-05" })).json(); const r3 = await elimina(m.id);
+  ok(r3.status === 200 && !(await cal()).impegni.some((x) => x.id === m.id), "uno aggiunto a mano: sparisce"); scritture = 0;
+  const r4 = await elimina("x1"); ok(r4.status === 404, "id di un altro account: 404", r4.status);
+  ok(scheda("altro@prova.it").impegni.length === 1, "…e il suo non è stato toccato");
+  const r5 = await elimina("zzz"); ok(r5.status === 404, "id che non esiste: 404", r5.status);
+  const r6 = await elimina("i2"); ok(r6.status === 404, "già eliminato: 404", r6.status);
+  const r7 = await elimina("s9"); ok(r7.status === 404, "una scadenza già pagata: 404 (non è più aperta)", r7.status);
+  const r8 = await chiama(W, "POST", "/assistente/elimina", A, {}); ok(r8.status === 400, "senza id: 400", r8.status);
+  ok(scritture === 0, "nessuno di questi errori ha scritto sull'archivio", scritture);
+  archivioGiu = true; const r9 = await elimina("i1"); ok(r9.status === 502, "archivio giù: 502, non «non è tuo»", r9.status); archivioGiu = false; }
+
+console.log("── ics: l'invito della mail");
+nuova();
+{ const r = await ics("i2"); const t = await r.text();
+  ok(r.status === 200 && /^text\/calendar/.test(r.headers.get("Content-Type")) && r.headers.get("Content-Disposition") === 'attachment; filename="impegno.ics"', "200, text/calendar, allegato «impegno.ics»", [r.status, r.headers.get("Content-Type"), r.headers.get("Content-Disposition")]);
+  ok(t.includes("BEGIN:VCALENDAR") && t.includes("BEGIN:VEVENT") && t.includes("SUMMARY:il meccanico") && t.includes("DTSTART:20270301T083000Z"), "BEGIN:VEVENT, SUMMARY giusto, 09:30 di Roma = 08:30 UTC", t);
+  ok(t.includes("UID:i2-20270301@atlas.jja-vis") && t.includes("BEGIN:VALARM"), "lo stesso invito della mail (UID dall'id, con l'avviso)");
+  const tg = await (await ics("i1")).text(); ok(tg.includes("DTSTART;VALUE=DATE:20270301") && tg.includes("DTEND;VALUE=DATE:20270302"), "senza ora: evento di tutto il giorno", tg);
+  const m = await (await aggiungi({ tipo: "impegno", cosa: "il notaio, piano 2", giorno: "2027-03-05", ora: "11:00", nota: "carta d'identità\r\nBEGIN:VEVENT" })).json(); const tn = await (await ics(m.id)).text();
+  ok(tn.includes("SUMMARY:il notaio\\, piano 2") && tn.includes("DESCRIPTION:carta d'identità\\nBEGIN:VEVENT") && (tn.match(/^BEGIN:VEVENT/gm) || []).length === 1, "la nota va nella descrizione, e un a-capo nella nota non apre un altro evento", tn);
+  const ts = await (await ics("s1")).text(); ok(ts.includes("SUMMARY:💶 bollo auto € 180") && ts.includes("DTSTART;VALUE=DATE:20270310"), "una scadenza: evento di tutto il giorno con l'importo", ts);
+  const r4 = await ics("x1"); ok(r4.status === 404, "impegno di un altro account: 404", r4.status);
+  ok((await ics("zzz")).status === 404 && (await chiama(W, "GET", "/assistente/ics", A)).status === 400, "id che non esiste: 404; senza id: 400");
+  ok(r.headers.get("Access-Control-Allow-Origin") === "https://jjoeboy93.github.io", "CORS come le altre");
+  archivioGiu = true; const r5 = await ics("i1"); ok(r5.status === 502, "archivio giù: 502", r5.status); archivioGiu = false; }
+
+console.log("── CONTROPROVA: se «aggiungi» non mette l'id, «il giro dei promemoria lo vede» diventa rossa");
+{ const { j, mail } = await aggiuntoPartono(SenzaId);
+  const nomi = (mail[0]?.attachment || []).map((a) => a.name);
+  ok(!(/^[0-9a-f]{6}$/.test(j.id) && nomi.length === 1 && new RegExp(`^atlas-2026-10-28-${j.id}\\.ics$`).test(nomi[0])), "senza id l'impegno non ha un id e l'invito esce «undefined»: la prova è rossa", [j, nomi]); }
 
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde");
 process.exit(errori ? 1 : 0);
