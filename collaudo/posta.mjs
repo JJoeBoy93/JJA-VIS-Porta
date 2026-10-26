@@ -145,7 +145,9 @@ ok(mandate.some((m) => /⏰ Alle 18:00: ricordare a Jacopo il parrucchiere/.test
 const dopo17 = mandate.length;
 await atlasPromemoria(env, new Date("2026-10-14T15:30:00Z")); ok(mandate.length === dopo17, "il promemoria parte una volta sola", mandate.length);
 ok(tgMsg.some((t) => /Atlas ha mandato/.test(t.text)), "JJ sa cosa ha mandato Atlas", tgMsg);
-nuovo(); repo["atlas.json"] = { "x@p.it": { nome: "", turni: [], riepilogo: "", impegni: [{ id: "b", cosa: "y", giorno: "2026-12-10", ora: "09:00", avvisato: false, ics: true }] } };
+// 27/10: posta: "tutto" perché qui si prova il promemoria «un'ora prima» di un impegno delle 9; chi non ha scelto è «essenziale»: entro le 12
+// l'impegno sta nel programma del mattino, senza promemoria a parte (collaudo/meno-mail.mjs)
+nuovo(); repo["atlas.json"] = { "x@p.it": { nome: "", posta: "tutto", turni: [], riepilogo: "", impegni: [{ id: "b", cosa: "y", giorno: "2026-12-10", ora: "09:00", avvisato: false, ics: true }] } };
 await atlasPromemoria(env, new Date("2026-12-10T07:07:00Z"));   // 08:07 a Roma d'inverno (+1): un'ora prima delle 9
 ok(mandate.some((m) => /Alle 09:00/.test(m.subject)), "d'inverno (ora solare) il promemoria parte all'ora giusta", mandate.map((m) => m.subject));
 

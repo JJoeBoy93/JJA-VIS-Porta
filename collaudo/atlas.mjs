@@ -23,8 +23,10 @@ const alle = (g, h) => new Date(`${g}T${h}:00+02:00`);
 const oggetti = () => posta.map((m) => m.subject);
 const imp = () => repo["atlas.json"]["je@prova.it"].impegni;
 
-// impegni: uno PASSATO (ieri), uno di oggi, uno futuro
-repo["atlas.json"] = { "je@prova.it": { nome: "Jessica", turni: [], scadenze: [], impegni: [
+// impegni: uno PASSATO (ieri), uno di oggi, uno futuro.
+// 27/10: posta: "tutto" perché qui si prova il servizio com'era («l'hai fatto?» come mail a sé, ogni giorno finché non risponde): chi non ha
+// scelto è «essenziale» e la domanda diventa una riga del programma del mattino (collaudo/meno-mail.mjs)
+repo["atlas.json"] = { "je@prova.it": { nome: "Jessica", posta: "tutto", turni: [], scadenze: [], impegni: [
   { id: "p1", cosa: "Ponte di Legno", giorno: "2026-10-22", ora: null, ics: true },
   { id: "o1", cosa: "cup", giorno: "2026-10-23", ora: "10:00", ics: true, avvisato: true },
   { id: "f1", cosa: "dentista", giorno: "2026-10-28", ora: "15:00", ics: true },

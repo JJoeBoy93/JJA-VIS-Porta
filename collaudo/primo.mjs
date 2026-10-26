@@ -35,7 +35,10 @@ repo[`utenti/${CHI}.json`] = b64({ chi: CHI, mail: "giada@prova.it", tuo: "Giada
 repo["bozze/af144945.json"] = b64({ id: "af144945", chi: CHI, da_dove: "sondaggio", stato: "arrivata", domanda: BISOGNO });
 repo["attesa.json"] = b64({ ids: ["11111111", "af144945"] });
 repo["bozze/11111111.json"] = b64({ id: "11111111", chi: "ffffffffffffffff", da_dove: "chat", stato: "arrivata" });
-repo["atlas.json"] = b64({ "giada@prova.it": { nome: "Giada", turni: [], impegni: [], riepilogo: "", assistente: "Arya" } });
+// 27/10: posta: "tutto" perché qui si prova com'era: la prima proposta ANCHE per mail e «Prima di uscire» ogni mattina, anche senza impegni.
+// Chi non ha scelto è «essenziale»: la proposta fatta dalla pagina resta nella chat e le cose da portare viaggiano solo dentro il programma
+// di un giorno con un impegno (collaudo/meno-mail.mjs)
+repo["atlas.json"] = b64({ "giada@prova.it": { nome: "Giada", posta: "tutto", turni: [], impegni: [], riepilogo: "", assistente: "Arya" } });
 
 // controprova: un'altra persona col codice di Giada non legge il suo sondaggio e non chiude la sua domanda
 risposta = '{"risposta":"Ciao, ecco cosa faccio.","nuovi":[]}';

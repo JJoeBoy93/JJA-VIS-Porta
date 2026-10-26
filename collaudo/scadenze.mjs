@@ -20,7 +20,9 @@ globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url));
   return new Response("{}", { status: 404 }); };
 const env = { GH_TOKEN: "g", BREVO_API_KEY: "k", MITTENTE: "atlas@jjavis.it", TG_BOT_TOKEN: "t", TG_CHAT: "1" };
 const alle = (g, h) => new Date(`${g}T${h}:00+02:00`);
-repo["atlas.json"] = { "papa@prova.it": { nome: "Franco", turni: [], impegni: [{ id: "i1", cosa: "dal medico", giorno: "2026-10-25", ora: null, avvisato: false, ics: true }],
+// 27/10: posta: "tutto" perché qui si prova il servizio com'era (3 giorni prima + la mattina stessa); chi non ha scelto è «essenziale»:
+// una mail sola, il giorno prima (collaudo/meno-mail.mjs)
+repo["atlas.json"] = { "papa@prova.it": { nome: "Franco", posta: "tutto", turni: [], impegni: [{ id: "i1", cosa: "dal medico", giorno: "2026-10-25", ora: null, avvisato: false, ics: true }],
   scadenze: [{ id: "s1", cosa: "bolletta della luce", importo: "85,40 €", giorno: "2026-10-25", ogni_mese: false, pagata: false, avvisi: {} },
              { id: "s2", cosa: "affitto", importo: "650 €", giorno: "2026-10-31", ogni_mese: true, pagata: false, avvisi: {} }] } };
 const oggetti = () => posta.map((m) => m.subject);
