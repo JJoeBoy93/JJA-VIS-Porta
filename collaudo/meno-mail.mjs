@@ -4,7 +4,9 @@
 // Controlla: il caso Gennaro (un impegno domani alle 8 + 3 cose da portare, giri orari da adesso a dopodomani sera) manda UNA mail, il
 // programma del mattino con l'invito allegato e le cose da portare; con «tutto» le stesse mail di prima; con «niente» zero; la scadenza
 // fra 5 giorni una sola mail, il giorno prima (pagata: zero); un giorno con 4 impegni e una scadenza al massimo 2 mail, e dentro c'è tutto;
-// l'assistente dice quello che vale per la posta della persona e la cambia quando glielo chiede; la risposta alla chat resta nella chat.
+// «l'hai fatto?» per mail al massimo 2 volte per impegno (poi solo in chat); nei giorni senza programma del mattino le cose da portare vanno nel
+// promemoria del primo impegno; l'assistente dice quello che vale per la posta della persona e la cambia quando glielo chiede; la risposta alla
+// chat resta nella chat.
 // CONTROPROVA: con la regola vecchia (il programma parte anche solo per le cose da portare: `diOggi.length || porta.length`) la prova
 // «niente Prima di uscire nei giorni senza impegni» diventa rossa.
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -80,6 +82,24 @@ console.log("── senza programma: una mail sola alla settimana con tutti quel
   ok(posta.length === 1 && /^❓ 2 impegni passati/.test(posta[0].subject) && posta[0].giro.startsWith("2027-01-12"), "una mail sola, il 12 (7 giorni dopo il primo), con tutti e due", oggetti());
   ok(/dal dentista/.test(posta[0].textContent) && /la revisione/.test(posta[0].textContent), "dentro ci sono tutti quelli da confermare", posta[0].textContent);
   ok(!oggetti().some((s) => /Prima di uscire/.test(s)), "e le cose da portare non partono da sole", oggetti()); }
+
+console.log("── nessuna risposta per 4 settimane: per mail si chiede al massimo 2 volte");
+{ nuova({ impegni: [{ id: "v1", cosa: "dal dentista", giorno: "2027-01-05", ora: "10:00", avvisato: true, ics: true }] });
+  await giri(W, giro("2027-01-06", "07"), giro("2027-02-05", "21"));
+  ok(posta.length === 2 && posta.every((m) => /^❓ L'hai fatto\? dal dentista/.test(m.subject)) && posta.map((m) => m.giro.slice(0, 10)).join() === "2027-01-12,2027-01-19", "impegno passato, niente risposta: 2 mail in tutto (il 12 e il 19), poi basta", posta.map((m) => [m.giro, m.subject]));
+  ok(scheda().impegni.length === 1 && scheda().impegni[0].da_confermare === true, "l'impegno resta, segnato «da confermare»", scheda().impegni); }
+
+console.log("── giorno senza programma del mattino: le cose da portare vanno nel promemoria del primo impegno");
+{ nuova({ impegni: [{ id: "p1", cosa: "dal commercialista", giorno: "2027-01-12", ora: "15:00", avvisato: false }], da_portare: PORTA });
+  await giri(W, giro("2027-01-11", "10"), giro("2027-01-13", "23"));
+  ok(posta.length === 1 && posta[0].giro === giro("2027-01-12", "14").toISOString() && /⏰ Alle 15:00: dal commercialista/.test(posta[0].subject), "impegno alle 15 + 3 cose da portare: una mail sola, alle 14, il promemoria", posta.map((m) => [m.giro, m.subject]));
+  ok(PORTA.every((x) => (posta[0] || {}).textContent.includes("- " + x)), "…con dentro la lista", (posta[0] || {}).textContent);
+  ok(posta[0].attachment && posta[0].attachment.length === 1, "…e l'invito allegato", posta[0].attachment);
+  nuova({ impegni: [{ id: "p1", cosa: "dal commercialista", giorno: "2027-01-12", ora: "15:00", avvisato: false }, { id: "p2", cosa: "in palestra", giorno: "2027-01-12", ora: "19:00", avvisato: false }], da_portare: PORTA });
+  await giri(W, giro("2027-01-12", "00"), giro("2027-01-12", "23"));
+  ok(posta.length === 2 && PORTA.every((x) => posta[0].textContent.includes("- " + x)) && !/- chiavi/.test(posta[1].textContent), "con due impegni: la lista solo nel promemoria del primo", posta.map((m) => [m.giro, m.subject]));
+  nuova({ impegni: [], da_portare: PORTA }); await giri(W, giro("2027-01-12", "00"), giro("2027-01-12", "23"));
+  ok(posta.length === 0, "senza impegni la lista non parte da sola", oggetti()); }
 
 console.log("── lo stesso caso con posta: «tutto»: le mail di oggi");
 { const m = await gennaro(W, { posta: "tutto" }); const o = oggetti();

@@ -1075,6 +1075,7 @@ const nomeAss = (f) => (f && f.assistente) || "JJA-VIS";
 // l'ha scelta (poche mail, tutte utili); «tutto» è il servizio com'era (la scheda di Jessica parte da qui: il suo non cambia);
 // «niente»: nessuna mail da sola, l'assistente risponde nella chat. La sceglie la persona parlando con l'assistente.
 const POSTA_MODI = ["essenziale", "tutto", "niente"];
+const MAX_CHIESTE = 2;      // «l'hai fatto?» per mail: al massimo 2 volte per impegno, poi solo in chat
 const MAIL_AL_GIORNO = 2;   // «essenziale»: il tetto fra tutte le mail del giorno
 export const modoPosta = (f) => POSTA_MODI.includes(f && f.posta) ? f.posta : f && String(f.nome || "").trim().toLowerCase() === "jessica crippa" ? "tutto" : "essenziale";
 // quante mail automatiche sono già partite oggi per questa scheda (mail_oggi: { data, quante }, lo scrive ogni giro di atlasPromemoria)
@@ -1085,8 +1086,8 @@ const ATLAS_POSTA = {
   essenziale: {
     ricordi: `- ti scrivo per mail solo quando serve, poche mail e tutte utili: il PROGRAMMA DEL MATTINO parte solo nei giorni con almeno un impegno (dentro ci sono gli impegni fino alle 12, le cose da portare e, se c'è, la domanda «l'hai fatto?»); per un impegno dopo le 12 UN solo promemoria, un'ora prima; niente mail la sera prima; al massimo 2 mail al giorno. Gli impegni li trova anche qui nella chat;`,
     invito: `- per un impegno nuovo NON mandi una mail a parte: l'invito del calendario viaggia come allegato della prima mail che parte per quell'impegno (il programma o il promemoria): lo tocca e finisce nel SUO calendario, col suo avviso. Tu nel calendario non entri: è lei che lo aggiunge con un tocco;`,
-    passati: `(il sistema lo fa da solo: è una riga nel programma del mattino, oppure, se non ci sono programmi, una mail sola alla settimana con tutti quelli da confermare)`,
-    portare: `il programma del mattino le porta anche questo elenco (solo nei giorni con un impegno: mai da solo)`,
+    passati: `(il sistema lo fa da solo: è una riga nel programma del mattino, oppure, se non ci sono programmi, una mail sola alla settimana con tutti quelli da confermare; per mail lo chiede al massimo 2 volte, poi un impegno ancora «PASSATO» lo chiedi tu, qui nella chat, quando lei ti scrive)`,
+    portare: `il programma del mattino le porta anche questo elenco; nei giorni senza programma sta dentro il promemoria del primo impegno (mai da solo)`,
     scadenze: `Gliele ricordi tu per mail UNA volta, il giorno prima della scadenza, e nessun'altra mail; quando ti scrive che l'ha pagata («pagata la luce») la segni pagata (le ricorrenti passano al mese dopo).`,
     date: `di' solo «te la ricordo il giorno prima»`,
     prima: `Dì una riga sola sulle mail, con queste parole: «Ti scrivo per mail solo quando serve: se ne vuoi di più o di meno, dimmelo». Non elencare orari né quando scrivi.`,
@@ -1220,7 +1221,9 @@ async function atlasMail(env, a, nome, oggetto, testo, allegati) {
 //   è solo quello di un'ora prima; niente mail la sera prima;
 // - il programma parte SOLO nei giorni con un impegno da dire: dentro ci sono le cose da portare (mai da sole), la riga «l'hai fatto?»
 //   degli impegni passati e gli inviti .ics (che non hanno più una mail a parte: viaggiano con la prima mail che parte per l'impegno);
-// - gli impegni passati, se non c'è un programma: una mail sola alla settimana con tutti quelli da confermare;
+//   nei giorni senza programma del mattino le cose da portare stanno nel promemoria un'ora prima del primo impegno del giorno;
+// - gli impegni passati, se non c'è un programma: una mail sola alla settimana con tutti quelli da confermare; per mail si chiede al
+//   massimo 2 volte per impegno (`chieste`): poi resta «da confermare» e lo si chiede solo se la persona scrive in chat;
 // - le scadenze: una mail il giorno prima, e nessun'altra;
 // - al massimo MAIL_AL_GIORNO mail al giorno fra tutte: le scadenze del giorno dopo hanno la precedenza, il resto si accorpa.
 // `manda(oggetto, testo, allegati)` spedisce e conta, `nota(riga)` scrive la riga per JJ. Ritorna true se ha cambiato la scheda.
@@ -1240,10 +1243,11 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   const scadOra = h >= 8 && h < 21 ? scad : [];
   const riserva = scad.length && !scadOra.length && h < 21 ? 1 : 0;   // quella che parte più tardi (prima delle 8) tiene un posto
   // gli impegni di oggi ancora da dire
+  const delMattino = (x) => !x.ora || (x.ora >= "08:00" && x.ora <= "12:00");
   const diOggi = f.impegni.filter((x) => x.giorno === oggi).sort(perOra);
   const porta = (f.da_portare || []).filter(Boolean);
+  const senzaProgramma = f.riepilogo !== oggi && !diOggi.some(delMattino);   // nessun programma del mattino, oggi: le cose da portare vanno col primo promemoria
   const aperti = diOggi.filter((x) => !x.avvisato && (!x.ora || quando(x) > adesso.getTime()));
-  const delMattino = (x) => !x.ora || (x.ora >= "08:00" && x.ora <= "12:00");
   const mattina = aperti.filter(delMattino);
   const inFinestra = (x) => x.ora && adesso.getTime() >= quando(x) - 65 * 60000;   // l'ora prima (65 minuti: il giro è alle :07)
   const programma = h >= 7 && h < 22 && f.riepilogo !== oggi && mattina.length > 0;   // solo nei giorni con un impegno da dire
@@ -1265,25 +1269,27 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   const impegni = () => {
     const inviti = dire.filter((x) => !x.ics).slice(0, 10);
     const allegati = inviti.map((x) => ({ name: `atlas-${x.giorno}-${x.id}.ics`, content: btoa(String.fromCharCode(...new TextEncoder().encode(icsImpegno(x)))) }));
-    const pendenti = comeProgramma ? f.impegni.filter((x) => x.da_confermare && (!x.chiesto || x.chiesto <= sett)) : [];
+    const pendenti = comeProgramma ? f.impegni.filter((x) => x.da_confermare && (x.chieste || 0) < MAX_CHIESTE && (!x.chiesto || x.chiesto <= sett)) : [];
+    const listaPorta = `\n\nPrima di uscire, hai preso:\n${porta.map((x) => "- " + x).join("\n")}`;
+    const conPorta = !comeProgramma && senzaProgramma && porta.length > 0 && dire.includes(diOggi[0]);   // mai da sola: dentro il promemoria del primo impegno
     let oggetto, corpo;
     if (comeProgramma) {
       const piuTardi = aperti.filter((x) => !dire.includes(x) && x.ora);
       oggetto = dire.length ? `📋 Il tuo programma di oggi, ${nomeGiorno}` : `🎒 Prima di uscire, ${nomeGiorno}`;
       corpo = `Buongiorno${primo}! ` + (dire.length ? `Oggi:\n\n${dire.map(riga).join("\n")}${piuTardi.length ? "\n\nPer gli impegni più tardi ti riscrivo un'ora prima." : ""}` : "Oggi non hai impegni segnati.") +
-        (porta.length ? `\n\nPrima di uscire, hai preso:\n${porta.map((x) => "- " + x).join("\n")}` : "") +
+        (porta.length ? listaPorta : "") +
         (pendenti.length ? `\n\n❓ Impegni passati: li hai fatti?\n${pendenti.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n")}\nRispondimi «sì» e li tolgo; se no, dimmi il nuovo giorno e li rimetto in programma.` : "");
     } else if (dire.length === 1) {
-      oggetto = `⏰ Alle ${dire[0].ora}: ${dire[0].cosa}`; corpo = `Tra poco, alle ${dire[0].ora}: ${dire[0].cosa}.`;
-    } else { oggetto = `⏰ ${dire.length} impegni a breve`; corpo = `Tra poco:\n\n${dire.map(riga).join("\n")}`; }
+      oggetto = `⏰ Alle ${dire[0].ora}: ${dire[0].cosa}`; corpo = `Tra poco, alle ${dire[0].ora}: ${dire[0].cosa}.${conPorta ? listaPorta : ""}`;
+    } else { oggetto = `⏰ ${dire.length} impegni a breve`; corpo = `Tra poco:\n\n${dire.map(riga).join("\n")}${conPorta ? listaPorta : ""}`; }
     const segna = () => {
       for (const x of dire) x.avvisato = true;
       for (const x of inviti) x.ics = true;
-      for (const x of pendenti) x.chiesto = oggi;
+      for (const x of pendenti) { x.chiesto = oggi; x.chieste = (x.chieste || 0) + 1; }
       if (comeProgramma) f.riepilogo = oggi;
       cambiato = true;
       nota(comeProgramma ? `📋 ${f.nome || ""}: programma di oggi (${dire.length}${accorpato ? ", accorpato" : ""}${porta.length ? `, da portare ${porta.length}` : ""}${pendenti.length ? `, da confermare ${pendenti.length}` : ""}${allegati.length ? `, inviti ${allegati.length}` : ""})`
-        : `⏰ ${f.nome || ""}: ${dire.map((x) => x.ora + " " + x.cosa).join("; ")}${allegati.length ? ` (inviti ${allegati.length})` : ""}`);
+        : `⏰ ${f.nome || ""}: ${dire.map((x) => x.ora + " " + x.cosa).join("; ")}${conPorta ? `, da portare ${porta.length}` : ""}${allegati.length ? ` (inviti ${allegati.length})` : ""}`);
     };
     return { oggetto, corpo, allegati, segna };
   };
@@ -1305,13 +1311,13 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   }
   // gli impegni passati senza un programma: una mail sola alla settimana, con tutti quelli da confermare
   if (!haS && !haI && !scad.length && !diOggi.length && h >= 7 && h < 22) {
-    const tutti = f.impegni.filter((x) => x.da_confermare);
+    const tutti = f.impegni.filter((x) => x.da_confermare && (x.chieste || 0) < MAX_CHIESTE);
     if (tutti.some((x) => (x.chiesto || x.giorno) <= sett)) {
       const uno = tutti.length === 1;
       await manda(uno ? `❓ L'hai fatto? ${tutti[0].cosa}` : `❓ ${tutti.length} impegni passati: li hai fatti?`,
         `Ciao${primo}, ${uno ? "questo impegno è passato" : "questi impegni sono passati"}:\n\n${tutti.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n")}\n\n` +
         `${uno ? "L'hai fatto" : "Li hai fatti"}? Rispondimi «sì» e ${uno ? "lo tolgo" : "li tolgo"}; se no, dimmi il nuovo giorno e ${uno ? "lo rimetto" : "li rimetto"} in programma.\n${firma}`);
-      for (const x of tutti) x.chiesto = oggi;
+      for (const x of tutti) { x.chiesto = oggi; x.chieste = (x.chieste || 0) + 1; }
       cambiato = true; nota(`❓ ${f.nome || ""}: chiesto conferma di ${tutti.length} impegni passati (settimanale)`);
     }
   }
