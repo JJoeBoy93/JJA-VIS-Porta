@@ -2724,15 +2724,8 @@ async function ioDalConto(env, req, origine, fetchConti = fetch) {
   if (!u) return risposta({ io: null }, 200, origine);
   const io = { id: chi, mail, ...(u.nome_assistente ? { nome: u.nome_assistente } : {}), ...(u.tema ? { tema: u.tema } : {}), ...(u.tuo ? { tuo: u.tuo } : {}),
     ...(u.mestiere ? { mestiere: u.mestiere } : {}), ...(u.tempo ? { tempo: u.tempo } : {}), ...(u.conosciute ? { conosciute: u.conosciute } : {}), ...(u.ha_risposto ? { inviato: true } : {}) };
-  // «bentornata»: una volta al giorno, alla mail che è già sua
-  const oggi = new Date().toISOString().slice(0, 10);
-  if (u.bentornato !== oggi && env.BREVO_API_KEY && env.MITTENTE) {
-    const nome = u.tuo ? ` ${u.tuo}` : "", ass = u.nome_assistente || "il tuo assistente";
-    await postaFuori(env,  { method: "POST", headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ sender: { name: u.nome_assistente || "JJA-VIS", email: env.MITTENTE }, to: [{ email: mail }], subject: `Bentornat${/a$/i.test(u.tuo || "") ? "a" : "o"}${nome}`,
-        textContent: `Ciao${nome}, ti ho riconosciuto dalla mail: sono ${ass}, e mi ricordo tutto quello che mi avevi detto.\n\nDa adesso entri col tuo account da qualsiasi telefono, e mi ritrovi così come mi avevi lasciato.\n\n—\n${ass}, l'assistente di JJA-VIS. Per non ricevere altre mail, rispondi con «cancellami».` }) }).catch(() => {});
-    try { await gh(env, "PUT", `utenti/${chi}.json`, { message: `bentornato: ${chi}`, content: b64({ ...u, mail, bentornato: oggi }), sha }); } catch (_) {}
-  }
+  // 26/10, JJ: «apro la pagina e mi arriva la mail… è inutile». Tolta la mail «Bentornato» a ogni accesso: chi entra lo sa
+  // già, è davanti alla pagina. (Prima: una al giorno, da Brevo, al primo accesso.)
   return risposta({ io }, 200, origine);
 }
 export { ioDalConto, chiDaMail };
