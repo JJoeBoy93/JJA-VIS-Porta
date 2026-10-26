@@ -236,6 +236,9 @@ export default {
     if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente") return assistenteDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente/voce") return voceDallaChat(env, req, origine);
+    if (req.method === "GET" && url.pathname === "/assistente/calendario") return calendarioDallaChat(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/assistente/fatto") return fattoDallaChat(env, req, origine, false);
+    if (req.method === "POST" && url.pathname === "/assistente/annulla") return fattoDallaChat(env, req, origine, true);
     if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
@@ -1058,12 +1061,13 @@ function daRoma(giorno, ora) {   // giorno e ora di Roma -> Date vera
 }
 const giornoBello = (g) => { const d = new Date(g + "T12:00:00Z"); return `${GIORNI[d.getUTCDay()]} ${d.getUTCDate()}/${d.getUTCMonth() + 1}`; };
 async function atlasLeggi(env) {
-  try { const f = await gh(env, "GET", "atlas.json"); return { dati: deb64(f.content), sha: f.sha }; } catch (_) { return { dati: {}, sha: null }; }
+  try { const f = await gh(env, "GET", "atlas.json"); return { dati: deb64(f.content), sha: f.sha }; } catch (e) { return { dati: {}, sha: null, giu: !/GitHub 404/.test(String((e && e.message) || e)) }; }
 }
 // cambia la scheda di una mail e la riscrive (riprova una volta se nel frattempo qualcuno l'ha cambiata)
-async function atlasAggiorna(env, mail, cambia) {
+// con `stretto`, se l'archivio non si legge si ferma (le rotte che rispondono «non è tuo» non devono dirlo per un archivio giù)
+async function atlasAggiorna(env, mail, cambia, stretto = false) {
   for (let i = 0; i < 2; i++) {
-    const A = await atlasLeggi(env); const f = A.dati[mail] || (A.dati[mail] = { nome: "", turni: [], impegni: [], riepilogo: "" });
+    const A = await atlasLeggi(env); if (stretto && A.giu) throw new Error("archivio giù"); const f = A.dati[mail] || (A.dati[mail] = { nome: "", turni: [], impegni: [], riepilogo: "" });
     const fuori = cambia(f); f.turni = f.turni.slice(-30);
     try { await gh(env, "PUT", "atlas.json", { message: `atlas: ${mail.split("@")[0]}`, content: b64(A.dati), ...(A.sha ? { sha: A.sha } : {}) }); return fuori; }
     catch (e) { if (i) throw e; }
@@ -3119,6 +3123,70 @@ async function voceDallaChat(env, req, origine) {
   catch (e) { return risposta({ errore: String((e && e.message) || e).slice(0, 300) }, 502, origine); }
   if (typeof j.testo !== "string") return risposta({ errore: "Hermes non ha mandato il testo" }, 502, origine);
   return risposta({ testo: j.testo }, 200, origine);
+}
+// ══ IL CALENDARIO NELLA PAGINA — 26 ottobre 2026 ═══════════════════════════════════════════════════════════════════════════
+// JJ: «quando l'hai fatta puoi andare tu diretto sull'attività e premere fatta, così eviti la pappardella di dover dire ogni volta
+// se hai fatto o meno una cosa». La pagina mostra gli impegni e le scadenze aperti della persona (stesso account di /assistente) e
+// li chiude con un tocco: un impegno fatto esce da f.impegni (e quindi non viene più chiesto «l'hai fatto?», né per mail né in chat)
+// ed entra in f.fatti per 30 giorni, da dove «annulla» lo riporta; una scadenza si segna pagata come in chat (scadenzaPagata).
+const FATTI_GIORNI = 30;
+const perGiornoOra = (a, b) => (a.giorno + (a.ora || "")).localeCompare(b.giorno + (b.ora || ""));
+async function calendarioDallaChat(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  // atlasLeggi nasconde gli errori e dà un archivio vuoto: qui no, «non hai niente» non deve nascondere «non riesco a leggere»
+  let A; try { A = deb64((await gh(env, "GET", "atlas.json")).content); }
+  catch (e) { if (!/GitHub 404/.test(String(e && e.message))) return risposta({ errore: "non riesco a leggere il tuo calendario: riprova tra poco" }, 502, origine); A = {}; }
+  const f = A[mail] || {}, limite = Date.now() - FATTI_GIORNI * 864e5;
+  return risposta({
+    impegni: (f.impegni || []).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, ora: x.ora || null })).sort(perGiornoOra),
+    scadenze: (f.scadenze || []).filter((x) => !x.pagata).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, importo: x.importo || null, ogni_mese: !!x.ogni_mese })).sort(perGiornoOra),
+    fatti: (f.fatti || []).filter((x) => Date.parse(x.quando_fatto) >= limite).sort((a, b) => b.quando_fatto.localeCompare(a.quando_fatto))
+      .map((x) => ({ id: x.id, tipo: x.tipo || "impegno", cosa: x.cosa, giorno: x.giorno, ora: x.ora || null, importo: x.importo || null, quando_fatto: x.quando_fatto })),
+  }, 200, origine);
+}
+class ErroreCalendario extends Error { constructor(stato, msg) { super(msg); this.stato = stato; } }
+// POST /assistente/fatto {id} e /assistente/annulla {id}: una scrittura sola su atlas.json (atlasAggiorna); se l'id non va bene
+// l'errore parte PRIMA della scrittura e l'archivio non si tocca
+async function fattoDallaChat(env, req, origine, annulla) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const id = d && typeof d.id === "string" ? d.id.trim().slice(0, 40) : "";
+  if (!id) return risposta({ errore: "manca l'id" }, 400, origine);
+  const adesso = new Date().toISOString();
+  try {
+    const esito = await atlasAggiorna(env, mail, (f) => {
+      f.impegni = f.impegni || []; f.scadenze = f.scadenze || [];
+      const limite = Date.now() - FATTI_GIORNI * 864e5;
+      f.fatti = (f.fatti || []).filter((x) => Date.parse(x.quando_fatto) >= limite);   // oltre 30 giorni non si annulla più
+      if (annulla) {
+        const i = f.fatti.findIndex((x) => x.id === id);
+        if (i < 0) throw new ErroreCalendario(f.impegni.some((x) => x.id === id) || f.scadenze.some((x) => x.id === id) ? 409 : 404, f.impegni.some((x) => x.id === id) || f.scadenze.some((x) => x.id === id) ? "non è fatto: niente da annullare" : "non è fra i tuoi fatti (o sono passati più di 30 giorni)");
+        const [x] = f.fatti.splice(i, 1);
+        if (x.tipo === "scadenza") {
+          const s = f.scadenze.find((y) => y.id === x.da);
+          if (!s) throw new ErroreCalendario(404, "la scadenza non c'è più");
+          s.pagata = false; s.giorno = x.prima.giorno; s.avvisi = x.prima.avvisi || {};
+        } else { const { quando_fatto, tipo, ...impegno } = x; f.impegni.push(impegno); }
+        return { id: x.da || x.id };
+      }
+      const j = f.impegni.findIndex((x) => x.id === id);
+      if (j >= 0) { const [x] = f.impegni.splice(j, 1); f.fatti.push({ ...x, tipo: "impegno", quando_fatto: adesso }); return { id }; }
+      const s = f.scadenze.find((x) => x.id === id && !x.pagata);
+      if (s) {
+        const prima = { giorno: s.giorno, avvisi: s.avvisi || {} }, fid = `${s.id}@${adesso}`;
+        f.fatti.push({ id: fid, da: s.id, tipo: "scadenza", cosa: s.cosa, giorno: s.giorno, importo: s.importo || null, prima, quando_fatto: adesso });
+        scadenzaPagata(s); return { id: fid };
+      }
+      throw new ErroreCalendario(f.fatti.some((x) => x.id === id || x.da === id) || f.scadenze.some((x) => x.id === id) ? 409 : 404,
+        f.fatti.some((x) => x.id === id || x.da === id) || f.scadenze.some((x) => x.id === id) ? "già fatto" : "non è tuo, o non esiste");
+    }, true);
+    return risposta({ ok: true, id: esito.id }, 200, origine);
+  } catch (e) {
+    if (e instanceof ErroreCalendario) return risposta({ errore: e.message }, e.stato, origine);
+    return risposta({ errore: "non riesco a salvare: riprova tra poco" }, 502, origine);
+  }
 }
 // ══ IL PRIMO INCONTRO — 22 ottobre 2026 (Athena) ══════════════════════════
 // JJ: «quando viene usato per la prima volta, è proprio quando deve colpire per la sua utilità… in questo caso non ha neanche
