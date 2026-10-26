@@ -235,6 +235,7 @@ export default {
     const trappola = persefone(req, url, env, ctx); if (trappola) return trappola;
     if (req.method === "POST" && url.pathname === "/foto") return fotoDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente") return assistenteDallaChat(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/assistente/voce") return voceDallaChat(env, req, origine);
     if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
     if (req.method === "GET" && url.pathname === "/novita") return pubblica(env, "novita.json", origine, []);
@@ -3086,6 +3087,38 @@ async function assistenteDallaChat(env, req, origine) {
   await atlasAggiorna(env, mail, (f) => { f.turni.push({ chi: "lei", testo: `[chat] ${testo}`, quando: rec.quando }); f.turni.push({ chi: "noi", testo: esito.risposta, quando: new Date().toISOString() }); return applicaEsito(f, esito); });
   const documenti = (rec.documenti || []).filter((x) => chiesti.includes(x.id)).map((x) => ({ id: x.id, titolo: x.titolo }));
   return risposta({ risposta: esito.risposta, documenti }, 200, origine);
+}
+// ══ LA VOCE NELLA CHAT — 26 ottobre 2026 ══════════════════════════════════════════════════════════════════════════════════
+// La pagina registra un vocale (fino a 60 secondi) e lo manda qui; la porta lo passa a Hermes (service binding, stesso segreto
+// degli altri /jjavis/…), che lo trascrive con Whisper come i vocali di Telegram; il testo torna alla pagina, che lo scrive
+// nella chat. Prima di disturbare Hermes: account (come /assistente), tipo, dimensione, tetto del giorno. L'audio è la voce di
+// una persona: non si salva da nessuna parte e non si scrive nei log (neanche negli errori: si dice il motivo, non il contenuto).
+const VOCE_TIPI = ["audio/webm", "audio/mp4", "audio/ogg"], VOCE_MAX_BYTE = 1.5 * 1024 * 1024, VOCE_AL_GIORNO = 60;
+async function voceDallaChat(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  const troppo = () => risposta({ errore: "il vocale è troppo lungo: al massimo 1,5 MB" }, 400, origine);
+  if (Number(req.headers.get("Content-Length") || 0) > Math.ceil(VOCE_MAX_BYTE * 4 / 3) + 1000) return troppo();   // senza nemmeno leggerlo
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const audio = d && typeof d.audio === "string" ? d.audio : "";
+  if (!audio) return risposta({ errore: "manca l'audio" }, 400, origine);
+  const tipo = String((d && d.tipo) || "").split(";")[0].trim().toLowerCase();   // «audio/webm;codecs=opus» è webm
+  if (!VOCE_TIPI.includes(tipo)) return risposta({ errore: "tipo non ammesso: audio/webm, audio/mp4 o audio/ogg" }, 400, origine);
+  if (Math.floor(audio.length * 3 / 4) > VOCE_MAX_BYTE) return troppo();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(audio)) return risposta({ errore: "l'audio non è base64" }, 400, origine);
+  if (!telefonoCollegato(env)) return risposta({ errore: "la trascrizione non è collegata" }, 502, origine);
+  // il tetto di spesa: 60 al giorno per account (giorno di Roma), nella sua scheda di Atlas come il resto dei suoi conti
+  const oggi = oraRoma().slice(0, 10);
+  let concesso; try { concesso = await atlasAggiorna(env, mail, (f) => {
+    if (!f.vocali || f.vocali.giorno !== oggi) f.vocali = { giorno: oggi, n: 0 };
+    if (f.vocali.n >= VOCE_AL_GIORNO) return false;
+    f.vocali.n++; return true; }); }
+  catch (_) { return risposta({ errore: "adesso non riesco a tenere il conto dei vocali: riprova tra poco" }, 502, origine); }
+  if (!concesso) return risposta({ errore: "per oggi i vocali sono finiti: scrivimi" }, 429, origine);
+  let j; try { j = await aHermes(env, "/jjavis/trascrivi", { audio, tipo }); }
+  catch (e) { return risposta({ errore: String((e && e.message) || e).slice(0, 300) }, 502, origine); }
+  if (typeof j.testo !== "string") return risposta({ errore: "Hermes non ha mandato il testo" }, 502, origine);
+  return risposta({ testo: j.testo }, 200, origine);
 }
 // ══ IL PRIMO INCONTRO — 22 ottobre 2026 (Athena) ══════════════════════════
 // JJ: «quando viene usato per la prima volta, è proprio quando deve colpire per la sua utilità… in questo caso non ha neanche
