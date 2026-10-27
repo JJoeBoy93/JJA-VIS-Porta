@@ -17,7 +17,7 @@ const ORIGINI = ["https://jjoeboy93.github.io"];
 const TETTO_CORPO = 8000;
 // Gli account di JJ (il suo e quelli di prova): fuori da «📊 La settimana» (imbuto), che conta solo le persone vere. Si confrontano in
 // minuscolo. È un elenco da aggiornare A MANO quando JJ crea un account di prova nuovo: la porta non ha altro modo di riconoscerli.
-const ACCOUNT_DI_JJ = ["19.jjardito93@gmail.com", "19.jja.vis.93@gmail.com"];
+const ACCOUNT_DI_JJ = ["19.jjardito93@gmail.com", "19.jja.vis.93@gmail.com", "jja.athenatrasporti@gmail.com"];   // 27/10: la mail di Athena Trasporti, usata da JJ per provare il giro d'apertura
 
 function cors(origine) {
   const ok = ORIGINI.includes(origine);
