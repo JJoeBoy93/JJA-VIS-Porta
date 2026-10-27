@@ -15,6 +15,9 @@ import { comandoStima, percorso, calcola, dueMezzi, mezziPer, INGOMBRI, testoSti
 const ARCHIVIO = "JJoeBoy93/JJA-VIS-Voci";
 const ORIGINI = ["https://jjoeboy93.github.io"];
 const TETTO_CORPO = 8000;
+// Gli account di JJ (il suo e quelli di prova): fuori da «📊 La settimana» (imbuto), che conta solo le persone vere. Si confrontano in
+// minuscolo. È un elenco da aggiornare A MANO quando JJ crea un account di prova nuovo: la porta non ha altro modo di riconoscerli.
+const ACCOUNT_DI_JJ = ["19.jjardito93@gmail.com", "19.jja.vis.93@gmail.com"];
 
 function cors(origine) {
   const ok = ORIGINI.includes(origine);
@@ -180,7 +183,8 @@ export async function olimpo(env, dio, testo) {
 export default {
   async scheduled(evento, env, ctx) {
     env = conGruppo(env);
-    if (evento.cron === "0 18 * * *") ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e)));
+    if (evento.cron === "0 18 * * *") ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e))
+      .then(() => imbutoDelLunedi(env, new Date(evento.scheduledTime || Date.now()))).catch((e) => console.log("la settimana", e)));
     else { ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
            ctx.waitUntil(spedisciUscita(env).catch((e) => console.log("posta in uscita", e)));
            ctx.waitUntil(atlasPromemoria(env).catch((e) => console.log("promemoria di Atlas", e)));
@@ -1712,6 +1716,7 @@ async function telegram(req, env) {
       const aJarvis = raccolti ? await mandaAJarvis(env, raccolti) : "numeri non letti";
       const vetrina = await aggiornaVetrina(env);
       await tg(env, "sendMessage", { ...qui, text: (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}\n→ vetrina della pagina: ${vetrina}` });
+      await tg(env, "sendMessage", { ...qui, text: await imbuto(env, new Date(), raccolti || undefined) });   // sempre, sotto i numeri
       return new Response("ok");
     }
     const sopra = m.reply_to_message && (m.reply_to_message.text || "");
@@ -2064,6 +2069,62 @@ async function contoDellaSera(env) {
   const aJarvis = raccolti ? await mandaAJarvis(env, raccolti) : "numeri non letti";
   const vetrina = await aggiornaVetrina(env);
   const testo = (await numeri(env, raccolti || undefined)) + `\n→ briefing di JARVIS: ${aJarvis}\n→ vetrina della pagina: ${vetrina}`;
+  if (env.TG_OLIMPO) return olimpo(env, "numeri", testo);
+  if (env.TG_GRUPPO) {
+    try { return await tg(env, "sendMessage", { chat_id: env.TG_GRUPPO, message_thread_id: await argomentoNumeri(env), text: testo }); }
+    catch (e) { return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: `⚠️ argomento Numeri non raggiungibile (${e.message || e})\n\n${testo}` }); }
+  }
+  if (env.TG_CHAT) return tg(env, "sendMessage", { chat_id: env.TG_CHAT, text: testo });
+}
+
+// ══ LA SETTIMANA: DOVE SI PERDONO LE PERSONE — 27 ottobre 2026 (Efesto) ═════
+// Il 26/10 Athena ha contato a mano che dei 9 arrivati dal sondaggio, 5 non avevano mai risposto alla prima proposta. Adesso il conto
+// arriva da solo, ogni lunedì (ora di Roma), nel turno delle 18 UTC dopo il conto della sera, e con /numeri sotto i numeri.
+// Le persone sono quelle con l'ACCOUNT: utenti/<chi>.json con `nascita` o `nato`, che scrive solo /nato dopo che il server dei conti
+// ha confermato la mail (il solo `mail` non basta: lo scrive anche la chat per un contatto qualsiasi). Fuori ACCOUNT_DI_JJ e
+// cancellati.json. Il resto sta nella scheda di Atlas con quella mail. L'imbuto è a scalini: chi non ha fatto il passo prima non conta
+// nel passo dopo, così ogni percentuale (sul passo prima) resta sotto il 100.
+const NON_E_UNA_RISPOSTA = /^\[(dal sondaggio\]|Atlas aperto da JJ)/;   // i turni «lei» scritti dal sistema, non da lei
+const GIORNO_MS = 864e5;
+async function imbuto(env, adesso = new Date(), raccolti) {
+  let letti, parziale = "";
+  try { const r = raccolti || await raccogli(env); letti = r.letti; if (r.file.length > letti.length) parziale = `\n(lette ${letti.length} persone su ${r.file.length}: conto parziale)`; }
+  catch (e) { return `📊 La settimana: utenti non letti (${e.message || e})`; }
+  let atlas;
+  try { atlas = deb64((await gh(env, "GET", "atlas.json")).content); if (!atlas || typeof atlas !== "object" || Array.isArray(atlas)) throw new Error("non è una scheda per mail"); }
+  catch (e) { return `📊 La settimana: atlas.json non letto (${e.message || e})`; }
+  let cancellati = [];
+  try { cancellati = deb64((await gh(env, "GET", "cancellati.json")).content).map((x) => String(x).toLowerCase()); }
+  catch (e) { if (!/GitHub 404/.test(String((e && e.message) || e))) return `📊 La settimana: cancellati.json non letto (${e.message || e})`; }
+  const conAccount = letti.filter((u) => u && (u.nascita || u.nato) && typeof u.mail === "string" && u.mail.trim())
+    .map((u) => ({ u, mail: u.mail.trim().toLowerCase() }));
+  const diJJ = conAccount.filter((p) => ACCOUNT_DI_JJ.includes(p.mail)).length, tolti = conAccount.filter((p) => cancellati.includes(p.mail) && !ACCOUNT_DI_JJ.includes(p.mail)).length;
+  const persone = conAccount.filter((p) => !ACCOUNT_DI_JJ.includes(p.mail) && !cancellati.includes(p.mail));
+  const ms = (x) => { const t = Date.parse(x); return Number.isNaN(t) ? null : t; };
+  const dall = adesso.getTime() - 7 * GIORNO_MS;
+  const passi = persone.map(({ u, mail }) => {
+    const f = atlas[mail] || {}, turni = Array.isArray(f.turni) ? f.turni : [];
+    const lei = turni.filter((t) => t && t.chi === "lei"), vere = lei.filter((t) => !NON_E_UNA_RISPOSTA.test(String(t.testo || "")));
+    const dateLei = lei.map((t) => ms(t.quando)).filter((t) => t !== null), dateVere = vere.map((t) => ms(t.quando)).filter((t) => t !== null);
+    const proposta = typeof f.primo === "string" && f.primo !== "no" && ms(f.primo) !== null;
+    const risposto = proposta && vere.length > 0, impegno = risposto && Array.isArray(f.impegni) && f.impegni.length > 0;
+    const tornato = impegno && dateLei.length > 0 && dateLei.some((t) => t >= Math.min(...dateLei) + 7 * GIORNO_MS);
+    const nato = ms(u.nascita || u.nato), prima = dateVere.length ? Math.min(...dateVere) : null;
+    return { proposta, risposto, impegno, tornato, nuovo: nato !== null && nato >= dall, primaRisposta: risposto && prima !== null && prima >= dall };
+  });
+  const n = (k) => passi.filter((p) => p[k]).length;
+  const righe = [["Prima proposta ricevuta", n("proposta"), passi.length], ["Hanno risposto almeno una volta", n("risposto"), n("proposta")],
+    ["Hanno almeno un impegno segnato", n("impegno"), n("risposto")], ["Tornati dopo 7 giorni", n("tornato"), n("impegno")]]
+    .map(([nome, quanti, prima]) => `${nome}: ${quanti} (${prima ? Math.round(100 * quanti / prima) + "%" : "—"})`);
+  return [`📊 La settimana — ${oraRoma(adesso).slice(0, 10)}, dove si perdono le persone`, `Account fatti: ${passi.length}`, ...righe, "",
+    `questa settimana: ${n("nuovo")} account nuovi, ${n("primaRisposta")} prime risposte`,
+    `(esclusi: ${diJJ} di JJ, ${tolti} cancellati)${parziale}`].join("\n");
+}
+// di lunedì (ora di Roma) l'imbuto va dove va il conto della sera: l'Olimpo «numeri», altrimenti l'argomento «📊 Numeri»
+async function imbutoDelLunedi(env, adesso) {
+  if (!env.TG_BOT_TOKEN || !env.GH_TOKEN) return;
+  if (new Date(oraRoma(adesso) + ":00Z").getUTCDay() !== 1) return;
+  const testo = await imbuto(env, adesso);
   if (env.TG_OLIMPO) return olimpo(env, "numeri", testo);
   if (env.TG_GRUPPO) {
     try { return await tg(env, "sendMessage", { chat_id: env.TG_GRUPPO, message_thread_id: await argomentoNumeri(env), text: testo }); }
