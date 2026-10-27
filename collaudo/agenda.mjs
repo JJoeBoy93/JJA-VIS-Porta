@@ -207,12 +207,12 @@ nuova();
 console.log("── il giro dei promemoria lo vede come gli altri");
 const aggiuntoPartono = async (Mod) => { nuova({ scadenze: [], impegni: [] });
   const j = await (await aggiungi({ tipo: "impegno", cosa: "il dentista", giorno: "2026-10-28", ora: "15:00" }, A, Mod)).json();
-  await giri(Mod); return { j, mail: posta.filter((m) => /Alle 15:00: il dentista/.test(m.subject)), inv: posta.filter((m) => m.subject.startsWith("📅")) }; };
+  await giri(Mod); return { j, mail: posta.filter((m) => /Alle 15:00: il dentista/.test(m.subject)), inv: posta.filter((m) => (m.attachment || []).some((a) => /\.ics$/.test(a.name))) }; };
 { const { j, mail } = await aggiuntoPartono(W);
   ok(/^[0-9a-f]{6}$/.test(j.id), "ha un id", j);
   ok(mail.length === 1, "il promemoria «un'ora prima» parte, una volta sola", posta.map((m) => m.subject));
   ok(!(mail[0]?.attachment || []).length, "senza un secondo invito: quello è già partito con «Salva»", mail[0]?.attachment);
-  const inv = posta.filter((m) => m.subject.startsWith("📅")), nomi = (inv[0]?.attachment || []).map((a) => a.name);
+  const inv = posta.filter((m) => (m.attachment || []).some((a) => /\.ics$/.test(a.name))), nomi = (inv[0]?.attachment || []).map((a) => a.name);
   ok(inv.length === 1 && nomi.length === 1 && new RegExp(`^atlas-2026-10-28-${j.id}\\.ics$`).test(nomi[0]), "l'invito .ics col suo id è quello di «Salva»", nomi);
   ok(scheda().impegni.find((y) => y.id === j.id)?.avvisato === true, "e dopo, l'impegno è segnato «avvisato» (si trova per id)", scheda().impegni); }
 
@@ -282,7 +282,7 @@ const adesso = new Date().toISOString().slice(0, 10);
   const r = await aggiungi({ tipo: "impegno", cosa: "il dentista", giorno: "2026-10-28", ora: "15:00" }); const j = await r.json();
   ok(r.status === 201 && j.invito === "mandato", "essenziale: risposta invito:\"mandato\"", [r.status, j]);
   ok(posta.length === 1 && posta[0].to[0].email === MAIL, "UNA mail, all'account", posta.map((m) => m.to));
-  ok(posta[0].subject === "📅 il dentista — mercoledì 28 ottobre, alle 15:00", "oggetto: «📅 cosa — giorno per esteso, alle ora»", posta[0].subject);
+  ok(posta[0].subject === "il dentista — mercoledì 28 ottobre, alle 15:00", "oggetto: «cosa — giorno per esteso, alle ora» (senza 📅: arrivava come «??????»)", posta[0].subject);
   ok(/Tocca «Aggiungi al calendario» qui sopra, o apri l'invito qui sotto, e finisce nel tuo calendario\./.test(posta[0].textContent), "il testo dice cosa toccare", posta[0].textContent);
   const al = posta[0].attachment || [], ics = al[0] ? Buffer.from(al[0].content, "base64").toString() : "";
   ok(al.length === 1 && al[0].name === `atlas-2026-10-28-${j.id}.ics` && ics.includes("BEGIN:VEVENT") && ics.includes("SUMMARY:il dentista"), "allegato atlas-<giorno>-<id>.ics con BEGIN:VEVENT e il SUMMARY giusto", [al.map((a) => a.name), ics]);
@@ -294,7 +294,7 @@ const adesso = new Date().toISOString().slice(0, 10);
   ok(posta.some((x) => /Alle 15:00: il dentista/.test(x.subject)), "…e il promemoria «un'ora prima» parte lo stesso", posta.map((x) => x.subject)); }
 { nuova({ impegni: [], scadenze: [] });
   const j = await (await aggiungi({ tipo: "impegno", cosa: "la revisione", giorno: "2026-10-30" })).json();
-  ok(posta.length === 1 && posta[0].subject === "📅 la revisione — venerdì 30 ottobre", "senza ora: «📅 cosa — giorno» e basta", posta.map((m) => m.subject)); }
+  ok(posta.length === 1 && posta[0].subject === "la revisione — venerdì 30 ottobre", "senza ora: «cosa — giorno» e basta", posta.map((m) => m.subject)); }
 { nuova({ posta: "tutto", impegni: [], scadenze: [] });
   const j = await (await aggiungi({ tipo: "impegno", cosa: "il notaio", giorno: "2026-10-28", ora: "11:00" })).json(); await giri(W);
   ok(j.invito === "mandato" && invitiDi(j.id).length === 1 && !posta.some((m) => /da mettere nel tuo calendario/.test(m.subject)), "«tutto»: l'invito di Salva, e il giro orario non manda «da mettere nel tuo calendario»", posta.map((m) => m.subject)); }
@@ -317,7 +317,7 @@ const invito = (id, tok = A, Mod = W) => chiama(Mod, "POST", "/assistente/invito
 { nuova({ posta: "niente" });
   const r = await invito("i2"); const j = await r.json();
   ok(r.status === 200 && j.invito === "mandato" && posta.length === 1, "anche con posta «niente» (lo chiede lei): 200 e UNA mail", [r.status, j, posta.length]);
-  ok(posta[0].subject === "📅 il meccanico — lunedì 1 marzo, alle 09:30" && posta[0].attachment[0].name === "atlas-2027-03-01-i2.ics", "stessa mail di «Salva»: oggetto e allegato", [posta[0].subject, posta[0].attachment.map((a) => a.name)]);
+  ok(posta[0].subject === "il meccanico — lunedì 1 marzo, alle 09:30" && posta[0].attachment[0].name === "atlas-2027-03-01-i2.ics", "stessa mail di «Salva»: oggetto e allegato", [posta[0].subject, posta[0].attachment.map((a) => a.name)]);
   ok(scheda().impegni.find((y) => y.id === "i2").ics === true && scheda().mail_oggi.inviti === 1 && scheda().mail_oggi.reinvii === 1, "segnato ics, contato a parte", scheda());
   await invito("i2"); await invito("i1"); await invito("i3"); await invito("i1");
   const sesto = await invito("i2"); const js = await sesto.json();

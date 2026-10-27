@@ -1232,7 +1232,9 @@ async function atlasMail(env, a, nome, oggetto, testo, allegati) {
 // dell'invito di UN impegno, subito. Gmail la mostra col tasto «Aggiungi al calendario»; il .ics in allegato è lo stesso del giro orario.
 async function mandaInvito(env, mail, nome, x) {
   const quando = `${giornoLeggibile(x.giorno)}${x.ora ? ", alle " + x.ora : ""}`;
-  await atlasMail(env, mail, nome, `📅 ${x.cosa} — ${quando}`,
+  // 27/10, JJ: nell'oggetto il 📅 arrivava come «??????» (le altre mail col 📅 in testa no: il guasto è nella codifica
+  // dell'oggetto lungo con più lettere accentate). Senza emoji: l'oggetto resta leggibile ovunque; il 📅 lo mette già Gmail.
+  await atlasMail(env, mail, nome, `${x.cosa} — ${quando}`,
     `${x.cosa}: ${quando}.\nTocca «Aggiungi al calendario» qui sopra, o apri l'invito qui sotto, e finisce nel tuo calendario.`,
     [{ name: `atlas-${x.giorno}-${x.id}.ics`, content: btoa(String.fromCharCode(...new TextEncoder().encode(icsImpegno(x)))) }]);
 }
