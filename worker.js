@@ -3507,11 +3507,11 @@ async function primoCore(env, mail, chi, u, d, perPagina, dallaPagina = false) {
   const ass = String(d.nome_assistente || u.nome_assistente || "").trim().slice(0, 24), tuo = String(d.tuo || u.tuo || "").trim().slice(0, 40);
   await atlasAggiorna(env, mail, (f) => { if (ass) f.assistente = ass; if (tuo && !f.nome) f.nome = tuo; if (chi && !f.chi) f.chi = chi; return []; });
   const filo = (await atlasLeggi(env)).dati[mail];
-  // 27/10, JJ: chi è in pensione o sta a casa non ha «un lavoro»: per lui la riga è la vita, e «tempo» è cosa vorrebbe non dover più ricordare
+  // 27/10, JJ: chi è in pensione o sta a casa non ha «un lavoro»: per lui la riga è la vita, e «tempo» è in cosa vorrebbe essere assistito
   const vita = vitaValida(u.vita || d.vita), senzaLavoro = vita === "pensione" || vita === "casa";
   const rigaVita = senzaLavoro ? `- nella vita: ${vita === "pensione" ? "in pensione" : "sta a casa"}\n` : "";
   const sa = [!senzaLavoro && (u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`,
-    (u.tempo || d.tempo) && `- ${senzaLavoro ? "cosa vorrebbe non dover più ricordare" : "cosa fa perdere tempo nel lavoro"}: ${u.tempo || d.tempo}`,
+    (u.tempo || d.tempo) && `- ${senzaLavoro ? "in cosa vorrebbe essere assistito" : "cosa fa perdere tempo nel lavoro"}: ${u.tempo || d.tempo}`,
     bisogno && `- cosa vorrebbe da te, con parole sue: «${bisogno}»`,
     (u.voti || []).length && `- cosa ha votato da costruire: ${u.voti.join("; ")} (lo costruisce chi ti ha costruito, su commissione: di' che l'hai passato a lui, nessun prezzo)`]
     .filter(Boolean).join("\n") + await prodottoPer(env, mail, u.mestiere || d.mestiere);

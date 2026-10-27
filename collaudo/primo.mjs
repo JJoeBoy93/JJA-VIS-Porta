@@ -120,7 +120,7 @@ sessioni["c".repeat(64)] = "rosa@prova.it"; richieste = [];
 risposta = '{"risposta":"Ciao Rosa, sono Iris.","nuovi":[]}';
 d = await chiama("c".repeat(64), { primo: true, chi: CHI3 });
 const q3 = (richieste[0] && richieste[0].messages[0].content) || "";
-ok(d.primo && q3.includes("- nella vita: in pensione") && q3.includes("- cosa vorrebbe non dover più ricordare: Bollette e scadenze") && !/- lavoro:|perdere tempo nel lavoro/.test(q3),
+ok(d.primo && q3.includes("- nella vita: in pensione") && q3.includes("- in cosa vorrebbe essere assistito: Bollette e scadenze") && !/- lavoro:|perdere tempo nel lavoro/.test(q3),
   "vita «pensione» arriva al testo per l'assistente: «nella vita: in pensione», senza «lavoro:»", q3.slice(0, 500));
 const io3 = await (await W.default.fetch(new Request("https://porta/io/dal-conto", { method: "POST", headers: { Origin: "https://jjoeboy93.github.io", Authorization: "Bearer " + "c".repeat(64) }, body: "{}" }), env, { waitUntil() {} })).json();
 ok(io3.io && io3.io.vita === "pensione", "/io/dal-conto restituisce la vita", io3);
