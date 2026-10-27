@@ -241,6 +241,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/assistente/annulla") return fattoDallaChat(env, req, origine, true);
     if (req.method === "POST" && url.pathname === "/assistente/aggiungi") return aggiungiDallaChat(env, req, origine);
     if (req.method === "POST" && url.pathname === "/assistente/elimina") return eliminaDallaChat(env, req, origine);
+    if (req.method === "POST" && url.pathname === "/assistente/invito") return invitoDallaChat(env, req, origine);
     if (req.method === "GET" && url.pathname === "/assistente/ics") return icsDallaChat(env, req, url, origine);
     if (req.method === "GET" && url.pathname === "/doc") return documentoDallaChat(env, req, url, origine);
     if (req.method === "GET" && url.pathname === "/vetrina") return pubblica(env, "vetrina.json", origine, {});
@@ -1088,6 +1089,9 @@ const MAIL_AL_GIORNO = 2;   // «essenziale»: il tetto fra tutte le mail del gi
 export const modoPosta = (f) => POSTA_MODI.includes(f && f.posta) ? f.posta : f && String(f.nome || "").trim().toLowerCase() === "jessica crippa" ? "tutto" : "essenziale";
 // quante mail automatiche sono già partite oggi per questa scheda (mail_oggi: { data, quante }, lo scrive ogni giro di atlasPromemoria)
 export const quanteMail = (f, oggi) => { const m = f && f.mail_oggi; return m && m.data === oggi ? Number(m.quante) || 0 : 0; };
+// gli inviti chiesti dalla persona (Salva, «Mandami l'invito») non sono promemoria: non entrano in `quante` (il tetto) ma si contano a parte,
+// nella stessa mail_oggi: `inviti` sono tutti, `reinvii` solo quelli chiesti col tasto (il tetto di /assistente/invito)
+export const quanteInviti = (f, oggi, chiave = "inviti") => { const m = f && f.mail_oggi; return m && m.data === oggi ? Number(m[chiave]) || 0 : 0; };
 // 27/10 (JJ: «il servizio mail solo per le cose che servono davvero»): quello che l'assistente promette sulle mail dipende dalla scheda
 // (posta: essenziale | tutto | niente), non è più fisso. «tutto» è il servizio di prima (Jessica), «essenziale» il valore di chi non ha scelto.
 const ATLAS_POSTA = {
@@ -1224,6 +1228,24 @@ async function atlasMail(env, a, nome, oggetto, testo, allegati) {
       ...(allegati && allegati.length ? { attachment: allegati } : {}) }) });
   if (!res.ok) throw new Error(`Brevo ${res.status}`);
 }
+// 27/10 (JJ: «quando premo salva per inserire l'impegno mi manda l'invito per mail, così resta il tasto da premere come prima»): la mail
+// dell'invito di UN impegno, subito. Gmail la mostra col tasto «Aggiungi al calendario»; il .ics in allegato è lo stesso del giro orario.
+async function mandaInvito(env, mail, nome, x) {
+  const quando = `${giornoLeggibile(x.giorno)}${x.ora ? ", alle " + x.ora : ""}`;
+  await atlasMail(env, mail, nome, `📅 ${x.cosa} — ${quando}`,
+    `${x.cosa}: ${quando}.\nTocca «Aggiungi al calendario» qui sopra, o apri l'invito qui sotto, e finisce nel tuo calendario.`,
+    [{ name: `atlas-${x.giorno}-${x.id}.ics`, content: btoa(String.fromCharCode(...new TextEncoder().encode(icsImpegno(x)))) }]);
+}
+// dopo la mail: l'invito è partito (x.ics = true: il giro orario e il programma del mattino non lo rimandano) e si conta a parte
+async function segnaInvito(env, mail, id, reinvio) {
+  const oggi = oraRoma().slice(0, 10);
+  await atlasAggiorna(env, mail, (f) => {
+    const x = (f.impegni || []).find((y) => y.id === id); if (x) x.ics = true;
+    const m = f.mail_oggi && f.mail_oggi.data === oggi ? f.mail_oggi : { data: oggi, quante: 0 };
+    f.mail_oggi = { ...m, inviti: (Number(m.inviti) || 0) + 1, ...(reinvio ? { reinvii: (Number(m.reinvii) || 0) + 1 } : {}) };
+  });
+}
+const INVITI_AL_GIORNO = 5;   // «Mandami l'invito» a mano: al massimo 5 al giorno per account
 // «essenziale» (27/10, JJ: «il servizio mail solo per le cose che servono davvero»): poche mail, tutte utili.
 // - UN solo promemoria per impegno: entro le 12 (e dalle 8: prima il programma non fa in tempo) sta nel programma del mattino, dopo le 12
 //   è solo quello di un'ora prima; niente mail la sera prima;
@@ -1344,7 +1366,7 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     if (modo === "niente") continue;
     // ogni mail che parte si conta: mail_oggi nella scheda e il totale del giro per JJ
     const manda = async (oggetto, testo, allegati) => { await atlasMail(env, mail, f.nome, oggetto, testo, allegati);
-      f.mail_oggi = { data: oggi, quante: quanteMail(f, oggi) + 1 }; giro[mail] = (giro[mail] || 0) + 1; cambiato = true; };
+      f.mail_oggi = { ...(f.mail_oggi && f.mail_oggi.data === oggi ? f.mail_oggi : {}), data: oggi, quante: quanteMail(f, oggi) + 1 }; giro[mail] = (giro[mail] || 0) + 1; cambiato = true; };
     if (modo === "essenziale") { if (await promemoriaEssenziale(f, { adesso, oggi, h, manda, nota: (r) => fatti.push([mail, r]) })) cambiato = true; continue; }
     // 23/10 (JJ): un impegno passato NON si cancella da solo e NON lo si lascia lì a confonderla. Si CHIEDE una volta: «l'hai
     // fatto?». Se risponde sì → lo toglie; se no → lo riprogramma. Qui marco «da_confermare» quelli il cui giorno è passato e
@@ -3233,8 +3255,10 @@ async function aggiungiDallaChat(env, req, origine) {
     }
     riga = { id: "s" + nuovoId().slice(0, 5), cosa, importo, giorno: d.giorno, ogni_mese: d.ogni_mese === true, pagata: false, avvisi: {}, ...(nota ? { nota } : {}) };
   }
+  let modo = "essenziale", nomePersona = "";
   try {
     await atlasAggiorna(env, mail, (f) => {
+      modo = modoPosta(f); nomePersona = f.nome || "";
       f.impegni = f.impegni || []; f.scadenze = f.scadenze || [];
       if (f.impegni.length + f.scadenze.length >= CAL_APERTI_MAX) throw new ErroreCalendario(400, `ci sono già ${CAL_APERTI_MAX} cose aperte: chiudine o eliminane qualcuna`);
       (d.tipo === "impegno" ? f.impegni : f.scadenze).push(riga); return riga;
@@ -3246,7 +3270,35 @@ async function aggiungiDallaChat(env, req, origine) {
   // la riga com'è nel GET /assistente/calendario
   const fuori = d.tipo === "impegno" ? { id: riga.id, cosa: riga.cosa, giorno: riga.giorno, ora: riga.ora, ...conNota(riga) }
     : { id: riga.id, cosa: riga.cosa, giorno: riga.giorno, importo: riga.importo, ogni_mese: riga.ogni_mese, ...conNota(riga) };
-  return risposta({ ok: true, tipo: d.tipo, ...fuori }, 201, origine);
+  // l'ha salvato a mano, toccando Salva: l'invito del calendario le arriva SUBITO per mail (niente se ha scelto «niente» posta)
+  let invito;
+  if (d.tipo === "impegno") {
+    if (modo === "niente") invito = "niente mail";
+    else {
+      try { await mandaInvito(env, mail, nomePersona, riga); invito = "mandato"; }
+      catch (e) { invito = `errore: ${(e && e.message) || "la mail non è partita"}`; }
+      if (invito === "mandato") { try { await segnaInvito(env, mail, riga.id, false); } catch (_) {} }   // la mail è già partita: se questa scrittura salta, il giro orario può rimandarlo, mai perderlo
+    }
+  }
+  return risposta({ ok: true, tipo: d.tipo, ...fuori, ...(invito ? { invito } : {}) }, 201, origine);
+}
+// POST /assistente/invito {id}: rimanda la mail dell'invito di un impegno APERTO di chi chiede (anche con posta «niente»: la chiede lei apposta).
+// Di un altro (o inesistente, o una scadenza) → 404; oltre INVITI_AL_GIORNO al giorno per account → 429; la mail non parte → 502 col motivo.
+async function invitoDallaChat(env, req, origine) {
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  let d = {}; try { d = await req.json(); } catch (_) {}
+  const id = d && typeof d.id === "string" ? d.id.trim().slice(0, 40) : "";
+  if (!id) return risposta({ errore: "manca l'id" }, 400, origine);
+  const A = await atlasLeggi(env);
+  if (A.giu) return risposta({ errore: "non riesco a leggere il tuo calendario: riprova tra poco" }, 502, origine);
+  const f = A.dati[mail] || {}, x = (f.impegni || []).find((y) => y.id === id);
+  if (!x) return risposta({ errore: "non è tuo, o non esiste" }, 404, origine);
+  if (quanteInviti(f, oraRoma().slice(0, 10), "reinvii") >= INVITI_AL_GIORNO) return risposta({ errore: `oggi ti ho già mandato ${INVITI_AL_GIORNO} inviti: riprova domani` }, 429, origine);
+  try { await mandaInvito(env, mail, f.nome || "", x); }
+  catch (e) { return risposta({ errore: `la mail non è partita: ${(e && e.message) || "errore"}` }, 502, origine); }
+  try { await segnaInvito(env, mail, id, true); } catch (_) {}
+  return risposta({ ok: true, id, invito: "mandato" }, 200, origine);
 }
 // POST /assistente/elimina {id}: toglie un impegno o una scadenza APERTI di chi chiede; di un altro (o chiusi) → 404, e non si scrive niente
 async function eliminaDallaChat(env, req, origine) {

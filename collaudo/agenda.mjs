@@ -11,6 +11,12 @@
 // dei promemoria lo tratta come gli altri; i dati sbagliati danno 400 col motivo e non scrivono; «elimina» lo toglie, 404 se non è suo; «ics» dà
 // l'invito della mail (text/calendar, VEVENT, SUMMARY); senza token 401; la `nota` si conserva e torna nel GET.
 // CONTROPROVA: se «aggiungi» non mette l'`id`, la prova «il giro dei promemoria lo vede» diventa rossa.
+// 27/10, l'invito subito (JJ: «quando premo salva per inserire l'impegno mi manda l'invito per mail»): «aggiungi» di un IMPEGNO manda UNA mail
+// all'account («📅 cosa — giorno, alle ora», testo di due righe, .ics allegato `atlas-<giorno>-<id>.ics`), segna `ics: true` (il giro orario non
+// lo rimanda) e risponde `invito: "mandato" | "niente mail" | "errore: …"`; con posta «niente» nessuna mail; una scadenza nessun invito; Brevo giù →
+// l'impegno è salvato e l'errore vero; POST /assistente/invito lo rimanda (anche con «niente»), al massimo 5 al giorno (6° → 429), id di un altro → 404;
+// la mail non conta nel tetto delle 2 al giorno dei promemoria (si conta a parte in mail_oggi.inviti).
+// CONTROPROVA: senza `x.ics = true` il giro orario rimanda l'invito e la prova «nessun altro invito» diventa rossa.
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -31,15 +37,21 @@ if (sorgente.split(MARCA2).length !== 2) { console.log("  ❌ la riga di «aggiu
 writeFileSync(join(dir, "worker-senza-id.mjs"), sorgente.replace(MARCA2, "riga = { cosa, giorno: d.giorno, ora, avvisato: false"));
 const SenzaId = await import(join(dir, "worker-senza-id.mjs"));
 
+// la copia che sbaglia: dopo la mail dell'invito l'impegno NON è segnato `ics`
+const MARCA3 = "if (x) x.ics = true;";
+if (sorgente.split(MARCA3).length !== 2) { console.log("  ❌ la riga di segnaInvito non è più quella: aggiorna MARCA3 nella controprova"); process.exit(1); }
+writeFileSync(join(dir, "worker-senza-ics.mjs"), sorgente.replace(MARCA3, "if (x) x.ics = x.ics;"));
+const SenzaIcs = await import(join(dir, "worker-senza-ics.mjs"));
+
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
-let repo = {}, posta = [], richieste = [], scritture = 0, archivioGiu = false, giroDi = "";
+let repo = {}, posta = [], richieste = [], scritture = 0, archivioGiu = false, brevoGiu = false, giroDi = "";
 const sessioni = { ["a".repeat(64)]: "papa@prova.it", ["b".repeat(64)]: "altro@prova.it" };
 const A = "a".repeat(64), B = "b".repeat(64), MAIL = "papa@prova.it";
 globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url));
   if (u.host === "jjavis-citta.jjavis.workers.dev") { const m = sessioni[((o.headers || {}).Authorization || "").slice(7)]; return m ? new Response(JSON.stringify({ conto: { mail: m } })) : new Response("{}", { status: 401 }); }
   if (u.host === "api.anthropic.com") { richieste.push(JSON.parse(o.body)); return new Response(JSON.stringify({ content: [{ type: "text", text: '{"risposta":"Va bene.","nuovi":[]}' }], model: "claude-haiku-5-5", usage: { input_tokens: 10, output_tokens: 10 } })); }
-  if (u.host === "api.brevo.com") { posta.push({ ...JSON.parse(o.body), giro: giroDi }); return new Response("{}"); }
+  if (u.host === "api.brevo.com") { if (brevoGiu) return new Response('{"message":"giù"}', { status: 503 }); posta.push({ ...JSON.parse(o.body), giro: giroDi }); return new Response("{}"); }
   if (u.host === "api.telegram.org") return new Response('{"ok":true}');
   if (u.host === "api.github.com") { const p = decodeURIComponent(u.pathname.split("/contents/")[1] || "");
     if (archivioGiu) return new Response('{"message":"giù"}', { status: 500 });
@@ -54,7 +66,7 @@ const fatto = (id, tok = A, Mod = W) => chiama(Mod, "POST", "/assistente/fatto",
 const annulla = (id, tok = A, Mod = W) => chiama(Mod, "POST", "/assistente/annulla", tok, { id });
 const scheda = (m = MAIL) => repo["atlas.json"][m];
 const IERI = "2026-10-20";   // «oggi» per la chat è la data vera della prova: il passato è passato
-const nuova = (extra = {}) => { scritture = 0; posta = []; richieste = []; archivioGiu = false;
+const nuova = (extra = {}) => { scritture = 0; posta = []; richieste = []; archivioGiu = false; brevoGiu = false;
   repo = { "atlas.json": { [MAIL]: { nome: "Papà", turni: [{ chi: "noi", testo: "ciao", quando: "x" }], riepilogo: "", impegni: [
     { id: "i3", cosa: "il dentista", giorno: "2027-03-02", ora: "16:00", avvisato: false },
     { id: "i1", cosa: "la revisione", giorno: "2027-03-01", ora: null, avvisato: false },
@@ -162,13 +174,13 @@ console.log("── aggiungi un impegno: stessa forma di quelli dell'assistente"
 nuova();
 { const r = await aggiungi({ tipo: "impegno", cosa: "  la dentista  ", giorno: "2027-03-05", ora: "9:30" }); const j = await r.json();
   ok(r.status === 201 && j.ok === true && /^[0-9a-f]{6}$/.test(j.id) && j.cosa === "la dentista" && j.giorno === "2027-03-05" && j.ora === "09:30", "201 con la riga creata (id di 6 caratteri, cosa pulita, ora 09:30)", [r.status, j]);
-  ok(scritture === 1, "UNA scrittura su atlas.json", scritture);
+  ok(scritture === 2, "due scritture su atlas.json: l'impegno, poi il segno dell'invito mandato (ics)", scritture);
   const c = await cal(); const x = c.impegni.find((y) => y.id === j.id);
   ok(x && Object.keys(x).sort().join() === "cosa,giorno,id,ora", "nel GET ha la stessa forma degli impegni dell'assistente: {id, cosa, giorno, ora}", x);
   const chiavi = c.impegni.map((y) => y.giorno + (y.ora || ""));
   ok(chiavi.join() === [...chiavi].sort().join(), "e sta al suo posto nell'ordine", c.impegni.map((y) => y.id));
   const nelFilo = scheda().impegni.find((y) => y.id === j.id);
-  ok(nelFilo && nelFilo.avvisato === false && Object.keys(nelFilo).sort().join() === "avvisato,cosa,giorno,id,ora", "nella scheda: {id, cosa, giorno, ora, avvisato:false} come applicaEsito", nelFilo);
+  ok(nelFilo && nelFilo.avvisato === false && nelFilo.ics === true && Object.keys(nelFilo).sort().join() === "avvisato,cosa,giorno,ics,id,ora", "nella scheda: {id, cosa, giorno, ora, avvisato:false} come applicaEsito, più ics:true (l'invito è già partito)", nelFilo);
   const senzaOra = await (await aggiungi({ tipo: "impegno", cosa: "la revisione", giorno: "2027-03-06", ora: null })).json();
   ok(senzaOra.ora === null && scheda().impegni.find((y) => y.id === senzaOra.id).ora === null, "senza ora: ora null (evento di tutto il giorno)", senzaOra);
   const f = await fatto(j.id); ok(f.status === 200, "e si chiude con «fatto» come gli altri", f.status); }
@@ -195,12 +207,13 @@ nuova();
 console.log("── il giro dei promemoria lo vede come gli altri");
 const aggiuntoPartono = async (Mod) => { nuova({ scadenze: [], impegni: [] });
   const j = await (await aggiungi({ tipo: "impegno", cosa: "il dentista", giorno: "2026-10-28", ora: "15:00" }, A, Mod)).json();
-  await giri(Mod); return { j, mail: posta.filter((m) => /Alle 15:00: il dentista/.test(m.subject)) }; };
+  await giri(Mod); return { j, mail: posta.filter((m) => /Alle 15:00: il dentista/.test(m.subject)), inv: posta.filter((m) => m.subject.startsWith("📅")) }; };
 { const { j, mail } = await aggiuntoPartono(W);
   ok(/^[0-9a-f]{6}$/.test(j.id), "ha un id", j);
   ok(mail.length === 1, "il promemoria «un'ora prima» parte, una volta sola", posta.map((m) => m.subject));
-  const nomi = (mail[0]?.attachment || []).map((a) => a.name);
-  ok(nomi.length === 1 && new RegExp(`^atlas-2026-10-28-${j.id}\\.ics$`).test(nomi[0]), "con l'invito .ics col suo id", nomi);
+  ok(!(mail[0]?.attachment || []).length, "senza un secondo invito: quello è già partito con «Salva»", mail[0]?.attachment);
+  const inv = posta.filter((m) => m.subject.startsWith("📅")), nomi = (inv[0]?.attachment || []).map((a) => a.name);
+  ok(inv.length === 1 && nomi.length === 1 && new RegExp(`^atlas-2026-10-28-${j.id}\\.ics$`).test(nomi[0]), "l'invito .ics col suo id è quello di «Salva»", nomi);
   ok(scheda().impegni.find((y) => y.id === j.id)?.avvisato === true, "e dopo, l'impegno è segnato «avvisato» (si trova per id)", scheda().impegni); }
 
 console.log("── dati sbagliati: 400 col motivo, e non scrivono");
@@ -262,9 +275,72 @@ nuova();
   ok(r.headers.get("Access-Control-Allow-Origin") === "https://jjoeboy93.github.io", "CORS come le altre");
   archivioGiu = true; const r5 = await ics("i1"); ok(r5.status === 502, "archivio giù: 502", r5.status); archivioGiu = false; }
 
+console.log("── «Salva» di un impegno: l'invito parte SUBITO, una mail sola");
+const invitiDi = (id) => posta.filter((m) => (m.attachment || []).some((a) => a.name.includes(`-${id}.ics`)));
+const adesso = new Date().toISOString().slice(0, 10);
+{ nuova({ impegni: [], scadenze: [] });
+  const r = await aggiungi({ tipo: "impegno", cosa: "il dentista", giorno: "2026-10-28", ora: "15:00" }); const j = await r.json();
+  ok(r.status === 201 && j.invito === "mandato", "essenziale: risposta invito:\"mandato\"", [r.status, j]);
+  ok(posta.length === 1 && posta[0].to[0].email === MAIL, "UNA mail, all'account", posta.map((m) => m.to));
+  ok(posta[0].subject === "📅 il dentista — mercoledì 28 ottobre, alle 15:00", "oggetto: «📅 cosa — giorno per esteso, alle ora»", posta[0].subject);
+  ok(/Tocca «Aggiungi al calendario» qui sopra, o apri l'invito qui sotto, e finisce nel tuo calendario\./.test(posta[0].textContent), "il testo dice cosa toccare", posta[0].textContent);
+  const al = posta[0].attachment || [], ics = al[0] ? Buffer.from(al[0].content, "base64").toString() : "";
+  ok(al.length === 1 && al[0].name === `atlas-2026-10-28-${j.id}.ics` && ics.includes("BEGIN:VEVENT") && ics.includes("SUMMARY:il dentista"), "allegato atlas-<giorno>-<id>.ics con BEGIN:VEVENT e il SUMMARY giusto", [al.map((a) => a.name), ics]);
+  ok(scheda().impegni.find((y) => y.id === j.id).ics === true, "nell'impegno: ics:true", scheda().impegni);
+  const m = scheda().mail_oggi;
+  ok(m && m.inviti === 1 && !(m.quante > 0) && W.quanteMail(scheda(), m.data) === 0, "si conta a parte in mail_oggi.inviti, e non nel tetto delle 2 mail dei promemoria", m);
+  await giri(W);
+  ok(invitiDi(j.id).length === 1, "dopo due settimane di giri orari: NESSUN altro invito per quell'impegno (né promemoria né programma con .ics)", posta.map((x) => [x.giro, x.subject, (x.attachment || []).length]));
+  ok(posta.some((x) => /Alle 15:00: il dentista/.test(x.subject)), "…e il promemoria «un'ora prima» parte lo stesso", posta.map((x) => x.subject)); }
+{ nuova({ impegni: [], scadenze: [] });
+  const j = await (await aggiungi({ tipo: "impegno", cosa: "la revisione", giorno: "2026-10-30" })).json();
+  ok(posta.length === 1 && posta[0].subject === "📅 la revisione — venerdì 30 ottobre", "senza ora: «📅 cosa — giorno» e basta", posta.map((m) => m.subject)); }
+{ nuova({ posta: "tutto", impegni: [], scadenze: [] });
+  const j = await (await aggiungi({ tipo: "impegno", cosa: "il notaio", giorno: "2026-10-28", ora: "11:00" })).json(); await giri(W);
+  ok(j.invito === "mandato" && invitiDi(j.id).length === 1 && !posta.some((m) => /da mettere nel tuo calendario/.test(m.subject)), "«tutto»: l'invito di Salva, e il giro orario non manda «da mettere nel tuo calendario»", posta.map((m) => m.subject)); }
+{ nuova({ posta: "niente", impegni: [], scadenze: [] });
+  const r = await aggiungi({ tipo: "impegno", cosa: "il notaio", giorno: "2026-10-28", ora: "11:00" }); const j = await r.json();
+  ok(r.status === 201 && j.invito === "niente mail" && posta.length === 0 && scritture === 1, "«niente»: nessuna mail, invito:\"niente mail\", una sola scrittura", [j, posta.length, scritture]);
+  ok(!scheda().impegni.find((y) => y.id === j.id).ics, "…e l'impegno resta senza ics"); }
+{ nuova({ impegni: [], scadenze: [] });
+  const j = await (await aggiungi({ tipo: "scadenza", cosa: "la luce", giorno: "2026-10-30", importo: "€ 64" })).json();
+  ok(posta.length === 0 && !("invito" in j), "una scadenza: nessuna mail d'invito", [posta.length, j]); }
+{ nuova({ impegni: [], scadenze: [] }); brevoGiu = true;
+  const r = await aggiungi({ tipo: "impegno", cosa: "il dentista", giorno: "2026-10-28", ora: "15:00" }); const j = await r.json();
+  ok(r.status === 201 && /^errore: .*503/.test(j.invito), "Brevo giù: 201 e invito:\"errore: <motivo vero>\"", [r.status, j]);
+  ok(scheda().impegni.some((y) => y.id === j.id) && !scheda().impegni.find((y) => y.id === j.id).ics, "l'impegno è salvato, senza ics (l'invito è ancora da mandare)", scheda().impegni);
+  brevoGiu = false; const ri = await chiama(W, "POST", "/assistente/invito", A, { id: j.id });
+  ok(ri.status === 200 && posta.length === 1 && scheda().impegni.find((y) => y.id === j.id).ics === true, "«Riprova» (invito) lo manda e lo segna", [ri.status, posta.length]); }
+
+console.log("── POST /assistente/invito: lo rimanda");
+const invito = (id, tok = A, Mod = W) => chiama(Mod, "POST", "/assistente/invito", tok, { id });
+{ nuova({ posta: "niente" });
+  const r = await invito("i2"); const j = await r.json();
+  ok(r.status === 200 && j.invito === "mandato" && posta.length === 1, "anche con posta «niente» (lo chiede lei): 200 e UNA mail", [r.status, j, posta.length]);
+  ok(posta[0].subject === "📅 il meccanico — lunedì 1 marzo, alle 09:30" && posta[0].attachment[0].name === "atlas-2027-03-01-i2.ics", "stessa mail di «Salva»: oggetto e allegato", [posta[0].subject, posta[0].attachment.map((a) => a.name)]);
+  ok(scheda().impegni.find((y) => y.id === "i2").ics === true && scheda().mail_oggi.inviti === 1 && scheda().mail_oggi.reinvii === 1, "segnato ics, contato a parte", scheda());
+  await invito("i2"); await invito("i1"); await invito("i3"); await invito("i1");
+  const sesto = await invito("i2"); const js = await sesto.json();
+  ok(sesto.status === 429 && /5/.test(js.errore) && posta.length === 5, "il 6° del giorno: 429, e non parte la mail", [sesto.status, js, posta.length]);
+  scheda().posta = "essenziale";
+  ok((await aggiungi({ tipo: "impegno", cosa: "nuovo", giorno: "2027-03-05" })).status === 201 && posta.length === 6, "…ma «Salva» manda l'invito lo stesso (il tetto è dei reinvii)", posta.length); }
+{ nuova(); posta = [];
+  const a = await invito("x1"), b = await invito("zzz"), c = await invito("s1"), d = await chiama(W, "POST", "/assistente/invito", A, {}), e = await invito("i1", ""), f = await invito("i1", "c".repeat(64));
+  ok([a, b, c].every((r) => r.status === 404) && d.status === 400 && e.status === 401 && f.status === 401 && posta.length === 0 && scritture === 0,
+    "id di un altro / che non esiste / una scadenza: 404; senza id 400; senza token 401: nessuna mail, nessuna scrittura", [a.status, b.status, c.status, d.status, e.status, f.status, posta.length, scritture]);
+  brevoGiu = true; const g = await invito("i1"); const jg = await g.json(); brevoGiu = false;
+  ok(g.status === 502 && /503/.test(jg.errore) && !scheda().impegni.find((y) => y.id === "i1").ics, "Brevo giù: 502 col motivo, nessun segno ics", [g.status, jg]);
+  archivioGiu = true; const h = await invito("i1"); archivioGiu = false; ok(h.status === 502, "archivio giù: 502, non «non è tuo»", h.status);
+  ok(g.headers.get("Access-Control-Allow-Origin") === "https://jjoeboy93.github.io", "CORS come le altre"); }
+
+console.log("── CONTROPROVA: senza `x.ics = true` il giro orario rimanda l'invito, e la prova «nessun altro invito» diventa rossa");
+{ nuova({ impegni: [], scadenze: [] });
+  const j = await (await aggiungi({ tipo: "impegno", cosa: "il dentista", giorno: "2026-10-28", ora: "15:00" }, A, SenzaIcs)).json(); await giri(SenzaIcs);
+  ok(invitiDi(j.id).length > 1, "senza ics:true l'invito esce più di una volta (Salva + giro orario): la prova è rossa", invitiDi(j.id).map((m) => m.subject)); }
+
 console.log("── CONTROPROVA: se «aggiungi» non mette l'id, «il giro dei promemoria lo vede» diventa rossa");
-{ const { j, mail } = await aggiuntoPartono(SenzaId);
-  const nomi = (mail[0]?.attachment || []).map((a) => a.name);
+{ const { j, inv } = await aggiuntoPartono(SenzaId);
+  const nomi = (inv[0]?.attachment || []).map((a) => a.name);
   ok(!(/^[0-9a-f]{6}$/.test(j.id) && nomi.length === 1 && new RegExp(`^atlas-2026-10-28-${j.id}\\.ics$`).test(nomi[0])), "senza id l'impegno non ha un id e l'invito esce «undefined»: la prova è rossa", [j, nomi]); }
 
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde");
