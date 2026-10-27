@@ -35,9 +35,15 @@ function risposta(corpo, stato, origine) {
 
 const testo = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
+// 27/10, JJ: «per i pensionati manca il senso, il lavoro non lo fanno più». La pagina chiede prima «Cosa fai nella vita?»:
+// qualunque altro valore si butta.
+const VITE = ["lavoro", "pensione", "studio", "casa"];
+const vitaValida = (v) => (VITE.includes(v) ? v : "");
+
 function pulisci(d) {
   const r = {
     quando: new Date().toISOString(),
+    vita: vitaValida(d.vita),
     mestiere: testo(d.mestiere, 60),
     tempo: testo(d.tempo, 80),
     dettaglio: testo(d.dettaglio, 800),
@@ -571,7 +577,7 @@ function nuovoId() { return crypto.randomUUID().replace(/-/g, "").slice(0, 8); }
 
 // ─── una risposta del sondaggio: JJ lo sa subito ───
 function datiUtenteDaRisposta(r) {
-  return { nome_assistente: r.nome_assistente, tema: r.tema, tuo: r.nome, mestiere: r.mestiere,
+  return { nome_assistente: r.nome_assistente, tema: r.tema, tuo: r.nome, vita: r.vita, mestiere: r.mestiere,
     tempo: r.tempo, prezzo_al_mese: r.prezzo_al_mese, voti: r.voti, proposta: r.proposta, ha_risposto: true };
 }
 
@@ -2035,6 +2041,7 @@ async function numeri(env, raccolti) {
     ...perCosa(letti),
     `Nomi: ${conta(letti.map((u) => u.nome_assistente))}`,
     `Aspetti: ${conta(letti.map((u) => u.tema))}`,
+    `Vita: ${VITE.map((v) => `${v} ${letti.filter((u) => u.vita === v).length}`).join(", ")}`,
     `Mestieri: ${conta(letti.map((u) => u.mestiere))}`,
     `Tempo perso: ${conta(letti.map((u) => u.tempo))}`,
   ];
@@ -2879,7 +2886,7 @@ async function ioDalLink(env, url, origine) {
   let u = null;
   try { u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {}
   if (!u) return risposta({ errore: "non ti trovo" }, 404, origine);
-  return risposta({ io: { id: chi, nome: u.nome_assistente || "", mestiere: u.mestiere || "", tema: u.tema || "", tuo: u.tuo || "" } }, 200, origine);
+  return risposta({ io: { id: chi, nome: u.nome_assistente || "", mestiere: u.mestiere || "", tema: u.tema || "", tuo: u.tuo || "", vita: vitaValida(u.vita) } }, 200, origine);
 }
 export { firmaChi, linkPersonale, ioDalLink };
 
@@ -2913,7 +2920,7 @@ async function ioDalConto(env, req, origine, fetchConti = fetch) {
   let u = null, sha; try { const d = await gh(env, "GET", `utenti/${chi}.json`); u = deb64(d.content); sha = d.sha; } catch (_) {}
   if (!u) return risposta({ io: null }, 200, origine);
   const io = { id: chi, mail, ...(u.nome_assistente ? { nome: u.nome_assistente } : {}), ...(u.tema ? { tema: u.tema } : {}), ...(u.tuo ? { tuo: u.tuo } : {}),
-    ...(u.mestiere ? { mestiere: u.mestiere } : {}), ...(u.tempo ? { tempo: u.tempo } : {}), ...(u.conosciute ? { conosciute: u.conosciute } : {}), ...(u.ha_risposto ? { inviato: true } : {}) };
+    ...(vitaValida(u.vita) ? { vita: u.vita } : {}), ...(u.mestiere ? { mestiere: u.mestiere } : {}), ...(u.tempo ? { tempo: u.tempo } : {}), ...(u.conosciute ? { conosciute: u.conosciute } : {}), ...(u.ha_risposto ? { inviato: true } : {}) };
   // 26/10, JJ: «apro la pagina e mi arriva la mail… è inutile». Tolta la mail «Bentornato» a ogni accesso: chi entra lo sa
   // già, è davanti alla pagina. (Prima: una al giorno, da Brevo, al primo accesso.)
   return risposta({ io }, 200, origine);
@@ -3439,14 +3446,19 @@ async function primoCore(env, mail, chi, u, d, perPagina, dallaPagina = false) {
   const ass = String(d.nome_assistente || u.nome_assistente || "").trim().slice(0, 24), tuo = String(d.tuo || u.tuo || "").trim().slice(0, 40);
   await atlasAggiorna(env, mail, (f) => { if (ass) f.assistente = ass; if (tuo && !f.nome) f.nome = tuo; if (chi && !f.chi) f.chi = chi; return []; });
   const filo = (await atlasLeggi(env)).dati[mail];
-  const sa = [(u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`, (u.tempo || d.tempo) && `- cosa fa perdere tempo nel lavoro: ${u.tempo || d.tempo}`,
+  // 27/10, JJ: chi è in pensione o sta a casa non ha «un lavoro»: per lui la riga è la vita, e «tempo» è cosa vorrebbe non dover più ricordare
+  const vita = vitaValida(u.vita || d.vita), senzaLavoro = vita === "pensione" || vita === "casa";
+  const rigaVita = senzaLavoro ? `- nella vita: ${vita === "pensione" ? "in pensione" : "sta a casa"}\n` : "";
+  const sa = [!senzaLavoro && (u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`,
+    (u.tempo || d.tempo) && `- ${senzaLavoro ? "cosa vorrebbe non dover più ricordare" : "cosa fa perdere tempo nel lavoro"}: ${u.tempo || d.tempo}`,
     bisogno && `- cosa vorrebbe da te, con parole sue: «${bisogno}»`,
     (u.voti || []).length && `- cosa ha votato da costruire: ${u.voti.join("; ")} (lo costruisce chi ti ha costruito, su commissione: di' che l'hai passato a lui, nessun prezzo)`]
     .filter(Boolean).join("\n") + await prodottoPer(env, mail, u.mestiere || d.mestiere);
   const quando = new Date().toISOString();
   const posta0 = modoPosta(filo), seMail = (p) => p === "tutto" || (p === "essenziale" && !dallaPagina);
-  const rec = { domanda: `[PRIMA VOLTA] Ha appena fatto l'account di JJA-VIS; questa risposta la legge ${seMail(posta0) ? "per mail e " : ""}nella chat della pagina. Nel sondaggio ha detto:\n${sa ||
-    "(niente di preciso: proponi tu le due cose che fai che servono di più a chi lavora)"}\nPuò scriverti nella chat${seMail(posta0) ? " o rispondere alle mail" : ""}.`, nome: filo.nome || tuo, quando, documenti: [] };
+  const rec = { domanda: `[PRIMA VOLTA] Ha appena fatto l'account di JJA-VIS; questa risposta la legge ${seMail(posta0) ? "per mail e " : ""}nella chat della pagina. Nel sondaggio ha detto:\n${rigaVita}${sa ||
+    (senzaLavoro ? "(niente di preciso: proponi tu le due cose che servono di più a chi è in pensione o sta a casa: visite, bollette, documenti, bandi, ricorrenze, difesa dalle truffe)"
+      : "(niente di preciso: proponi tu le due cose che fai che servono di più a chi lavora)")}\nPuò scriverti nella chat${seMail(posta0) ? " o rispondere alle mail" : ""}.`, nome: filo.nome || tuo, quando, documenti: [] };
   let esito; try { esito = await atlasRisponde(env, mail, rec, filo, null); await contaSpesa(env, ultimoUso); }
   catch (e) { await tg(env, "sendMessage", { ...(await dovePosta(env, chi)), text: `⚠️ Prima proposta a ${tuo || mail} NON partita: ${String(e.message || e).slice(0, 200)}` }).catch(() => {});
     return { errore: String(e.message || e) }; }

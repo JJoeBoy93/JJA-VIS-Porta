@@ -104,4 +104,38 @@ ok(mail.some((x) => x.to[0].email === "sara@prova.it" && /cosa faccio per te/.te
 ok(leggi("bozze/bbbb2222.json").stato === "inviata" && !leggi("attesa.json").ids.length, "…e la domanda si chiude");
 richieste = []; rt = await tocca("bozza:bbbb2222");
 ok(richieste.length === 0, "toccato due volte: niente seconda proposta", richieste.length);
+
+// ── 27/10, «la vita prima del lavoro» (JJ, accanto a sua nonna): chi è in pensione dal sondaggio fino al testo per l'assistente
+const sondaggio = async (corpo) => { const r = await W.default.fetch(new Request("https://jjavis-porta.19-jjardito93.workers.dev/risposta", { method: "POST",
+  headers: { Origin: "https://jjoeboy93.github.io", "Content-Type": "application/json" }, body: JSON.stringify(corpo) }), env, { waitUntil() {} });
+  if (r.status !== 201) console.log("   sondaggio:", r.status, await r.text()); return r.status; };
+const CHI3 = "cccc1111dddd2222", CHI4 = "eeee3333ffff4444";
+ok(await sondaggio({ chi: CHI3, vita: "pensione", mestiere: "", tempo: "Bollette e scadenze", prezzo: 20, nome_assistente: "Iris", tema: "calmo" }) === 201, "il sondaggio di chi è in pensione arriva");
+ok(leggi(`utenti/${CHI3}.json`).vita === "pensione", "vita «pensione» salvata in utenti/<chi>.json", leggi(`utenti/${CHI3}.json`));
+ok(await sondaggio({ chi: CHI4, vita: "astronauta", mestiere: "Altro", tempo: "Organizzare la giornata", prezzo: 20 }) === 201 && !leggi(`utenti/${CHI4}.json`).vita,
+  "vita «astronauta» scartata: nell'archivio non c'è", leggi(`utenti/${CHI4}.json`));
+const U3 = leggi(`utenti/${CHI3}.json`); U3.mail = "rosa@prova.it"; U3.tuo = "Rosa"; repo[`utenti/${CHI3}.json`] = b64(U3);
+const A3 = leggi("atlas.json"); A3["rosa@prova.it"] = { nome: "Rosa", turni: [], impegni: [], riepilogo: "", assistente: "Iris" }; repo["atlas.json"] = b64(A3);
+sessioni["c".repeat(64)] = "rosa@prova.it"; richieste = [];
+risposta = '{"risposta":"Ciao Rosa, sono Iris.","nuovi":[]}';
+d = await chiama("c".repeat(64), { primo: true, chi: CHI3 });
+const q3 = (richieste[0] && richieste[0].messages[0].content) || "";
+ok(d.primo && q3.includes("- nella vita: in pensione") && q3.includes("- cosa vorrebbe non dover più ricordare: Bollette e scadenze") && !/- lavoro:|perdere tempo nel lavoro/.test(q3),
+  "vita «pensione» arriva al testo per l'assistente: «nella vita: in pensione», senza «lavoro:»", q3.slice(0, 500));
+const io3 = await (await W.default.fetch(new Request("https://porta/io/dal-conto", { method: "POST", headers: { Origin: "https://jjoeboy93.github.io", Authorization: "Bearer " + "c".repeat(64) }, body: "{}" }), env, { waitUntil() {} })).json();
+ok(io3.io && io3.io.vita === "pensione", "/io/dal-conto restituisce la vita", io3);
+// senza niente da dire: la proposta per chi è a casa non parla di lavoro
+repo[`utenti/${CHI4}.json`] = b64({ chi: CHI4, mail: "nino@prova.it", tuo: "Nino", vita: "casa" });
+A3["nino@prova.it"] = { nome: "Nino", turni: [], impegni: [], riepilogo: "", assistente: "Leo" }; repo["atlas.json"] = b64(A3);
+sessioni["d".repeat(64)] = "nino@prova.it"; richieste = [];
+await chiama("d".repeat(64), { primo: true, chi: CHI4 });
+const q4 = (richieste[0] && richieste[0].messages[0].content) || "";
+ok(q4.includes("- nella vita: sta a casa") && /visite, bollette, documenti, bandi, ricorrenze, difesa dalle truffe/.test(q4) && !/chi lavora/.test(q4), "vita «casa» senza altro: «sta a casa» e le due cose per chi è a casa", q4.slice(-500));
+// e chi lavora, o non ha la vita (i vecchi), resta com'era
+richieste = [];
+const CHI5 = "1111aaaa2222bbbb"; repo[`utenti/${CHI5}.json`] = b64({ chi: CHI5, mail: "ugo@prova.it", tuo: "Ugo", vita: "lavoro", mestiere: "Artigiano", tempo: "Preventivi" });
+A3["ugo@prova.it"] = { nome: "Ugo", turni: [], impegni: [], riepilogo: "", assistente: "Max" }; repo["atlas.json"] = b64(A3); sessioni["e".repeat(64)] = "ugo@prova.it";
+await chiama("e".repeat(64), { primo: true, chi: CHI5 });
+const q5 = (richieste[0] && richieste[0].messages[0].content) || "";
+ok(q5.includes("- lavoro: Artigiano") && q5.includes("- cosa fa perdere tempo nel lavoro: Preventivi") && !q5.includes("nella vita"), "vita «lavoro»: tutto come prima", q5.slice(0, 500));
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);

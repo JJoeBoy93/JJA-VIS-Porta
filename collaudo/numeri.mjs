@@ -50,5 +50,14 @@ repo.set("utenti/a.json", b64({ ha_risposto: true, tempo: "Preventivi, conti, fa
 repo.set("utenti/b.json", b64({ ha_risposto: true, tempo: "Organizzare la giornata", prezzo_al_mese: 30, primo: "x", ultimo: "x" }));
 ok(!(await sera()).includes("dove parte il cursore"), "nessun 15: nessun avviso");
 
+console.log("── la vita, sopra i mestieri");
+repo.set("utenti/a.json", b64({ ha_risposto: true, vita: "lavoro", mestiere: "Corriere o autista", tempo: "Preventivi", prezzo_al_mese: 20, primo: "x", ultimo: "x" }));
+repo.set("utenti/b.json", b64({ ha_risposto: true, vita: "pensione", tempo: "Bollette e scadenze", prezzo_al_mese: 30, primo: "x", ultimo: "x" }));
+repo.set("utenti/c.json", b64({ ha_risposto: true, vita: "pensione", tempo: "Documenti da rinnovare", prezzo_al_mese: 30, primo: "x", ultimo: "x" }));
+repo.set("utenti/d.json", b64({ ha_risposto: true, vita: "casa", tempo: "Bollette e scadenze", prezzo_al_mese: 30, primo: "x", ultimo: "x" }));
+const v = await sera();
+ok(v.includes("Vita: lavoro 1, pensione 2, studio 0, casa 1"), "la riga «Vita: lavoro N, pensione N, studio N, casa N»");
+ok(v.indexOf("Vita: ") > -1 && v.indexOf("Vita: ") < v.indexOf("Mestieri: "), "sta sopra «Mestieri»");
+
 console.log(errori ? `\nROSSO: ${errori}` : "\nVERDE");
 process.exit(errori ? 1 : 0);
