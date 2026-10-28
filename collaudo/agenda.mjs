@@ -1,11 +1,16 @@
 // L'agenda nella pagina (26/10, JJ: «puoi andare tu diretto sull'attività e premere fatta») — tutto finto.   node collaudo/agenda.mjs
 // GET /assistente/calendario, POST /assistente/fatto e /assistente/annulla, col token dell'account come /assistente.
-// Controlla: il GET dà impegni e scadenze aperti in ordine di giorno e ora; «fatto» su un impegno lo toglie dagli aperti, lo mette in
-// `fatti` con quando_fatto, con UNA scrittura su atlas.json, e il giro dei promemoria non chiede più «l'hai fatto?» (né per mail, nel servizio
-// «essenziale» e in quello «tutto», né in chat); «fatto» su una scadenza ricorrente la porta allo stesso giorno del mese dopo (e resta aperta),
-// su una singola la chiude; «annulla» li rimette; id di un altro account 404, già fatto 409, senza token 401 (e gli errori non scrivono nulla);
-// oltre 30 giorni i fatti spariscono; il CORS è quello di /assistente; archivio giù → il GET dice 502, non «non hai niente».
-// CONTROPROVA: con «fatto» che NON toglie l'impegno dagli aperti la prova «non lo chiede più» diventa rossa.
+// 28/10, JJ: «se ho premuto fatto, lui dovrebbe già saperlo… e non deve sparire dal calendario, deve restare come fatto»: «Fatto» SEGNA, non cancella.
+// Controlla: il GET dà impegni e scadenze in ordine di giorno e ora, le aperte com'erano e le fatte con `fatto: <ISO>` (niente più `fatti` a parte);
+// «fatto» su un impegno o una scadenza lascia la voce dov'è con `fatto`, con UNA scrittura su atlas.json; una ricorrente resta fatta e ne nasce una aperta
+// al mese dopo (e «annulla» toglie il segno e quella nuova); «annulla» toglie il segno, «elimina» (Togli) cancella davvero, anche una fatta;
+// il testo per l'assistente (tre strade: chat, mail, primo incontro passano tutte da atlasRisponde) mette la fatta SEPARATA («- fatto: bolletta della luce
+// 87,40 € (scadeva il 22/10), segnata fatta il 28/10») e non fra le cose da fare, e le fatte di oltre 60 giorni restano nell'archivio ma non nel testo;
+// il programma del mattino, i promemoria, le scadenze e «l'hai fatto?» (servizi «essenziale» e «tutto») non nominano le voci fatte; id di un altro account 404,
+// già fatto 409, senza token 401 (e gli errori non scrivono nulla); le voci cancellate dal «Fatto» di prima (pagata, f.fatti) non tornano da sole;
+// il CORS è quello di /assistente; archivio giù → il GET dice 502, non «non hai niente».
+// CONTROPROVE: se «Fatto» cancellasse ancora la voce, le prove «resta» diventano rosse; se gli avvisi e il testo non saltassero le voci fatte, le prove
+// «non la nomina» e «non è fra le cose da fare» diventano rosse.
 // 26/10, il calendario vero (JJ: «poter aggiungere in quel calendario l'appuntamento manualmente»): POST /assistente/aggiungi, POST /assistente/elimina,
 // GET /assistente/ics. «Aggiungi» mette un impegno (o una scadenza) con la forma di quelli dell'assistente (stesso id, `avvisato: false`) e il giro
 // dei promemoria lo tratta come gli altri; i dati sbagliati danno 400 col motivo e non scrivono; «elimina» lo toglie, 404 se non è suo; «ics» dà
@@ -24,12 +29,19 @@ import { fileURLToPath } from "node:url";
 const qui = dirname(fileURLToPath(import.meta.url)); const dir = mkdtempSync(join(tmpdir(), "agenda-"));
 for (const [a, b] of [["worker.js", "worker.mjs"], ["preventivo.js", "preventivo.js"], ["google.js", "google.js"]]) copyFileSync(join(qui, "..", a), join(dir, b));
 const W = await import(join(dir, "worker.mjs"));
-// la copia che sbaglia: «fatto» lascia l'impegno fra gli aperti
-const MARCA = "const [x] = f.impegni.splice(j, 1);";
+// la copia che sbaglia (1): «Fatto» CANCELLA ancora (com'era prima del 28/10): l'impegno esce da f.impegni, la scadenza dalla lista
+const MARCA = "if (impegno) x.fatto = adesso.toISOString(); else scadenzaFatta(f, x, adesso);";
+const MARCA_S = "  x.fatto = adesso.toISOString();\n  if (x.ogni_mese) {";
 const sorgente = readFileSync(join(qui, "..", "worker.js"), "utf8");
-if (!sorgente.includes(MARCA)) { console.log("  ❌ la riga di «fatto» non è più quella: aggiorna MARCA nella controprova"); process.exit(1); }
-writeFileSync(join(dir, "worker-rotto.mjs"), sorgente.replace(MARCA, "const x = f.impegni[j];"));
+for (const [m, nome] of [[MARCA, "MARCA"], [MARCA_S, "MARCA_S"]]) if (sorgente.split(m).length !== 2) { console.log(`  ❌ la riga di «fatto» non è più quella: aggiorna ${nome} nella controprova`); process.exit(1); }
+writeFileSync(join(dir, "worker-rotto.mjs"), sorgente.replace(MARCA, "if (impegno) f.impegni.splice(f.impegni.indexOf(x), 1); else scadenzaFatta(f, x, adesso);")
+  .replace(MARCA_S, "  f.scadenze.splice(f.scadenze.indexOf(x), 1); return x;\n  if (x.ogni_mese) {"));
 const Rotto = await import(join(dir, "worker-rotto.mjs"));
+// la copia che sbaglia (2): le voci fatte contano come aperte (gli avvisi e il testo per l'assistente non le saltano)
+const MARCA_A = "const impegnoAperto = (x) => !x.fatto;", MARCA_B = "const scadenzaAperta = (x) => !x.fatto && !x.pagata;";
+for (const [m, nome] of [[MARCA_A, "MARCA_A"], [MARCA_B, "MARCA_B"]]) if (sorgente.split(m).length !== 2) { console.log(`  ❌ la riga di impegnoAperto/scadenzaAperta non è più quella: aggiorna ${nome} nella controprova`); process.exit(1); }
+writeFileSync(join(dir, "worker-senza-salto.mjs"), sorgente.replace(MARCA_A, "const impegnoAperto = (x) => true;").replace(MARCA_B, "const scadenzaAperta = (x) => !x.pagata;"));
+const SenzaSalto = await import(join(dir, "worker-senza-salto.mjs"));
 
 // la copia che sbaglia: «aggiungi» non mette l'id all'impegno
 const MARCA2 = "riga = { id: nuovoId().slice(0, 6), cosa, giorno: d.giorno, ora, avvisato: false";
@@ -76,13 +88,13 @@ const nuova = (extra = {}) => { scritture = 0; posta = []; richieste = []; archi
                { id: "s9", cosa: "già pagata", giorno: "2027-03-05", pagata: true }], ...extra },
     "altro@prova.it": { nome: "Altro", turni: [], impegni: [{ id: "x1", cosa: "cosa dell'altro", giorno: "2027-03-01", ora: "10:00" }], scadenze: [] } } }; };
 
-console.log("── il GET: gli aperti, in ordine");
+console.log("── il GET: tutte le voci in ordine, le aperte come prima");
 nuova();
 { const r = await chiama(W, "GET", "/assistente/calendario", A); const j = await r.json();
   ok(r.status === 200 && j.impegni.map((x) => x.id).join() === "i1,i2,i3", "impegni per giorno e ora (senza ora prima di quelli con l'ora)", j.impegni);
-  ok(Object.keys(j.impegni[1]).sort().join() === "cosa,giorno,id,ora", "ogni impegno: {id, cosa, giorno, ora}", j.impegni[1]);
-  ok(j.scadenze.map((x) => x.id).join() === "s1,s2" && Object.keys(j.scadenze[1]).sort().join() === "cosa,giorno,id,importo,ogni_mese", "scadenze aperte in ordine (la pagata non c'è): {id, cosa, giorno, importo, ogni_mese}", j.scadenze);
-  ok(Array.isArray(j.fatti) && j.fatti.length === 0, "fatti: vuoto", j.fatti);
+  ok(Object.keys(j.impegni[1]).sort().join() === "cosa,giorno,id,ora", "ogni impegno aperto: {id, cosa, giorno, ora}, senza `fatto`", j.impegni[1]);
+  ok(j.scadenze.map((x) => x.id).join() === "s1,s2" && Object.keys(j.scadenze[1]).sort().join() === "cosa,giorno,id,importo,ogni_mese", "scadenze in ordine (la «pagata» di prima non c'è): {id, cosa, giorno, importo, ogni_mese}", j.scadenze);
+  ok(!("fatti" in j), "niente più «fatti» a parte: una voce fatta resta fra le sue", Object.keys(j));
   ok(!JSON.stringify(j).includes("dell'altro"), "non si vede niente di un altro account");
   ok(r.headers.get("Access-Control-Allow-Origin") === "https://jjoeboy93.github.io" && /Authorization/.test(r.headers.get("Access-Control-Allow-Headers")), "CORS come /assistente"); }
 { const r = await chiama(W, "GET", "/assistente/calendario", "c".repeat(64)); ok(r.status === 401, "token sconosciuto: 401", r.status);
@@ -90,14 +102,19 @@ nuova();
   const r3 = await chiama(W, "POST", "/assistente/fatto", "", { id: "i1" }); const r4 = await chiama(W, "POST", "/assistente/annulla", "", { id: "i1" });
   ok(r3.status === 401 && r4.status === 401 && scritture === 0 && scheda().impegni.length === 3, "fatto e annulla senza token: 401 e niente di scritto"); }
 
-console.log("── «fatto» su un impegno");
-{ const r = await fatto("i2"); const j = await r.json();
-  ok(r.status === 200 && j.ok === true, "200 ok", [r.status, j]);
+console.log("── «fatto» su un impegno: la voce RESTA, con fatto: <data>");
+{ const prima = JSON.stringify(scheda().impegni.find((x) => x.id === "i2"));
+  const r = await fatto("i2"); const j = await r.json();
+  ok(r.status === 200 && j.ok === true && j.id === "i2" && Date.now() - Date.parse(j.fatto) < 60000, "200 ok, con la data in cui l'ha toccato", [r.status, j]);
   ok(scritture === 1, "UNA scrittura su atlas.json per tocco", scritture);
-  const c = await cal();
-  ok(c.impegni.map((x) => x.id).join() === "i1,i3", "esce dagli aperti", c.impegni);
-  ok(c.fatti.length === 1 && c.fatti[0].id === "i2" && c.fatti[0].cosa === "il meccanico" && Date.now() - Date.parse(c.fatti[0].quando_fatto) < 60000, "entra in fatti, con quando_fatto", c.fatti);
-  ok(scheda("altro@prova.it").impegni.length === 1, "l'altro account non è toccato"); }
+  const c = await cal(); const x = c.impegni.find((y) => y.id === "i2");
+  ok(c.impegni.map((y) => y.id).join() === "i1,i2,i3", "RESTA nel calendario, al suo posto", c.impegni);
+  ok(x && x.cosa === "il meccanico" && Date.now() - Date.parse(x.fatto) < 60000 && Object.keys(x).sort().join() === "cosa,fatto,giorno,id,ora", "…con fatto: <ISO>", x);
+  ok(c.impegni.filter((y) => y.fatto).length === 1, "e solo quello");
+  const nelFilo = scheda().impegni.find((y) => y.id === "i2");
+  ok(scheda().impegni.length === 3 && nelFilo.fatto === x.fatto && !("fatti" in scheda()), "nell'archivio è ancora in f.impegni (niente f.fatti)", scheda());
+  ok(JSON.stringify({ ...nelFilo, fatto: undefined }) === prima, "e non è cambiato altro", nelFilo);
+  ok(scheda("altro@prova.it").impegni.length === 1 && !scheda("altro@prova.it").impegni[0].fatto, "l'altro account non è toccato"); }
 
 console.log("── errori: 404, 409, e non scrivono");
 { scritture = 0;
@@ -109,62 +126,143 @@ console.log("── errori: 404, 409, e non scrivono");
   const r5 = await chiama(W, "POST", "/assistente/fatto", A, {}); ok(r5.status === 400, "senza id: 400", r5.status);
   const r6 = await annulla("i1"); ok(r6.status === 409, "annulla di uno che è ancora aperto: 409", r6.status);
   const r7 = await annulla("zzz"); ok(r7.status === 404, "annulla di un id che non c'è: 404", r7.status);
+  const r8 = await fatto("s9"), r9 = await annulla("s9"); ok(r8.status === 409 && r9.status === 409, "una `pagata` di prima del 28/10: fatto e annulla 409 (non la ripesca)", [r8.status, r9.status]);
   ok(scritture === 0, "nessuno di questi errori ha scritto sull'archivio", scritture);
   ok(JSON.stringify(r1.headers.get("Access-Control-Allow-Origin")) === '"https://jjoeboy93.github.io"', "gli errori hanno il CORS"); }
 
-console.log("── annulla");
-{ const r = await annulla("i2"); const j = await r.json(); scritture = 0;
+console.log("── «Annulla» (Non ancora fatto): toglie il segno, la voce torna fra le cose da fare");
+{ const r = await annulla("i2"); scritture = 0;
   const c = await cal();
-  ok(r.status === 200 && c.impegni.map((x) => x.id).join() === "i1,i2,i3" && c.fatti.length === 0, "il tocco sbagliato: l'impegno torna fra gli aperti, fuori dai fatti", c);
-  ok(scheda().impegni.find((x) => x.id === "i2").ora === "09:30" && !("quando_fatto" in scheda().impegni.find((x) => x.id === "i2")), "com'era (stessa ora, senza quando_fatto)", scheda().impegni);
+  ok(r.status === 200 && c.impegni.map((x) => x.id).join() === "i1,i2,i3" && !c.impegni.some((x) => x.fatto), "il tocco sbagliato: l'impegno è di nuovo senza segno", c);
+  ok(scheda().impegni.find((x) => x.id === "i2").ora === "09:30" && !("fatto" in scheda().impegni.find((x) => x.id === "i2")), "com'era (stessa ora, senza fatto)", scheda().impegni);
   const r2 = await annulla("i2"); ok(r2.status === 409, "annullare due volte: 409", r2.status); }
 
-console.log("── una scadenza ricorrente: «pagata» la porta al mese dopo, e resta aperta");
+console.log("── una scadenza: «Fatto» la segna, resta; «Annulla» la rimette");
+{ scritture = 0; const r = await fatto("s1"); const j = await r.json(); const c = await cal();
+  ok(r.status === 200 && scritture === 1 && j.id === "s1", "200, una scrittura", [r.status, scritture, j]);
+  const s = c.scadenze.find((x) => x.id === "s1");
+  ok(s && Date.now() - Date.parse(s.fatto) < 60000 && s.giorno === "2027-03-10" && s.importo === "€ 180", "RESTA nel calendario, con fatto, stesso giorno e importo", c.scadenze);
+  ok(scheda().scadenze.length === 3 && scheda().scadenze.find((x) => x.id === "s1").pagata === false, "nell'archivio è ancora lì (nessuna cancellata, `pagata` non è il segno nuovo)", scheda().scadenze);
+  const r2 = await fatto("s1"); ok(r2.status === 409, "segnata due volte: 409", r2.status);
+  const a = await annulla("s1"); const c2 = await cal();
+  ok(a.status === 200 && !c2.scadenze.find((x) => x.id === "s1").fatto && !("fatto" in scheda().scadenze.find((x) => x.id === "s1")), "annulla: senza segno", c2.scadenze); }
+
+console.log("── una scadenza ricorrente: resta fatta, e nasce quella del mese dopo (aperta)");
 { scritture = 0; const r = await fatto("s2"); const j = await r.json(); const c = await cal();
   ok(r.status === 200 && scritture === 1, "200, una scrittura", [r.status, scritture]);
-  const s = c.scadenze.find((x) => x.id === "s2");
-  ok(s && s.giorno === "2027-04-30", "31 marzo → 30 aprile (il mese dopo, senza sforare)", c.scadenze);
-  ok(scheda().scadenze.find((x) => x.id === "s2").avvisi && !scheda().scadenze.find((x) => x.id === "s2").avvisi.prima, "gli avvisi si rifanno", scheda().scadenze);
-  ok(c.fatti.some((x) => x.tipo === "scadenza" && x.cosa === "affitto" && x.importo === "€ 500"), "e compare fra i fatti", c.fatti);
-  const a = await annulla(j.id); const c2 = await cal();
-  ok(a.status === 200 && c2.scadenze.find((x) => x.id === "s2").giorno === "2027-03-31" && c2.fatti.length === 0, "annulla: torna al 31 marzo", c2.scadenze);
-  // una singola
-  await fatto("s1"); const c3 = await cal();
-  ok(!c3.scadenze.some((x) => x.id === "s1") && c3.fatti.some((x) => x.cosa === "bollo auto"), "una scadenza singola: chiusa, non più aperta", c3);
-  const r4 = await fatto("s1"); ok(r4.status === 409, "pagata due volte: 409", r4.status);
-  const r5 = await fatto("s9"); ok(r5.status === 409, "una già pagata di prima: 409", r5.status); }
+  const vecchia = c.scadenze.find((x) => x.id === "s2"), nuovaS = c.scadenze.find((x) => x.id !== "s1" && x.id !== "s2");
+  ok(vecchia && vecchia.fatto && vecchia.giorno === "2027-03-31", "quella di marzo resta, fatta, al 31 marzo", c.scadenze);
+  ok(nuovaS && !nuovaS.fatto && nuovaS.giorno === "2027-04-30" && nuovaS.cosa === "affitto" && nuovaS.importo === "€ 500" && nuovaS.ogni_mese === true, "ne nasce una aperta al 30 aprile (31 marzo → mese dopo, senza sforare), stessa cosa e importo", c.scadenze);
+  ok(/^s[0-9a-f]{5}$/.test(nuovaS.id) && JSON.stringify(scheda().scadenze.find((x) => x.id === nuovaS.id).avvisi) === "{}", "con un id suo e gli avvisi da rifare", scheda().scadenze);
+  const a = await annulla("s2"); const c2 = await cal();
+  ok(a.status === 200 && c2.scadenze.map((x) => x.id).join() === "s1,s2" && !c2.scadenze.find((x) => x.id === "s2").fatto, "annulla: toglie il segno E quella di aprile (nata da «fatto»)", c2.scadenze);
+  ok(!("successiva" in scheda().scadenze.find((x) => x.id === "s2")), "e non resta il legame");
+  // quella del mese dopo già fatta: prima si annulla lei
+  await fatto("s2"); const dopo = (await cal()).scadenze.find((x) => x.id !== "s1" && x.id !== "s2"); await fatto(dopo.id);
+  scritture = 0; const bloccato = await annulla("s2");
+  ok(bloccato.status === 409 && scritture === 0 && scheda().scadenze.find((x) => x.id === "s2").fatto, "se quella del mese dopo è già fatta, annullare la prima è 409 e non scrive", bloccato.status); }
 
-console.log("── i fatti di oltre 30 giorni spariscono (e non si annullano)");
-{ nuova(); const vecchio = new Date(Date.now() - 31 * 864e5).toISOString(), recente = new Date(Date.now() - 29 * 864e5).toISOString();
-  scheda().fatti = [{ id: "o1", tipo: "impegno", cosa: "vecchio", giorno: IERI, ora: null, quando_fatto: vecchio }, { id: "o2", tipo: "impegno", cosa: "recente", giorno: IERI, ora: null, quando_fatto: recente }];
-  const c = await cal(); ok(c.fatti.map((x) => x.id).join() === "o2", "solo gli ultimi 30 giorni", c.fatti);
-  const r = await annulla("o1"); ok(r.status === 404, "annullare un fatto di 31 giorni fa: 404", r.status);
-  ok((await annulla("o2")).status === 200, "uno di 29: si può"); }
+console.log("── le voci cancellate dal «Fatto» di prima NON tornano da sole");
+{ nuova({ fatti: [{ id: "i7", tipo: "impegno", cosa: "cancellato dal vecchio fatto", giorno: IERI, ora: null, quando_fatto: new Date().toISOString() }] });
+  const j = await cal(); const t = JSON.stringify(j);
+  ok(!t.includes("già pagata") && !t.includes("cancellato dal vecchio fatto"), "né la `pagata: true` di prima né il vecchio f.fatti compaiono nel calendario", j);
+  ok(scheda().fatti.length === 1 && scheda().scadenze.some((x) => x.id === "s9" && x.pagata === true), "…e nell'archivio non sono stati toccati né convertiti", scheda()); }
 
 console.log("── archivio giù: il GET lo dice, non finge «niente»");
 { nuova(); archivioGiu = true; const r = await chiama(W, "GET", "/assistente/calendario", A); const j = await r.json();
   ok(r.status === 502 && /riprova/.test(j.errore || "") && !("impegni" in j), "502 con il motivo", [r.status, j]);
   const f = await fatto("i1"); ok(f.status === 502 && scritture === 0, "anche «fatto»: 502", f.status); archivioGiu = false; }
 
-// il giro dei promemoria: un impegno di 6 giorni fa, giri orari da oggi a due settimane
+// ── cosa legge l'assistente (JJ, 28/10: Atlas gli ha chiesto «l'hai già pagata?» dopo il «Fatto»)
+const ANNO = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric" }).format(new Date());
+const OGGI_IT = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", day: "2-digit", month: "2-digit" }).format(new Date());
+const chiediAdAtlas = async (Mod = W, testo = "ciao") => { richieste = []; await chiama(Mod, "POST", "/assistente", A, { testo }); return richieste.length ? richieste.at(-1).messages[0].content : ""; };
+const SEZIONE_FATTE = "Le cose che ha già FATTE";
+const metà = (t) => { const i = t.indexOf(SEZIONE_FATTE); const fine = (x) => x.split("La conversazione fin qui")[0]; return i < 0 ? { fare: fine(t), fatte: "" } : { fare: t.slice(0, i), fatte: fine(t.slice(i)) }; };
+const luce = (extra = {}) => ({ id: "sL", cosa: "bolletta della luce", importo: "87,40 €", giorno: `${ANNO}-10-22`, ogni_mese: false, pagata: false, avvisi: { prima: true, oggi: true }, ...extra });
+console.log("── cosa sa l'assistente: la bolletta fatta è «fatto: …», non una cosa da fare");
+{ nuova({ impegni: [], scadenze: [luce()] });
+  const pre = metà(await chiediAdAtlas());
+  ok(/Le scadenze da pagare già segnate:\n- \[sL\] .*bolletta della luce/.test(pre.fare) && pre.fatte === "", "controllo: prima tocco la bolletta è fra le scadenze da pagare", pre.fare);
+  await fatto("sL"); const t = metà(await chiediAdAtlas());
+  ok(richieste.length > 0, "l'assistente è stato interpellato");
+  ok(t.fatte.includes(`- fatto: bolletta della luce 87,40 € (scadeva il 22/10), segnata fatta il ${OGGI_IT}`), `compare «- fatto: bolletta della luce 87,40 € (scadeva il 22/10), segnata fatta il ${OGGI_IT}»`, t.fatte);
+  ok(!/bolletta/.test(t.fare) && /Le scadenze da pagare già segnate:\n\(nessuna\)/.test(t.fare), "e NON è fra le cose da fare", t.fare);
+  ok(/già FATTE/.test(t.fatte) && /non chiederle se le ha fatte o pagate/.test(richieste.at(-1).system), "il prompt dice di non chiedere «l'hai pagata?» per le già fatte"); }
+{ nuova({ impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true }], scadenze: [] });
+  const pre = await chiediAdAtlas(); ok(/il dentista/.test(pre) && /← PASSATO/.test(pre), "controllo: senza il tocco l'impegno passato è da chiedere («← PASSATO»)");
+  await fatto("v1"); const t = metà(await chiediAdAtlas());
+  ok(!/il dentista/.test(t.fare) && !/← PASSATO/.test(t.fare) && /Gli impegni già segnati:\n\(nessuno\)/.test(t.fare), "dopo il tocco: non è più fra gli impegni, e niente «← PASSATO»", t.fare);
+  ok(t.fatte.includes(`- fatto: il dentista (era il 20/10 alle 10:00), segnato fatto il ${OGGI_IT}`), "è fra le fatte", t.fatte); }
+console.log("── le fatte di oltre 60 giorni restano nell'archivio ma non entrano nel testo");
+{ const giorniFa = (n) => new Date(Date.now() - n * 864e5).toISOString();
+  nuova({ impegni: [{ id: "o1", cosa: "vecchio impegno", giorno: IERI, ora: null, avvisato: true, fatto: giorniFa(61) }, { id: "o2", cosa: "impegno recente", giorno: IERI, ora: null, avvisato: true, fatto: giorniFa(59) }],
+    scadenze: [luce({ id: "o3", cosa: "vecchia bolletta", fatto: giorniFa(61) }), luce({ id: "o4", cosa: "bolletta recente", fatto: giorniFa(2) })] });
+  const t = metà(await chiediAdAtlas());
+  ok(t.fatte.includes("impegno recente") && t.fatte.includes("bolletta recente"), "59 e 2 giorni fa: nel testo", t.fatte);
+  ok(!/vecchio impegno|vecchia bolletta/.test(t.fatte + t.fare), "61 giorni fa: non nel testo (né fra le fatte né fra le cose da fare)", t);
+  ok(t.fatte.indexOf("bolletta recente") < t.fatte.indexOf("impegno recente"), "la più recente prima", t.fatte);
+  const c = await cal();
+  ok(scheda().impegni.some((x) => x.id === "o1") && scheda().scadenze.some((x) => x.id === "o3") && c.impegni.some((x) => x.id === "o1") && c.scadenze.some((x) => x.id === "o3"),
+    "…ma nell'archivio e nel calendario ci sono ancora", c); }
+// ── gli avvisi: il giro dei promemoria (programma del mattino, promemoria, scadenze, «l'hai fatto?»)
 const giri = async (Mod) => { for (let t = Date.parse("2026-10-27T05:07:00Z"); t <= Date.parse("2026-11-10T20:07:00Z"); t += 3600e3) { giroDi = new Date(t).toISOString(); await Mod.atlasPromemoria(env, new Date(t)); } };
 const chiedeFatto = () => posta.filter((m) => /hai fatto|li hai fatti|Impegni passati/i.test(m.subject + " " + m.textContent));
+const nomina = (re) => posta.filter((m) => re.test(m.subject + " " + m.textContent));
 const prova = async (Mod, posta_) => { nuova({ posta: posta_, impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true }], scadenze: [] });
-  const base = scritture; await fatto("v1", A, Mod); await giri(Mod); return chiedeFatto().length; };
+  await fatto("v1", A, Mod); await giri(Mod); return chiedeFatto().length; };
 console.log("── dopo «fatto» non si chiede più «l'hai fatto?»");
 { // controllo: senza il tocco, la mail partirebbe davvero (altrimenti la prova sotto non dimostra niente)
   for (const modo of ["essenziale", "tutto"]) { nuova({ posta: modo, impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true }], scadenze: [] });
     await giri(W); ok(chiedeFatto().length > 0, `controllo («${modo}»): senza il tocco la mail «l'hai fatto?» parte`, posta.map((m) => m.subject)); }
-  for (const modo of ["essenziale", "tutto"]) { const n = await prova(W, modo); ok(n === 0, `«${modo}»: toccato «fatto», in due settimane di giri nessuna mail «l'hai fatto?»`, posta.map((m) => m.subject)); }
-  nuova({ impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true }], scadenze: [] });
-  const pre = await chiama(W, "POST", "/assistente", A, { testo: "ciao" }); const c1 = JSON.stringify(richieste);
-  ok(/il dentista/.test(c1) && /← PASSATO/.test(c1), "controllo: in chat, senza il tocco, l'assistente vede l'impegno passato (da chiedere)");
-  await fatto("v1"); richieste = []; await chiama(W, "POST", "/assistente", A, { testo: "ciao" }); const c2 = JSON.stringify(richieste);
-  ok(richieste.length > 0 && !/il dentista/.test(c2) && !/← PASSATO/.test(c2), "in chat, dopo il tocco, l'assistente non ha più l'impegno passato da chiedere"); }
+  for (const modo of ["essenziale", "tutto"]) { const n = await prova(W, modo); ok(n === 0, `«${modo}»: toccato «fatto», in due settimane di giri nessuna mail «l'hai fatto?»`, posta.map((m) => m.subject)); } }
 
-console.log("── CONTROPROVA: se «fatto» non toglie l'impegno dagli aperti, «non lo chiede più» diventa rossa");
-{ const n = await prova(Rotto, "essenziale");
-  ok(n > 0, "con «fatto» rotto la mail «l'hai fatto?» parte ancora: la prova è rossa", posta.map((m) => m.subject)); }
+// oggi (28/10 a Roma) un impegno aperto la mattina e uno «fatto»; fra 2 giorni una scadenza (aperta o fatta): il programma e i promemoria devono nominare solo le aperte
+const giornata = (fattoAdesso) => ({ impegni: [{ id: "m1", cosa: "la revisione", giorno: "2026-10-28", ora: "09:30", avvisato: false, ics: true },
+    { id: "m2", cosa: "il dentista", giorno: "2026-10-28", ora: "10:00", avvisato: false, ics: true, ...(fattoAdesso ? { fatto: new Date().toISOString() } : {}) },
+    { id: "m3", cosa: "il notaio", giorno: "2026-10-28", ora: "15:00", avvisato: false, ics: true, ...(fattoAdesso ? { fatto: new Date().toISOString() } : {}) }],
+  scadenze: [{ id: "sB", cosa: "bolletta della luce", importo: "87,40 €", giorno: "2026-10-30", ogni_mese: false, pagata: false, avvisi: {}, ...(fattoAdesso ? { fatto: new Date().toISOString() } : {}) },
+             { id: "sC", cosa: "assicurazione", giorno: "2026-10-30", ogni_mese: false, pagata: false, avvisi: {} }] });
+console.log("── il programma del mattino, i promemoria e le scadenze non nominano le voci fatte");
+for (const modo of ["essenziale", "tutto"]) {
+  nuova({ posta: modo, ...giornata(false) }); await giri(W);
+  ok(nomina(/il dentista/).length > 0 && nomina(/il notaio/).length > 0 && nomina(/bolletta della luce/).length > 0, `controllo («${modo}»): senza il tocco il programma/promemoria/scadenza nominano dentista, notaio e bolletta`, posta.map((m) => m.subject));
+  nuova({ posta: modo, ...giornata(true) }); await giri(W);
+  ok(nomina(/Il tuo programma di oggi/).length > 0 && nomina(/la revisione/).length > 0, `«${modo}»: il programma del mattino c'è e nomina quella aperta (la revisione)`, posta.map((m) => m.subject));
+  ok(nomina(/il dentista/).length === 0 && nomina(/il notaio/).length === 0, `«${modo}»: il programma e i promemoria NON nominano gli impegni fatti (dentista, notaio)`, posta.map((m) => m.subject));
+  ok(nomina(/assicurazione/).length > 0 && nomina(/bolletta/).length === 0, `«${modo}»: la scadenza fatta (la bolletta) non ha avvisi, quella aperta (l'assicurazione) sì`, posta.map((m) => m.subject));
+  ok(!posta.some((m) => (m.attachment || []).some((a) => /m[23]\.ics/.test(a.name))), `«${modo}»: nessun invito .ics per le fatte`); }
+{ // un impegno futuro fatto non manda nemmeno l'invito del giro orario
+  nuova({ posta: "tutto", impegni: [{ id: "m5", cosa: "il commercialista", giorno: "2026-11-03", ora: "11:00", avvisato: false, fatto: new Date().toISOString() }], scadenze: [] }); await giri(W);
+  ok(posta.length === 0, "«tutto»: un impegno futuro già segnato fatto non fa partire né invito né promemoria", posta.map((m) => m.subject)); }
+{ // una ricorrente: senza il tocco gli avvisi di ottobre partono; con «fatto» non parte nessun avviso per quella di ottobre (la nuova è del 30/11, oltre il giro)
+  const avvisiAffitto = () => posta.filter((m) => /affitto/.test(m.subject));
+  nuova({ posta: "tutto", impegni: [], scadenze: [{ id: "sR", cosa: "affitto", importo: "650 €", giorno: "2026-10-30", ogni_mese: true, pagata: false, avvisi: {} }] }); await giri(W);
+  ok(avvisiAffitto().length > 0, "controllo: senza il tocco gli avvisi dell'affitto di ottobre partono", posta.map((m) => m.subject));
+  nuova({ posta: "tutto", impegni: [], scadenze: [{ id: "sR", cosa: "affitto", importo: "650 €", giorno: "2026-10-30", ogni_mese: true, pagata: false, avvisi: {} }] });
+  await fatto("sR"); await giri(W);
+  ok(avvisiAffitto().length === 0, "ricorrente fatta: nessun avviso per quella di ottobre (e quella nuova, del 30/11, è fuori dal giro)", posta.map((m) => [m.giro, m.subject])); }
+
+console.log("── «Togli» (elimina) cancella davvero, anche una voce fatta");
+{ nuova(); await fatto("i2"); await fatto("s1"); scritture = 0;
+  const r = await chiama(W, "POST", "/assistente/elimina", A, { id: "i2" }); const r2 = await chiama(W, "POST", "/assistente/elimina", A, { id: "s1" });
+  ok(r.status === 200 && r2.status === 200 && scritture === 2, "200 su una fatta e su una scadenza fatta", [r.status, r2.status, scritture]);
+  ok(!scheda().impegni.some((x) => x.id === "i2") && !scheda().scadenze.some((x) => x.id === "s1"), "non ci sono più nell'archivio (cancellate, non nascoste)", scheda());
+  const c = await cal(); ok(!c.impegni.some((x) => x.id === "i2") && !c.scadenze.some((x) => x.id === "s1"), "e non sono nel calendario", c);
+  const t = metà(await chiediAdAtlas()); ok(!/meccanico|bollo/.test(t.fatte), "né fra le cose fatte dell'assistente", t.fatte);
+  const r3 = await fatto("i2"); ok(r3.status === 404, "e «fatto» su una togliata: 404", r3.status); }
+
+console.log("── CONTROPROVA: se «Fatto» cancellasse ancora, le prove «resta» diventano rosse");
+{ nuova({ impegni: [{ id: "i1", cosa: "la revisione", giorno: "2027-03-01", ora: null, avvisato: false }], scadenze: [luce({ id: "s1" })] });
+  await fatto("i1", A, Rotto); await fatto("s1", A, Rotto); const c = await cal(A, Rotto);
+  ok(!c.impegni.some((x) => x.id === "i1") && !c.scadenze.some((x) => x.id === "s1"), "con «Fatto» che cancella, né l'impegno né la scadenza restano nel calendario: la prova «resta» è rossa", c);
+  ok(scheda().impegni.length === 0 && scheda().scadenze.length === 0, "…e non ci sono più nell'archivio", scheda()); }
+
+console.log("── CONTROPROVA: se gli avvisi e il testo non saltassero le fatte, «non la nomina» e «non è fra le cose da fare» diventano rosse");
+{ nuova({ posta: "tutto", ...giornata(true) }); await giri(SenzaSalto);
+  ok(nomina(/il dentista/).length > 0 && nomina(/bolletta della luce/).length > 0, "senza il salto la mail nomina dentista e bolletta: la prova «non la nomina» è rossa", posta.map((m) => m.subject));
+  nuova({ impegni: [], scadenze: [luce()] }); await fatto("sL", A, SenzaSalto); const t = metà(await chiediAdAtlas(SenzaSalto));
+  ok(/bolletta della luce/.test(t.fare), "senza il salto la bolletta fatta resta fra le scadenze da pagare: la prova «non è fra le cose da fare» è rossa", t.fare); }
 
 // ══ AGGIUNGERE, ELIMINARE, L'INVITO — 26/10 ═════════════════════════════════════════════════════════════════════════════
 const aggiungi = (corpo, tok = A, Mod = W) => chiama(Mod, "POST", "/assistente/aggiungi", tok, corpo);
@@ -190,7 +288,7 @@ nuova();
 { const j = await (await aggiungi({ tipo: "impegno", cosa: "il notaio", giorno: "2027-03-05", ora: "11:00", nota: "porta la carta d'identità\ne il codice fiscale" })).json();
   const c = await cal(); const x = c.impegni.find((y) => y.id === j.id);
   ok(j.nota === "porta la carta d'identità\ne il codice fiscale" && x && x.nota === j.nota, "la nota c'è nella risposta e nel GET", [j, x]);
-  await fatto(j.id); const c2 = await cal(); ok(c2.fatti.find((y) => y.id === j.id)?.nota === j.nota, "…e anche fra i fatti", c2.fatti);
+  await fatto(j.id); const c2 = await cal(); ok(c2.impegni.find((y) => y.id === j.id)?.nota === j.nota && c2.impegni.find((y) => y.id === j.id)?.fatto, "…e anche quando è fatto (la voce resta, con la nota)", c2.impegni);
   await annulla(j.id); ok(scheda().impegni.find((y) => y.id === j.id)?.nota === j.nota, "…e dopo «annulla» è ancora lì"); }
 
 console.log("── aggiungi una scadenza");
@@ -202,7 +300,8 @@ nuova();
   const s = scheda().scadenze.find((y) => y.id === j.id); ok(s && s.pagata === false && JSON.stringify(s.avvisi) === "{}", "nella scheda: come quelle dell'assistente (pagata:false, avvisi:{})", s);
   const j2 = await (await aggiungi({ tipo: "scadenza", cosa: "il bollo", giorno: "2027-03-21" })).json();
   ok(j2.importo === null && j2.ogni_mese === false, "senza importo né «ogni mese»: null e false", j2);
-  const p = await fatto(j.id); ok(p.status === 200 && (await cal()).scadenze.find((y) => y.id === j.id).giorno === "2027-04-20", "«pagata» la porta al mese dopo, come le altre"); }
+  const p = await fatto(j.id); const cc = await cal();
+  ok(p.status === 200 && cc.scadenze.find((y) => y.id === j.id).fatto && cc.scadenze.some((y) => y.id !== j.id && y.cosa === "la luce" && !y.fatto && y.giorno === "2027-04-20"), "«fatto» la segna e ne nasce una al mese dopo, come le altre"); }
 
 console.log("── il giro dei promemoria lo vede come gli altri");
 const aggiuntoPartono = async (Mod) => { nuova({ scadenze: [], impegni: [] });
@@ -247,7 +346,7 @@ console.log("── elimina");
 nuova();
 { scritture = 0; const r = await elimina("i2"); const j = await r.json();
   ok(r.status === 200 && j.ok === true && scritture === 1, "un impegno: 200, UNA scrittura", [r.status, scritture]);
-  ok(!(await cal()).impegni.some((x) => x.id === "i2") && (await cal()).fatti.length === 0, "sparisce dal calendario (e non finisce fra i fatti)");
+  ok(!(await cal()).impegni.some((x) => x.id === "i2") && !("fatti" in scheda()), "sparisce dal calendario (e non finisce in nessun archivio dei fatti)");
   const r2 = await elimina("s1"); ok(r2.status === 200 && !(await cal()).scadenze.some((x) => x.id === "s1"), "una scadenza: sparisce");
   const m = await (await aggiungi({ tipo: "impegno", cosa: "da togliere", giorno: "2027-03-05" })).json(); const r3 = await elimina(m.id);
   ok(r3.status === 200 && !(await cal()).impegni.some((x) => x.id === m.id), "uno aggiunto a mano: sparisce"); scritture = 0;

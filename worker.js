@@ -1053,7 +1053,7 @@ async function tracciaPubblica(url, env, origine) {
 // ══ ATLAS — 12 ottobre ══ JJ prova JJA-VIS con Jessica, sua moglie («per vedere come si comporta con un utente vero»). Atlas
 // segna gli impegni che gli scrivono per mail e li ricorda da solo: alle 7 il programma del giorno, e un'ora prima di quelli
 // con l'ora. Tutto in atlas.json nell'archivio: { mail: { nome, turni: [{chi, testo, quando}], impegni: [{id, cosa, giorno,
-// ora, avvisato}], riepilogo: "AAAA-MM-GG" } }. Le ore sono di Roma (il server vive in UTC).
+// ora, avvisato, fatto?}], scadenze: [{id, cosa, importo, giorno, ogni_mese, avvisi, fatto?}], riepilogo: "AAAA-MM-GG" } }. `fatto` = ISO di quando l'ha segnata (28/10). Le ore sono di Roma (il server vive in UTC).
 // 12/10, JJ: «sonnet 4.5 non è stato proprio il miglior modello... il 5.5 dovrebbe costare uguale ma è molto meglio». Verificato:
 // Sonnet 5.5 costa MENO (2 $ / 10 $ per milione, contro 3 / 15 di Sonnet 4.5). Se non c'è, il catalogo sceglie un altro Sonnet
 // Poi, stesso giorno: Atlas su Haiku 5.5 (vedi MODELLI_PREFERITI), un ventesimo del prezzo di Sonnet 5.5. Se le risposte non
@@ -1094,6 +1094,25 @@ function daRoma(giorno, ora) {   // giorno e ora di Roma -> Date vera
   const prova = Date.UTC(Y, M - 1, D, h, m); return new Date(prova - offsetRoma(new Date(prova)) * 60000);
 }
 const giornoBello = (g) => { const d = new Date(g + "T12:00:00Z"); return `${GIORNI[d.getUTCDay()]} ${d.getUTCDate()}/${d.getUTCMonth() + 1}`; };
+// ══ «FATTO» SEGNA, NON CANCELLA — 28 ottobre 2026 ═════════════════════════════════════════════════════════════════════════════
+// JJ, 28/10, dal telefono: ha toccato «Fatto» sulla bolletta della luce da 87,40 € e quella è sparita dal calendario; poi Atlas gli ha chiesto
+// «l'hai già pagata?». «Se ho premuto fatto, lui dovrebbe già saperlo… e non deve sparire dal calendario, deve restare come fatto». Adesso la voce
+// (impegno o scadenza) resta dov'è, con `fatto: "<ISO di quando l'ha toccato>"`: il calendario la mostra segnata, l'assistente la legge fra le cose
+// già fatte, e gli avvisi (programma, promemoria, «l'hai fatto?», scadenze) la saltano. «Annulla» toglie il segno; «Togli» (elimina) è l'unica
+// strada che cancella davvero. `pagata: true` è il segno di prima (28/10): quelle voci restano nascoste, non tornano da sole.
+const FATTE_NEL_TESTO_GIORNI = 60;   // le fatte più vecchie restano nell'archivio ma non entrano nel testo per l'assistente
+const impegnoAperto = (x) => !x.fatto;
+const scadenzaAperta = (x) => !x.fatto && !x.pagata;
+const giornoCorto = (g, anno) => `${g.slice(8, 10)}/${g.slice(5, 7)}${g.slice(0, 4) === anno ? "" : "/" + g.slice(0, 4)}`;
+// le voci fatte negli ultimi 60 giorni, per il testo dell'assistente: la più recente prima
+function vociFatte(f, adesso = new Date()) {
+  const limite = adesso.getTime() - FATTE_NEL_TESTO_GIORNI * 864e5, anno = oraRoma(adesso).slice(0, 4);
+  const quando = (x) => giornoCorto(oraRoma(new Date(x.fatto)).slice(0, 10), anno);   // il giorno di Roma in cui l'ha toccato
+  return [...(f.impegni || []).map((x) => [x, true]), ...(f.scadenze || []).map((x) => [x, false])]
+    .filter(([x]) => typeof x.fatto === "string" && Date.parse(x.fatto) >= limite).sort((a, b) => b[0].fatto.localeCompare(a[0].fatto))
+    .map(([x, imp]) => imp ? `- fatto: ${x.cosa} (era il ${giornoCorto(x.giorno, anno)}${x.ora ? " alle " + x.ora : ""}), segnato fatto il ${quando(x)}`
+      : `- fatto: ${x.cosa}${x.importo ? " " + x.importo : ""} (scadeva il ${giornoCorto(x.giorno, anno)}), segnata fatta il ${quando(x)}`);
+}
 async function atlasLeggi(env) {
   try { const f = await gh(env, "GET", "atlas.json"); return { dati: deb64(f.content), sha: f.sha }; } catch (e) { return { dati: {}, sha: null, giu: !/GitHub 404/.test(String((e && e.message) || e)) }; }
 }
@@ -1170,6 +1189,10 @@ ${P.invito}
   Quando lei risponde a quella domanda: se dice di sì (fatto, andato, ok) metti il suo id in "tolti"; se dice di no o lo vuole
   rifare, rimettilo in "nuovi" col nuovo giorno (se non te lo dice, chiediglielo) e intanto metti il vecchio id in "tolti". Un
   impegno che lei conferma o sposta NON va più chiesto;
+- COSE GIÀ FATTE (28/10, JJ: «se ho premuto fatto, lui dovrebbe già saperlo»): quelle sotto «Le cose che ha già FATTE» lei le ha già segnate
+  col tasto «Fatto» del calendario della pagina. Sono finite: non chiederle se le ha fatte o pagate, non ricordargliele, non rimetterle in
+  programma e non segnarle di nuovo. Se ti chiede se ha già pagato qualcosa, rispondi da quell'elenco (cosa e quando l'ha segnata). Se ti dice
+  che invece non l'ha fatta, può togliere il segno con «Non ancora fatto» nel calendario;
 - tieni l'elenco delle cose che deve portarsi SEMPRE dietro quando esce di casa (chiavi, occhiali, badge, caricatore…): ${P.portare}. Quando te lo dice o lo cambia, metti in "da_portare"
   l'elenco COMPLETO aggiornato (sostituisce quello di prima; [] per svuotarlo); se non cambia, null. Le cose da portare per UN
   impegno preciso vanno dentro l'impegno stesso («dentista alle 10 — portare la tessera sanitaria»);
@@ -1179,7 +1202,7 @@ ${P.invito}
   si ripete ogni mese («l'affitto il 10 di ogni mese») è ricorrente. ${P.scadenze}
   Una scadenza NON è un impegno: va in "scadenze_nuove", non in "nuovi". Non paghi tu e non entri in nessun conto: ricordi e basta.
   Non scrivere tu le date dei promemoria (le calcola il sistema): ${P.date}.
-  Se una scadenza uguale (stessa cosa, stesso giorno) è già nell'elenco, non segnarla di nuovo.
+  Se una scadenza uguale (stessa cosa, stesso giorno) è già nell'elenco, anche fra le cose già FATTE, non segnarla di nuovo.
 - tieni i suoi DOCUMENTI (bollette, ricevute, contratti) che ti manda in allegato: li leggi, li archivi cifrati, e quando te li
   chiede («mandami la bolletta della luce di ottobre») glieli rimandi in allegato: metti i loro id in "manda_documenti". Se ti
   chiede di cancellarli, metti gli id in "documenti_tolti". I documenti che hai sono nell'elenco qui sotto: non inventarne altri.
@@ -1221,14 +1244,16 @@ Rispondi SOLO con un oggetto JSON, senza niente prima o dopo:
 async function atlasRisponde(env, mail, rec, filo, lettera) {
   const ora = oraRoma(), oggi = ora.slice(0, 10);
   const turni = filo ? filo.turni : (lettera ? [{ chi: "noi", testo: `[la lettera «${lettera.oggetto}»] ${String(lettera.testo || "").slice(0, 1500)}` }] : []);
-  const impegni = filo ? filo.impegni : [];
+  const impegni = ((filo && filo.impegni) || []).filter(impegnoAperto);   // le fatte non sono da fare: stanno sotto, separate
+  const fatte = filo ? vociFatte(filo) : [];
   const contesto = `OGGI è ${giornoBello(oggi)} ${oggi.slice(0, 4)} (${oggi}), a Roma sono le ${ora.slice(11)}.\n` +
     `Si chiama: ${rec.nome || (filo && filo.nome) || "(non lo so)"} (dal nome capisci se è un uomo o una donna).\n` +
     (rec.sa ? `Quello che sai di lei:\n${rec.sa}\n` : "") + "\n" +
     `I suoi documenti archiviati:\n${(rec.documenti || []).map((x) => `- [${x.id}] ${x.titolo}${x.data ? " · " + x.data : ""}`).join("\n") || "(nessuno)"}\n\n` +
-    `Le scadenze da pagare già segnate:\n${(filo && filo.scadenze || []).filter((x) => !x.pagata).map((x) => `- [${x.id}] ${x.giorno}${x.importo ? " · " + x.importo : ""}: ${x.cosa}${x.ogni_mese ? " (ogni mese)" : ""}`).join("\n") || "(nessuna)"}\n\n` +
+    `Le scadenze da pagare già segnate:\n${(filo && filo.scadenze || []).filter(scadenzaAperta).map((x) => `- [${x.id}] ${x.giorno}${x.importo ? " · " + x.importo : ""}: ${x.cosa}${x.ogni_mese ? " (ogni mese)" : ""}`).join("\n") || "(nessuna)"}\n\n` +
     `Cosa si porta sempre dietro quando esce: ${(filo && filo.da_portare || []).join(", ") || "(non me l'ha ancora detto)"}\n\n` +
     `Gli impegni già segnati${impegni.some((x) => x.giorno < oggi) ? " (quelli segnati PASSATO sono scaduti: se lei conferma che li ha fatti vanno in «tolti», se no vanno spostati)" : ""}:\n${impegni.length ? impegni.map((x) => `- [${x.id}] ${giornoBello(x.giorno)} (${x.giorno})${x.ora ? " alle " + x.ora : ""}: ${x.cosa}${x.giorno < oggi ? " ← PASSATO" : ""}`).join("\n") : "(nessuno)"}\n\n` +
+    (fatte.length ? `Le cose che ha già FATTE (le ha segnate lei, negli ultimi ${FATTE_NEL_TESTO_GIORNI} giorni: sono finite, non sono da fare):\n${fatte.join("\n")}\n\n` : "") +
     `La conversazione fin qui (dalla più vecchia):\n${turni.map((t) => `${t.chi === "lei" ? "LEI" : "TU"}: ${t.testo}`).join("\n---\n") || "(niente)"}\n\n` +
     `Il suo NUOVO messaggio, tra le righe di trattini:\n-----\n${rec.domanda}\n-----`;
   // 20/10: può cercare sul web (strumento dei server di Anthropic, web_search_20250305), al massimo 3 ricerche a risposta
@@ -1299,16 +1324,17 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   const quando = (x) => daRoma(x.giorno, x.ora).getTime();
   const fra = (g) => Math.round((Date.parse(g) - Date.parse(oggi)) / 864e5);
   let cambiato = false;
-  for (const x of f.impegni) if (x.giorno < oggi && !x.da_confermare && !x.chiesto) { x.da_confermare = true; cambiato = true; }
+  const imp = f.impegni.filter(impegnoAperto);   // 28/10: quelle segnate fatte non entrano in nessuna mail (né programma, né promemoria, né «l'hai fatto?»)
+  for (const x of imp) if (x.giorno < oggi && !x.da_confermare && !x.chiesto) { x.da_confermare = true; cambiato = true; }
   const liberi = MAIL_AL_GIORNO - quanteMail(f, oggi);
   if (liberi <= 0) return cambiato;
   // le scadenze di domani (se quella mail è saltata, la mattina stessa): dalle 8 alle 21, una mail sola per tutte
-  const scad = (f.scadenze || []).filter((x) => !x.pagata && [0, 1].includes(fra(x.giorno)) && !(x.avvisi && (x.avvisi.prima || x.avvisi.oggi))).sort((x, y) => x.giorno.localeCompare(y.giorno));
+  const scad = (f.scadenze || []).filter((x) => scadenzaAperta(x) && [0, 1].includes(fra(x.giorno)) && !(x.avvisi && (x.avvisi.prima || x.avvisi.oggi))).sort((x, y) => x.giorno.localeCompare(y.giorno));
   const scadOra = h >= 8 && h < 21 ? scad : [];
   const riserva = scad.length && !scadOra.length && h < 21 ? 1 : 0;   // quella che parte più tardi (prima delle 8) tiene un posto
   // gli impegni di oggi ancora da dire
   const delMattino = (x) => !x.ora || (x.ora >= "08:00" && x.ora <= "12:00");
-  const diOggi = f.impegni.filter((x) => x.giorno === oggi).sort(perOra);
+  const diOggi = imp.filter((x) => x.giorno === oggi).sort(perOra);
   const porta = (f.da_portare || []).filter(Boolean);
   const senzaProgramma = f.riepilogo !== oggi && !diOggi.some(delMattino);   // nessun programma del mattino, oggi: le cose da portare vanno col primo promemoria
   const aperti = diOggi.filter((x) => !x.avvisato && (!x.ora || quando(x) > adesso.getTime()));
@@ -1333,7 +1359,7 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   const impegni = () => {
     const inviti = dire.filter((x) => !x.ics).slice(0, 10);
     const allegati = inviti.map((x) => ({ name: `atlas-${x.giorno}-${x.id}.ics`, content: btoa(String.fromCharCode(...new TextEncoder().encode(icsImpegno(x)))) }));
-    const pendenti = comeProgramma ? f.impegni.filter((x) => x.da_confermare && (x.chieste || 0) < MAX_CHIESTE && (!x.chiesto || x.chiesto <= sett)) : [];
+    const pendenti = comeProgramma ? imp.filter((x) => x.da_confermare && (x.chieste || 0) < MAX_CHIESTE && (!x.chiesto || x.chiesto <= sett)) : [];
     const listaPorta = `\n\nPrima di uscire, hai preso:\n${porta.map((x) => "- " + x).join("\n")}`;
     const conPorta = !comeProgramma && senzaProgramma && porta.length > 0 && dire.includes(diOggi[0]);   // mai da sola: dentro il promemoria del primo impegno
     let oggetto, corpo;
@@ -1375,7 +1401,7 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   }
   // gli impegni passati senza un programma: una mail sola alla settimana, con tutti quelli da confermare
   if (!haS && !haI && !scad.length && !diOggi.length && h >= 7 && h < 22) {
-    const tutti = f.impegni.filter((x) => x.da_confermare && (x.chieste || 0) < MAX_CHIESTE);
+    const tutti = imp.filter((x) => x.da_confermare && (x.chieste || 0) < MAX_CHIESTE);
     if (tutti.some((x) => (x.chiesto || x.giorno) <= sett)) {
       const uno = tutti.length === 1;
       await manda(uno ? `❓ L'hai fatto? ${tutti[0].cosa}` : `❓ ${tutti.length} impegni passati: li hai fatti?`,
@@ -1405,10 +1431,11 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     // 23/10 (JJ): un impegno passato NON si cancella da solo e NON lo si lascia lì a confonderla. Si CHIEDE una volta: «l'hai
     // fatto?». Se risponde sì → lo toglie; se no → lo riprogramma. Qui marco «da_confermare» quelli il cui giorno è passato e
     // che non ho ancora chiesto; la domanda parte nel blocco qui sotto, una volta sola (chiesto = oggi).
-    for (const x of f.impegni) {
+    const imp = f.impegni.filter(impegnoAperto);   // 28/10: le segnate fatte non entrano in nessuna mail
+    for (const x of imp) {
       if (x.giorno < oggi && !x.da_confermare && !x.chiesto) { x.da_confermare = true; cambiato = true; }
     }
-    const daConfermare = f.impegni.filter((x) => x.da_confermare && x.chiesto !== oggi);
+    const daConfermare = imp.filter((x) => x.da_confermare && x.chiesto !== oggi);
     if (h >= 7 && h < 22 && daConfermare.length) {
       const righe = daConfermare.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n");
       const uno = daConfermare.length === 1;
@@ -1418,7 +1445,7 @@ export async function atlasPromemoria(env, adesso = new Date()) {
       for (const x of daConfermare) x.chiesto = oggi;
       cambiato = true; fatti.push([mail, `❓ ${f.nome || mail}: chiesto conferma di ${daConfermare.length} impegni passati`]);
     }
-    const diOggi = f.impegni.filter((x) => x.giorno === oggi).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
+    const diOggi = imp.filter((x) => x.giorno === oggi).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
     const porta = (f.da_portare || []).filter(Boolean);
     if (h >= 7 && h < 22 && f.riepilogo !== oggi && (diOggi.length || porta.length)) {
       const righe = diOggi.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n");
@@ -1430,13 +1457,13 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     }
     // la sera prima (lo promette la lettera: «il giorno prima e la mattina stessa»)
     const domani = new Date(Date.UTC(+oggi.slice(0, 4), +oggi.slice(5, 7) - 1, +oggi.slice(8, 10) + 1)).toISOString().slice(0, 10);
-    const diDomani = f.impegni.filter((x) => x.giorno === domani).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
+    const diDomani = imp.filter((x) => x.giorno === domani).sort((x, y) => String(x.ora || "").localeCompare(String(y.ora || "")));
     if (h >= 20 && h < 22 && f.serale !== oggi && diDomani.length) {   // fino alle 22: dopo, si aspetta la mattina
       await manda(`🌙 Domani, ${giornoBello(domani)}`, `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, domani hai:\n\n${diDomani.map((x) => `- ${x.ora ? x.ora + " " : ""}${x.cosa}`).join("\n")}\n\nBuona serata.\n${nomeAss(f)}`);
       f.serale = oggi; cambiato = true; fatti.push([mail, `🌙 ${f.nome || mail}: quelli di domani (${diDomani.length})`]);
     }
     // gli inviti del calendario degli impegni nuovi, in una mail sola, fra le 7 e le 22 (di notte non si scrive)
-    const daInvitare = f.impegni.filter((x) => !x.ics && x.giorno >= oggi).slice(0, 10);
+    const daInvitare = imp.filter((x) => !x.ics && x.giorno >= oggi).slice(0, 10);
     if (h >= 7 && h < 22 && daInvitare.length) {
       await manda(`📅 ${daInvitare.length === 1 ? "Un impegno" : daInvitare.length + " impegni"} da mettere nel tuo calendario`,
         `Qui sotto ${daInvitare.length === 1 ? "c'è l'invito" : "ci sono gli inviti"} del calendario: ${daInvitare.length === 1 ? "aprilo" : "aprili uno alla volta"} e tocca «Aggiungi», e ${daInvitare.length === 1 ? "finisce" : "finiscono"} nel tuo calendario, con il loro avviso.\n\n${daInvitare.map((x) => `- ${giornoBello(x.giorno)}${x.ora ? " alle " + x.ora : ""}: ${x.cosa}`).join("\n")}\n\n${nomeAss(f)}`,
@@ -1445,7 +1472,7 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     }
     // le scadenze: 3 giorni prima e la mattina stessa, dalle 8 alle 21; le ricorrenti pagate passano al mese dopo
     for (const x of (f.scadenze || [])) {
-      if (x.pagata || h < 8 || h >= 21) continue;
+      if (!scadenzaAperta(x) || h < 8 || h >= 21) continue;
       const fra = Math.round((Date.parse(x.giorno) - Date.parse(oggi)) / 864e5); x.avvisi = x.avvisi || {};
       const quale = fra === 0 ? "oggi" : fra > 0 && fra <= 3 ? "prima" : null;
       if (!quale || x.avvisi[quale]) continue;
@@ -1453,7 +1480,7 @@ export async function atlasPromemoria(env, adesso = new Date()) {
         `Ciao${f.nome ? " " + f.nome.split(" ")[0] : ""}, ${quale === "oggi" ? "oggi" : giornoBello(x.giorno)} scade: ${x.cosa}${x.importo ? ", " + x.importo : ""}.\n\nQuando l'hai pagata rispondimi «pagata» e smetto di ricordartela.\n${nomeAss(f)}`);
       x.avvisi[quale] = true; if (quale === "oggi") x.avvisi.prima = true; cambiato = true; fatti.push([mail, `💶 ${f.nome || mail}: ${x.cosa} (${quale})`]);
     }
-    for (const x of f.impegni) {
+    for (const x of imp) {
       if (x.avvisato || !x.ora) continue;
       const quando = daRoma(x.giorno, x.ora).getTime();
       if (adesso.getTime() >= quando - 65 * 60000 && adesso.getTime() < quando) {
@@ -3043,13 +3070,22 @@ async function nato(env, req, origine) {
   return risposta({ ok: true, detto }, 201, origine);
 }
 
-// una scadenza pagata: finita, o — se si ripete ogni mese — lo stesso giorno del mese dopo, con gli avvisi da rifare
-function scadenzaPagata(x) {
-  if (!x.ogni_mese) { x.pagata = true; return x; }
-  const [a, m, g] = x.giorno.split("-").map(Number), fine = new Date(Date.UTC(a, m + 1, 0)).getUTCDate();
-  x.giorno = new Date(Date.UTC(a, m, Math.min(g, fine))).toISOString().slice(0, 10); x.avvisi = {}; return x;
+// lo stesso giorno del mese dopo (il 31 gennaio → 28 febbraio)
+function giornoMeseDopo(giorno) {
+  const [a, m, g] = giorno.split("-").map(Number), fine = new Date(Date.UTC(a, m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(a, m, Math.min(g, fine))).toISOString().slice(0, 10);
 }
-export { scadenzaPagata };
+// 28/10: una scadenza pagata («Fatto» dalla pagina, «pagata» in chat) NON sparisce: resta dov'è, con `fatto: <data ISO>`. Se si ripete ogni mese ne nasce
+// una nuova, aperta, lo stesso giorno del mese dopo (avvisi da rifare); la vecchia ne tiene l'id in `successiva`, così «Annulla» sa quale togliere
+function scadenzaFatta(f, x, adesso = new Date()) {
+  x.fatto = adesso.toISOString();
+  if (x.ogni_mese) {
+    const dopo = { id: "s" + nuovoId().slice(0, 5), cosa: x.cosa, importo: x.importo || null, giorno: giornoMeseDopo(x.giorno), ogni_mese: true, pagata: false, avvisi: {}, ...conNota(x) };
+    f.scadenze.push(dopo); x.successiva = dopo.id;
+  }
+  return x;
+}
+export { scadenzaFatta, giornoMeseDopo };
 
 
 // ══ L'ARCHIVIO CIFRATO DEI DOCUMENTI — 20 ottobre 2026 (Athena) ════════════
@@ -3175,7 +3211,7 @@ function applicaEsito(f, esito) {
     f.scadenze = f.scadenze || [];
     const pagate = new Set((esito.pagate || []).map(String)), via = new Set((esito.scadenze_tolte || []).map(String));
     f.scadenze = f.scadenze.filter((x) => !via.has(String(x.id)));
-    for (const x of f.scadenze) if (pagate.has(String(x.id))) scadenzaPagata(x);
+    for (const x of [...f.scadenze]) if (pagate.has(String(x.id)) && scadenzaAperta(x)) scadenzaFatta(f, x);   // 28/10: segnata fatta, non cancellata
     const nuove = (esito.scadenze_nuove || []).filter((x) => x && x.cosa && /^\d{4}-\d{2}-\d{2}$/.test(String(x.giorno || ""))).map((x) => ({
       id: "s" + nuovoId().slice(0, 5), cosa: String(x.cosa).slice(0, 120), importo: x.importo ? String(x.importo).slice(0, 30) : null,
       giorno: x.giorno, ogni_mese: !!x.ogni_mese, pagata: false, avvisi: {} }));
@@ -3255,11 +3291,12 @@ async function voceDallaChat(env, req, origine) {
 }
 // ══ IL CALENDARIO NELLA PAGINA — 26 ottobre 2026 ═══════════════════════════════════════════════════════════════════════════
 // JJ: «quando l'hai fatta puoi andare tu diretto sull'attività e premere fatta, così eviti la pappardella di dover dire ogni volta
-// se hai fatto o meno una cosa». La pagina mostra gli impegni e le scadenze aperti della persona (stesso account di /assistente) e
-// li chiude con un tocco: un impegno fatto esce da f.impegni (e quindi non viene più chiesto «l'hai fatto?», né per mail né in chat)
-// ed entra in f.fatti per 30 giorni, da dove «annulla» lo riporta; una scadenza si segna pagata come in chat (scadenzaPagata).
-const FATTI_GIORNI = 30;
+// se hai fatto o meno una cosa». La pagina mostra gli impegni e le scadenze della persona (stesso account di /assistente) e li segna con un tocco.
+// 28/10, JJ: «non deve sparire dal calendario, deve restare come fatto»: «Fatto» NON toglie niente. La voce resta in f.impegni / f.scadenze con
+// `fatto: "<ISO di quando l'ha toccato>"` (vedi «FATTO SEGNA, NON CANCELLA» sopra); il GET le dà tutte, e la pagina distingue quelle con `fatto`.
+// Prima del 28/10 un impegno fatto usciva da f.impegni ed entrava in f.fatti per 30 giorni, e una scadenza si segnava `pagata` (e spariva dal GET).
 const conNota = (x) => (x.nota ? { nota: x.nota } : {});   // la nota c'è solo se è stata scritta: gli impegni dell'assistente restano {id, cosa, giorno, ora}
+const conFatto = (x) => (x.fatto ? { fatto: x.fatto } : {});   // `fatto` c'è solo sulle voci segnate: le aperte restano com'erano
 const perGiornoOra = (a, b) => (a.giorno + (a.ora || "")).localeCompare(b.giorno + (b.ora || ""));
 async function calendarioDallaChat(env, req, origine) {
   const mail = await mailDalConto(req, fetch, env);
@@ -3267,52 +3304,41 @@ async function calendarioDallaChat(env, req, origine) {
   // atlasLeggi nasconde gli errori e dà un archivio vuoto: qui no, «non hai niente» non deve nascondere «non riesco a leggere»
   let A; try { A = deb64((await gh(env, "GET", "atlas.json")).content); }
   catch (e) { if (!/GitHub 404/.test(String(e && e.message))) return risposta({ errore: "non riesco a leggere il tuo calendario: riprova tra poco" }, 502, origine); A = {}; }
-  const f = A[mail] || {}, limite = Date.now() - FATTI_GIORNI * 864e5;
+  const f = A[mail] || {};
   return risposta({
-    impegni: (f.impegni || []).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, ora: x.ora || null, ...conNota(x) })).sort(perGiornoOra),
-    scadenze: (f.scadenze || []).filter((x) => !x.pagata).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, importo: x.importo || null, ogni_mese: !!x.ogni_mese, ...conNota(x) })).sort(perGiornoOra),
-    fatti: (f.fatti || []).filter((x) => Date.parse(x.quando_fatto) >= limite).sort((a, b) => b.quando_fatto.localeCompare(a.quando_fatto))
-      .map((x) => ({ id: x.id, tipo: x.tipo || "impegno", cosa: x.cosa, giorno: x.giorno, ora: x.ora || null, importo: x.importo || null, quando_fatto: x.quando_fatto, ...conNota(x) })),
+    impegni: (f.impegni || []).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, ora: x.ora || null, ...conNota(x), ...conFatto(x) })).sort(perGiornoOra),
+    scadenze: (f.scadenze || []).filter((x) => !x.pagata).map((x) => ({ id: x.id, cosa: x.cosa, giorno: x.giorno, importo: x.importo || null, ogni_mese: !!x.ogni_mese, ...conNota(x), ...conFatto(x) })).sort(perGiornoOra),
   }, 200, origine);
 }
 class ErroreCalendario extends Error { constructor(stato, msg) { super(msg); this.stato = stato; } }
 // POST /assistente/fatto {id} e /assistente/annulla {id}: una scrittura sola su atlas.json (atlasAggiorna); se l'id non va bene
-// l'errore parte PRIMA della scrittura e l'archivio non si tocca
+// l'errore parte PRIMA della scrittura e l'archivio non si tocca. «Fatto» scrive `fatto: <ISO>` sulla voce (impegno o scadenza) e basta; «annulla»
+// toglie il segno (e, per una scadenza ricorrente, la scadenza del mese dopo che era nata con «fatto»). Per cancellare davvero c'è /assistente/elimina.
 async function fattoDallaChat(env, req, origine, annulla) {
   const mail = await mailDalConto(req, fetch, env);
   if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
   let d = {}; try { d = await req.json(); } catch (_) {}
   const id = d && typeof d.id === "string" ? d.id.trim().slice(0, 40) : "";
   if (!id) return risposta({ errore: "manca l'id" }, 400, origine);
-  const adesso = new Date().toISOString();
+  const adesso = new Date();
   try {
     const esito = await atlasAggiorna(env, mail, (f) => {
       f.impegni = f.impegni || []; f.scadenze = f.scadenze || [];
-      const limite = Date.now() - FATTI_GIORNI * 864e5;
-      f.fatti = (f.fatti || []).filter((x) => Date.parse(x.quando_fatto) >= limite);   // oltre 30 giorni non si annulla più
+      const impegno = f.impegni.find((y) => y.id === id), x = impegno || f.scadenze.find((y) => y.id === id);
+      if (!x) throw new ErroreCalendario(404, "non è tuo, o non esiste");
       if (annulla) {
-        const i = f.fatti.findIndex((x) => x.id === id);
-        if (i < 0) throw new ErroreCalendario(f.impegni.some((x) => x.id === id) || f.scadenze.some((x) => x.id === id) ? 409 : 404, f.impegni.some((x) => x.id === id) || f.scadenze.some((x) => x.id === id) ? "non è fatto: niente da annullare" : "non è fra i tuoi fatti (o sono passati più di 30 giorni)");
-        const [x] = f.fatti.splice(i, 1);
-        if (x.tipo === "scadenza") {
-          const s = f.scadenze.find((y) => y.id === x.da);
-          if (!s) throw new ErroreCalendario(404, "la scadenza non c'è più");
-          s.pagata = false; s.giorno = x.prima.giorno; s.avvisi = x.prima.avvisi || {};
-        } else { const { quando_fatto, tipo, ...impegno } = x; f.impegni.push(impegno); }
-        return { id: x.da || x.id };
+        if (!x.fatto) throw new ErroreCalendario(409, "non è fatto: niente da annullare");
+        const dopo = x.successiva && f.scadenze.find((y) => y.id === x.successiva);
+        if (dopo && dopo.fatto) throw new ErroreCalendario(409, "quella del mese dopo è già segnata fatta: togli prima il segno a quella");
+        delete x.fatto;
+        if (x.successiva) { f.scadenze = f.scadenze.filter((y) => y.id !== x.successiva); delete x.successiva; }
+        return { id };
       }
-      const j = f.impegni.findIndex((x) => x.id === id);
-      if (j >= 0) { const [x] = f.impegni.splice(j, 1); f.fatti.push({ ...x, tipo: "impegno", quando_fatto: adesso }); return { id }; }
-      const s = f.scadenze.find((x) => x.id === id && !x.pagata);
-      if (s) {
-        const prima = { giorno: s.giorno, avvisi: s.avvisi || {} }, fid = `${s.id}@${adesso}`;
-        f.fatti.push({ id: fid, da: s.id, tipo: "scadenza", cosa: s.cosa, giorno: s.giorno, importo: s.importo || null, ...conNota(s), prima, quando_fatto: adesso });
-        scadenzaPagata(s); return { id: fid };
-      }
-      throw new ErroreCalendario(f.fatti.some((x) => x.id === id || x.da === id) || f.scadenze.some((x) => x.id === id) ? 409 : 404,
-        f.fatti.some((x) => x.id === id || x.da === id) || f.scadenze.some((x) => x.id === id) ? "già fatto" : "non è tuo, o non esiste");
+      if (x.fatto || x.pagata) throw new ErroreCalendario(409, "già fatto");   // pagata: il segno di prima del 28/10
+      if (impegno) x.fatto = adesso.toISOString(); else scadenzaFatta(f, x, adesso);
+      return { id, fatto: x.fatto };
     }, true);
-    return risposta({ ok: true, id: esito.id }, 200, origine);
+    return risposta({ ok: true, ...esito }, 200, origine);
   } catch (e) {
     if (e instanceof ErroreCalendario) return risposta({ errore: e.message }, e.stato, origine);
     return risposta({ errore: "non riesco a salvare: riprova tra poco" }, 502, origine);
@@ -3364,7 +3390,7 @@ async function aggiungiDallaChat(env, req, origine) {
     await atlasAggiorna(env, mail, (f) => {
       modo = modoPosta(f); nomePersona = f.nome || "";
       f.impegni = f.impegni || []; f.scadenze = f.scadenze || [];
-      if (f.impegni.length + f.scadenze.length >= CAL_APERTI_MAX) throw new ErroreCalendario(400, `ci sono già ${CAL_APERTI_MAX} cose aperte: chiudine o eliminane qualcuna`);
+      if (f.impegni.filter(impegnoAperto).length + f.scadenze.filter(scadenzaAperta).length >= CAL_APERTI_MAX) throw new ErroreCalendario(400, `ci sono già ${CAL_APERTI_MAX} cose aperte: chiudine o eliminane qualcuna`);
       (d.tipo === "impegno" ? f.impegni : f.scadenze).push(riga); return riga;
     }, true);
   } catch (e) {
@@ -3396,7 +3422,7 @@ async function invitoDallaChat(env, req, origine) {
   if (!id) return risposta({ errore: "manca l'id" }, 400, origine);
   const A = await atlasLeggi(env);
   if (A.giu) return risposta({ errore: "non riesco a leggere il tuo calendario: riprova tra poco" }, 502, origine);
-  const f = A.dati[mail] || {}, x = (f.impegni || []).find((y) => y.id === id);
+  const f = A.dati[mail] || {}, x = (f.impegni || []).find((y) => y.id === id && impegnoAperto(y));   // una segnata fatta non si invita più
   if (!x) return risposta({ errore: "non è tuo, o non esiste" }, 404, origine);
   if (quanteInviti(f, oraRoma().slice(0, 10), "reinvii") >= INVITI_AL_GIORNO) return risposta({ errore: `oggi ti ho già mandato ${INVITI_AL_GIORNO} inviti: riprova domani` }, 429, origine);
   try { await mandaInvito(env, mail, f.nome || "", x); }
@@ -3404,7 +3430,8 @@ async function invitoDallaChat(env, req, origine) {
   try { await segnaInvito(env, mail, id, true); } catch (_) {}
   return risposta({ ok: true, id, invito: "mandato" }, 200, origine);
 }
-// POST /assistente/elimina {id}: toglie un impegno o una scadenza APERTI di chi chiede; di un altro (o chiusi) → 404, e non si scrive niente
+// POST /assistente/elimina {id}: «Togli», l'unica strada che cancella davvero (28/10: «Fatto» segna e basta). Toglie un impegno o una scadenza di chi
+// chiede, anche se è segnata fatta; di un altro (o `pagata` di prima del 28/10) → 404, e non si scrive niente
 async function eliminaDallaChat(env, req, origine) {
   const mail = await mailDalConto(req, fetch, env);
   if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
@@ -3436,8 +3463,8 @@ async function icsDallaChat(env, req, url, origine) {
   let A; try { A = deb64((await gh(env, "GET", "atlas.json")).content); }
   catch (e) { return risposta({ errore: /GitHub 404/.test(String(e && e.message)) ? "non è tuo, o non esiste" : "non riesco a leggere il tuo calendario: riprova tra poco" }, /GitHub 404/.test(String(e && e.message)) ? 404 : 502, origine); }
   const f = A[mail] || {};
-  const x = (f.impegni || []).find((y) => y.id === id);
-  const s = x ? null : (f.scadenze || []).find((y) => y.id === id && !y.pagata);
+  const x = (f.impegni || []).find((y) => y.id === id && impegnoAperto(y));
+  const s = x ? null : (f.scadenze || []).find((y) => y.id === id && scadenzaAperta(y));
   if (!x && !s) return risposta({ errore: "non è tuo, o non esiste" }, 404, origine);
   const ev = x || { id: s.id, giorno: s.giorno, ora: null, cosa: `💶 ${s.cosa}${s.importo ? " " + s.importo : ""}`, nota: s.nota };
   return new Response(icsImpegno(ev), { status: 200, headers: { "Content-Type": "text/calendar; charset=utf-8", "Content-Disposition": 'attachment; filename="impegno.ics"', ...cors(origine) } });
