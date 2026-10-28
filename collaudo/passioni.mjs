@@ -47,6 +47,7 @@ const d = await r.json(); ok(r.status === 201 && d.id, "/parla: arrivata", d);
 await tocco("bozza:" + d.id);
 let v = contenuto();
 ok(v.includes(`le sue passioni: ${PASSIONI}`) && v.includes(`ha fatto nella vita: ${MESTIERE}`), "alla bozza arrivano «le sue passioni: …» e «ha fatto nella vita: …»", v.slice(0, 500));
+ok(String(richieste.at(-1).system).includes("Se sai le sue passioni o il lavoro che ha fatto, usale per proporre cose dedicate a lui"), "e le istruzioni della bozza (CHI_SONO) dicono di usarle", String(richieste.at(-1).system).length);
 ok(!v.includes("mestiere_di_una_vita") && !/ti ha detto:[^\n]*passioni/.test(v), "e non come «mestiere_di_una_vita: …» / «passioni: …»", v.slice(0, 500));
 ok(v.includes("inizio: Dopo le 8"), "le altre voci restano come prima («ti ha detto: inizio: …»)", v.slice(0, 500));
 
