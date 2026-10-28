@@ -1,4 +1,5 @@
 // Atlas, gli impegni passati (23/10, JJ) — tutto finto.   node collaudo/atlas.mjs
+// 28/10: «sì, fatto» → "fatti" (la voce resta, con fatto), "tolti" solo per togli/cancella/sposta (applicaEsito; end-to-end in collaudo/agenda.mjs).
 // Controlla: un impegno passato NON si cancella da solo; la mattina Atlas chiede «l'hai fatto?», UNA volta sola; un impegno
 // futuro non viene chiesto; di notte niente. Controprova: prima la cancellazione dopo 2 giorni era silenziosa — ora non più.
 import { copyFileSync, mkdtempSync } from "node:fs";
@@ -53,8 +54,20 @@ ok(imp().some((x) => x.id === "p1"), "dopo 3 giorni l'impegno passato è ancora 
 
 // quando lei risponde, il modello chiude o sposta (applicaEsito è la meccanica dietro)
 let ff = { impegni: [{ id: "p1", cosa: "Ponte di Legno", giorno: "2026-10-20", ora: null, da_confermare: true, chiesto: "2026-10-23" }] };
+// 28/10 (JJ: «fatto segna, non cancella»): «sì, fatto» va in «fatti» e la voce RESTA, con fatto: <ISO>; «tolti» è solo per togli/cancella/sposta
+W.applicaEsito(ff, { fatti: ["p1"] });
+ok(ff.impegni.length === 1 && ff.impegni[0].id === "p1" && Date.now() - Date.parse(ff.impegni[0].fatto) < 60000, "«sì, fatto» (id in «fatti») → l'impegno resta, con fatto: <data>", ff.impegni);
+const fatto1 = ff.impegni[0].fatto; W.applicaEsito(ff, { fatti: ["p1"] });
+ok(ff.impegni[0].fatto === fatto1, "detto due volte: la data del primo «fatto» non cambia");
 W.applicaEsito(ff, { tolti: ["p1"] });
-ok(!ff.impegni.some((x) => x.id === "p1"), "«sì, fatto» (id in «tolti») → l'impegno confermato sparisce", ff.impegni.map((x) => x.id));
+ok(!ff.impegni.some((x) => x.id === "p1"), "«togli» (id in «tolti») → l'impegno sparisce davvero", ff.impegni.map((x) => x.id));
+ff = { impegni: [{ id: "p3", cosa: "x", giorno: "2026-10-20", ora: null }] };
+W.applicaEsito(ff, { fatti: ["p3"], tolti: ["p3"] });
+ok(ff.impegni.length === 0, "lo stesso id in tutte e due: vince «tolti» (l'ha chiesto lei)", ff.impegni);
+ff = { impegni: [], scadenze: [{ id: "s1", cosa: "luce", giorno: "2026-10-22", ogni_mese: false, pagata: false, avvisi: {} }, { id: "s2", cosa: "affitto", giorno: "2026-10-31", ogni_mese: true, pagata: false, avvisi: {} }] };
+W.applicaEsito(ff, { fatti: ["s1", "s2"] });
+ok(ff.scadenze.length === 3 && ff.scadenze.find((x) => x.id === "s1").fatto && ff.scadenze.find((x) => x.id === "s2").fatto && ff.scadenze.some((x) => x.id !== "s1" && x.id !== "s2" && x.giorno === "2026-11-30" && !x.fatto),
+  "un id di scadenza in «fatti»: come il tasto (resta fatta; la ricorrente ne fa nascere una al mese dopo)", ff.scadenze);
 ff = { impegni: [{ id: "p2", cosa: "cup", giorno: "2026-10-22", ora: "10:00", da_confermare: true, chiesto: "2026-10-23" }] };
 W.applicaEsito(ff, { tolti: ["p2"], nuovi: [{ cosa: "cup", giorno: "2026-10-31", ora: "10:00" }] });
 ok(!ff.impegni.some((x) => x.id === "p2") && ff.impegni.some((x) => x.cosa === "cup" && x.giorno === "2026-10-31" && !x.da_confermare),

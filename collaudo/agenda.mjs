@@ -55,14 +55,21 @@ if (sorgente.split(MARCA3).length !== 2) { console.log("  ❌ la riga di segnaIn
 writeFileSync(join(dir, "worker-senza-ics.mjs"), sorgente.replace(MARCA3, "if (x) x.ics = x.ics;"));
 const SenzaIcs = await import(join(dir, "worker-senza-ics.mjs"));
 
+// la copia che sbaglia (3): «fatti» finisce in «tolti» (come prima del 28/10, quando «sì, fatto» cancellava)
+const MARCA_T = "const tolti = new Set((esito.tolti || []).map(String));";
+if (sorgente.split(MARCA_T).length !== 2) { console.log("  ❌ la riga di «tolti» in applicaEsito non è più quella: aggiorna MARCA_T nella controprova"); process.exit(1); }
+writeFileSync(join(dir, "worker-fatti-in-tolti.mjs"), sorgente.replace(MARCA_T, "const tolti = new Set([...(esito.tolti || []), ...(esito.fatti || [])].map(String));"));
+const FattiInTolti = await import(join(dir, "worker-fatti-in-tolti.mjs"));
+
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
+let rispostaModello = '{"risposta":"Va bene.","nuovi":[]}';   // quello che il modello finto risponde
 let repo = {}, posta = [], richieste = [], scritture = 0, archivioGiu = false, brevoGiu = false, giroDi = "";
 const sessioni = { ["a".repeat(64)]: "papa@prova.it", ["b".repeat(64)]: "altro@prova.it" };
 const A = "a".repeat(64), B = "b".repeat(64), MAIL = "papa@prova.it";
 globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url));
   if (u.host === "jjavis-citta.jjavis.workers.dev") { const m = sessioni[((o.headers || {}).Authorization || "").slice(7)]; return m ? new Response(JSON.stringify({ conto: { mail: m } })) : new Response("{}", { status: 401 }); }
-  if (u.host === "api.anthropic.com") { richieste.push(JSON.parse(o.body)); return new Response(JSON.stringify({ content: [{ type: "text", text: '{"risposta":"Va bene.","nuovi":[]}' }], model: "claude-haiku-5-5", usage: { input_tokens: 10, output_tokens: 10 } })); }
+  if (u.host === "api.anthropic.com") { richieste.push(JSON.parse(o.body)); return new Response(JSON.stringify({ content: [{ type: "text", text: rispostaModello }], model: "claude-haiku-5-5", usage: { input_tokens: 10, output_tokens: 10 } })); }
   if (u.host === "api.brevo.com") { if (brevoGiu) return new Response('{"message":"giù"}', { status: 503 }); posta.push({ ...JSON.parse(o.body), giro: giroDi }); return new Response("{}"); }
   if (u.host === "api.telegram.org") return new Response('{"ok":true}');
   if (u.host === "api.github.com") { const p = decodeURIComponent(u.pathname.split("/contents/")[1] || "");
@@ -211,6 +218,29 @@ const chiedeFatto = () => posta.filter((m) => /hai fatto|li hai fatti|Impegni pa
 const nomina = (re) => posta.filter((m) => re.test(m.subject + " " + m.textContent));
 const prova = async (Mod, posta_) => { nuova({ posta: posta_, impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true }], scadenze: [] });
   await fatto("v1", A, Mod); await giri(Mod); return chiedeFatto().length; };
+console.log("── «sì, l'ho fatto» (id in \"fatti\") → la voce resta con fatto; \"tolti\" → sparisce (28/10)");
+const dillo = (corpo, Mod = W) => { rispostaModello = JSON.stringify({ risposta: "Ok.", ...corpo }); return chiama(Mod, "POST", "/assistente", A, { testo: "sì" }); };
+const passato = () => nuova({ impegni: [{ id: "x", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, da_confermare: true, chiesto: "2026-10-26", chieste: 1 }], scadenze: [] });
+{ passato(); await dillo({ fatti: ["x"] });
+  const x = scheda().impegni.find((y) => y.id === "x"), c = await cal();
+  ok(x && Date.now() - Date.parse(x.fatto) < 60000, "risposta del modello {fatti:[\"x\"]}: la voce RESTA, con fatto: <data>", scheda().impegni);
+  ok(c.impegni.some((y) => y.id === "x" && y.fatto), "…e il calendario la dà segnata fatta", c.impegni);
+  rispostaModello = '{"risposta":"Va bene.","nuovi":[]}'; const t = await chiediAdAtlas(); ok(/- fatto: il dentista/.test(t), "…e l'assistente la legge fra le cose fatte", t.slice(-400));
+  posta = []; await giri(W); ok(chiedeFatto().length === 0, "…e nessuna mail «l'hai fatto?» in due settimane di giri", posta.map((m) => m.subject)); }
+{ passato(); await dillo({ tolti: ["x"] });
+  ok(!scheda().impegni.some((y) => y.id === "x"), "risposta del modello {tolti:[\"x\"]}: la voce sparisce", scheda().impegni);
+  ok(!(await cal()).impegni.some((y) => y.id === "x"), "…anche dal calendario"); }
+{ passato(); await dillo({ fatti: ["x"], tolti: [] }); ok(scheda().impegni.length === 1, "{fatti:[\"x\"], tolti:[]}: resta"); }
+console.log("── il prompt spiega la differenza fra «fatti» e «tolti»");
+{ passato(); richieste = []; await dillo({}); const sis = richieste.at(-1).system, j = sis.slice(sis.lastIndexOf('{"risposta"'));
+  ok(/"fatti": \[/.test(j) && /"tolti": \[/.test(j), "il formato JSON chiede \"fatti\" e \"tolti\"", j.slice(0, 300));
+  ok(/"fatti".*FATTO o PAGATO/s.test(sis) && /"tolti".*ESPLICITAMENTE/s.test(sis), "il prompt dice cosa è \"fatti\" e cosa è \"tolti\"");
+  ok(/«sì, sono andata dal dentista» → "fatti"/.test(sis) && /«Togli la revisione[^»]*» → "tolti"/.test(sis), "…con due esempi corti, uno per tipo");
+  ok(!/se dice di sì \(fatto, andato, ok\) metti il suo id in "tolti"/.test(sis) && /metti il suo id in "fatti" \(mai in "tolti"\)/.test(sis), "e «sì» a «l'hai fatto?» non porta più in \"tolti\""); }
+console.log("── CONTROPROVA: se \"fatti\" finisse in \"tolti\", la prova «la voce resta» diventa rossa");
+{ passato(); await dillo({ fatti: ["x"] }, FattiInTolti);
+  ok(!scheda().impegni.some((y) => y.id === "x"), "con «fatti» trattato come «tolti» la voce sparisce: la prova «resta con fatto» è rossa", scheda().impegni); }
+
 console.log("── dopo «fatto» non si chiede più «l'hai fatto?»");
 { // controllo: senza il tocco, la mail partirebbe davvero (altrimenti la prova sotto non dimostra niente)
   for (const modo of ["essenziale", "tutto"]) { nuova({ posta: modo, impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true }], scadenze: [] });
