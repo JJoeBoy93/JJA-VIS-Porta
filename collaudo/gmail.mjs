@@ -43,4 +43,12 @@ e = chiama({ chiave: "k".repeat(40), a: ["giada@prova.it"], nome: "Arya · JJA-V
 ok(e.ok && mandate[0].a === "giada@prova.it" && mandate[0].op.name === "Arya · JJA-VIS" && mandate[0].op.attachments[0].tipo === "text/calendar", "lo script: chiave giusta → manda dalla Gmail, col nome e l'invito del calendario", { e, mandate });
 quota = 0; e = chiama({ chiave: "k".repeat(40), a: ["giada@prova.it"], oggetto: "o", testo: "t" });
 ok(!e.ok && /quota/.test(e.errore), "lo script: quota finita → lo dice, la porta passa a Brevo", e);
+// 28/10: le emoji nell'oggetto alla Gmail arrivavano come «??????»: alla Gmail l'oggetto va senza, a Brevo com'è
+gmail.length = 0; brevo.length = 0;
+const conEmoji = { ...corpo, subject: "📋 Il tuo programma di oggi, mercoledì 28/10" };
+r = await W.postaFuori(env, { method: "POST", body: JSON.stringify(conEmoji) });
+ok(gmail.length === 1 && gmail[0].oggetto === "Il tuo programma di oggi, mercoledì 28/10", "alla Gmail l'oggetto va senza emoji, le accentate restano", gmail[0] && gmail[0].oggetto);
+gmail.length = 0;
+r = await W.postaFuori(env, { method: "POST", body: JSON.stringify({ ...corpo, subject: "Bollette ⚠️ e 👨‍👩‍👧 famiglia 🇮🇹" }) });
+ok(gmail.length === 1 && gmail[0].oggetto === "Bollette e famiglia", "anche emoji composte, con variante e bandiere", gmail[0] && gmail[0].oggetto);
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);

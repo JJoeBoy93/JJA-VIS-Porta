@@ -792,6 +792,10 @@ async function chiavePosta(env) {
 // firmata da Google, mittente vero, e le risposte finiscono nella stessa conversazione. Tetto di Google per un account normale:
 // 100 destinatari al giorno (documentazione delle quote di Apps Script); oltre, o se lo script non risponde, si torna a Brevo e lo
 // si dice nel registro. Tutte le chiamate che prima andavano a Brevo passano di qui, con lo stesso corpo (formato Brevo).
+// 28/10, JJ: «📋 Il tuo programma di oggi» è arrivato come «?????? Il tuo programma di oggi» (il 27 era successo col 📅
+// dell'invito). Non è l'oggetto lungo né le accentate: è lo script di Gmail (GmailApp) che le emoji nell'oggetto non le
+// codifica. Si tolgono qui, nell'unico punto da cui passa ogni mail che va alla Gmail; su Brevo l'oggetto resta com'è.
+const senzaEmoji = (t) => String(t || "").replace(/[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}][\u{FE0F}\u{200D}\p{Extended_Pictographic}]*\s*/gu, "").replace(/\s{2,}/g, " ").trim();
 let ultimaVia = "";
 async function postaFuori(env, o) {
   const url = env.GMAIL_URL || "";
@@ -799,7 +803,7 @@ async function postaFuori(env, o) {
     try {
       const b = JSON.parse(o.body), chiave = await chiavePosta(env);
       const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, redirect: "follow",
-        body: JSON.stringify({ chiave, a: (b.to || []).map((x) => x.email), nome: b.sender && b.sender.name || "JJA-VIS", oggetto: b.subject || "",
+        body: JSON.stringify({ chiave, a: (b.to || []).map((x) => x.email), nome: b.sender && b.sender.name || "JJA-VIS", oggetto: senzaEmoji(b.subject),
           testo: b.textContent || "", allegati: (b.attachment || []).map((x) => ({ nome: x.name, dati: x.content })) }) });
       const d = await r.json().catch(() => ({}));
       if (d.ok) { ultimaVia = "gmail"; return new Response(JSON.stringify({ messageId: "gmail", restano: d.restano }), { status: 201 }); }
