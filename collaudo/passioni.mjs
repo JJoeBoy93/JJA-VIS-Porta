@@ -71,7 +71,7 @@ await chiama("/assistente", "a".repeat(64), { testo: "ciao", chi: CHI });
 v = contenuto();
 ok(v.includes(`- le sue passioni: ${PASSIONI}`) && v.includes(`- ha fatto nella vita: ${MESTIERE}`), "assistenteDallaChat: le due righe con parole chiare", v.slice(0, 500));
 ok(!v.includes("mestiere_di_una_vita"), "e non il nome della chiave");
-ok(String(richieste.at(-1).system).includes("Se sai le sue passioni o il lavoro che ha fatto, usale per proporre cose dedicate a lui"), "le istruzioni dell'assistente dicono di usarle", String(richieste.at(-1).system).length);
+ok(/COME SUGGERISCI/.test(String(richieste.at(-1).system)) && /il PROFILO[^\n]*\n?[^\n]*le passioni/.test(String(richieste.at(-1).system)), "le istruzioni dell'assistente dicono di usarle (28/10: come fonte del suggerimento, collaudo/chat-cancellata.mjs)", String(richieste.at(-1).system).length);
 repo[`utenti/${CHI}.json`] = b64({ chi: CHI, mail: "rosa@prova.it", vita: "lavoro", mestiere: "Artigiano", conosciute: { passioni: LUNGA } });
 await chiama("/assistente", "a".repeat(64), { testo: "ciao", chi: CHI });
 v = contenuto();
