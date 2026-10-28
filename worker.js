@@ -242,6 +242,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/telegram") return telegram(req, env);
     if (req.method === "POST" && url.pathname === "/posta") return postaInArrivo(req, env);
     if (req.method === "POST" && url.pathname === "/conoscenza") return conoscenza(req, env, ctx, origine);
+    if (req.method === "POST" && url.pathname === "/profilo") return profiloCambiato(req, env, origine);
     if (req.method === "POST" && url.pathname === "/parla") return parla(req, env, ctx, origine);
     // la pagina chiede se Nova risponde subito, per dire la cosa vera sotto la chat
     if (req.method === "GET" && url.pathname === "/nova") return risposta({ acceso: await novaAccesa(env) }, 200, origine);
@@ -1879,6 +1880,50 @@ async function conoscenza(req, env, ctx, origine) {
     await manda(env, u, { text: `🧠 ${r.nome_assistente || "JJA-VIS"} impara (${(r.chi || "?").slice(0, 6)})\n${r.domanda}\n→ ${r.risposta}` });
   })().catch(() => {}));
   return risposta({ ok: true }, 201, origine);
+}
+
+// ══ IL PROFILO ARRIVA ALL'ASSISTENTE ══ — 28 ottobre 2026
+// JJ: quello che si cambia nel Profilo («Imparo te»: «Cambia» e «Togli» per ogni voce) deve arrivare davvero all'assistente. Prima la
+// vita, il mestiere, il tempo e il dettaglio restavano sul telefono e nell'account, e /conoscenza (che fa un merge) non toglieva mai
+// niente dall'archivio: chi passava da «lavoro» a «pensione» restava un lavoratore per l'assistente (la vita salvata in
+// utenti/<chi>.json vince su quella che manda la pagina: assistenteDallaChat, primoCore, parla).
+// POST /profilo { chi, voce, valore }: voce = vita, mestiere, tempo, dettaglio, oppure una chiave di «conosciute». Valore vuoto = TOGLI:
+// una chiave di conosciute si cancella davvero, un altro campo si svuota. Un solo file toccato (utenti/<chi>.json), una scrittura.
+// Vale solo con l'account: la mail confermata dal server dei conti deve essere quella scritta nel file della persona (un file senza
+// mail non si tocca: il codice «chi» da solo non basta).
+const VOCI_CAMPO = ["vita", "mestiere", "tempo", "dettaglio"];
+const maxProfilo = (voce) => (voce === "dettaglio" ? 800 : maxVoce(voce));
+async function profiloCambiato(req, env, origine) {
+  if (!ORIGINI.includes(origine)) return risposta({ errore: "origine non ammessa" }, 403, origine);
+  const grezzo = await req.text();
+  if (grezzo.length > 2000) return risposta({ errore: "troppo lungo" }, 413, origine);
+  let d;
+  try { d = JSON.parse(grezzo); } catch { return risposta({ errore: "non e' JSON" }, 400, origine); }
+  if (!d || typeof d !== "object") return risposta({ errore: "non e' JSON" }, 400, origine);
+  if (!env.GH_TOKEN) return risposta({ errore: "archivio non collegato" }, 503, origine);
+  const chi = /^[0-9a-f]{8,32}$/.test(d.chi || "") ? d.chi : "";
+  if (!chi) return risposta({ errore: "codice" }, 400, origine);
+  const voce = typeof d.voce === "string" ? d.voce : "";
+  const campo = VOCI_CAMPO.includes(voce);
+  if (!campo && !/^[A-Za-z0-9_]{1,30}$/.test(voce)) return risposta({ errore: "voce" }, 400, origine);
+  if (typeof d.valore !== "string") return risposta({ errore: "manca il valore (vuoto per toglierla)" }, 400, origine);   // senza valore non si toglie niente
+  const valore = voce === "vita" ? vitaValida(d.valore.trim()) : testo(d.valore, maxProfilo(voce));
+  if (voce === "vita" && d.valore.trim() && !valore) return risposta({ errore: "vita non valida" }, 400, origine);
+  const mail = await mailDalConto(req, fetch, env);
+  if (!mail) return risposta({ errore: "entra col tuo account" }, 401, origine);
+  const percorso = `utenti/${chi}.json`;
+  // due scritture insieme sullo stesso file: la seconda trova il file cambiato (409/422), si rilegge e si rifà; di scritture riuscite ce n'è una
+  for (let giro = 0; giro < 3; giro++) {
+    let u, sha;
+    try { const g = await gh(env, "GET", percorso); u = deb64(g.content); sha = g.sha; }
+    catch (e) { return String(e.message).includes("404") ? risposta({ errore: "non ti trovo" }, 404, origine) : risposta({ errore: "archivio" }, 502, origine); }
+    if (String(u.mail || "").trim().toLowerCase() !== mail) return risposta({ errore: "non è tuo" }, 403, origine);   // anche se il file non ha la mail
+    if (campo) u[voce] = valore;
+    else { u.conosciute = { ...(u.conosciute || {}) }; if (valore) u.conosciute[voce] = valore; else delete u.conosciute[voce]; }
+    try { await gh(env, "PUT", percorso, { message: `profilo ${chi.slice(0, 6)}: ${voce}`, content: b64(u), sha }); return risposta({ ok: true }, 200, origine); }
+    catch (e) { if (!/GitHub (409|422)/.test(String(e.message))) return risposta({ errore: "archivio" }, 502, origine); }
+  }
+  return risposta({ errore: "archivio occupato: riprova tra poco" }, 502, origine);
 }
 
 

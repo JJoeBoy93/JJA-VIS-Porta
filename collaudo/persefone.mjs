@@ -33,7 +33,7 @@ ok(telegram.length === prima + 1, "un indirizzo nuovo: un nuovo avviso");
 // le strade vere della porta non sono esche
 import("node:assert");
 const { ESCHE } = W;
-for (const p of ["/parla", "/assistente", "/nato", "/ares", "/posta", "/telegram", "/conoscenza", "/risposte", "/stato"])
+for (const p of ["/parla", "/assistente", "/nato", "/ares", "/posta", "/telegram", "/conoscenza", "/profilo", "/risposte", "/stato"])
   ok(!ESCHE.some((rx) => rx.test(p)), `la strada vera ${p} non è un'esca`);
 // ── IL SECONDO PEZZO: il labirinto (23/10) — chi prova a USARE i dati finti non deve scoprire che sono finti ──
 // Le credenziali seminate nel .env sono quelle che poi fanno entrare dal login (JJ 23/10: «se entro con credenziali casuali non è roba vera»)
