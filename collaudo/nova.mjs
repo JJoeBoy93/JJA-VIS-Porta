@@ -67,6 +67,24 @@ const salvata = [...repo.keys()].find((k) => k.startsWith("per-pagina/abcdef0123
 ok(salvata && de(repo.get(salvata)).auto === true, "la risposta resta per quando torna (per-pagina, «-n»)");
 ok(ultimoTg().includes("🤖 Nova ha già risposto") && ultimoTg().includes("Bottega: commissione"), "JJ su Telegram vede cosa ha risposto Nova");
 
+console.log("── 28/10: la vita, non il mestiere");
+ai.length = 0;
+await parla("cosa puoi fare per me?", { profilo: { vita: "pensione", mestiere: "Operaio", tempo: "Visite e bollette" } });
+{ const m = ai[0].corpo.messages[1].content;
+  ok(m.includes("Nella vita: in pensione") && m.includes("In cosa vorrebbe essere assistito: Visite e bollette") && !m.includes("Lavoro:") && !m.includes("Operaio"), "pensione: Nova sa «nella vita: in pensione», non il lavoro", m); }
+ai.length = 0;
+await parla("cosa puoi fare per me?", { profilo: { vita: "lavoro", mestiere: "Artigiano", tempo: "Preventivi" } });
+{ const m = ai[0].corpo.messages[1].content;
+  ok(m.includes("Lavoro: Artigiano") && m.includes("Il tempo glielo mangia: Preventivi") && !m.includes("Nella vita"), "lavoro: come prima", m); }
+repo.set("utenti/abcdef0123456789.json", b64({ chi: "abcdef0123456789", vita: "casa" }));
+ai.length = 0;
+await parla("cosa puoi fare per me?", { profilo: { vita: "lavoro", mestiere: "Artigiano", tempo: "Preventivi" } });
+ok(ai[0].corpo.messages[1].content.includes("Nella vita: sta a casa"), "la vita salvata in utenti/<chi>.json vale più di quella della pagina");
+repo.delete("utenti/abcdef0123456789.json");
+{ const r1 = await parla("cosa puoi fare per me?", { profilo: { vita: "pensione", mestiere: "Operaio", tempo: "Visite" } });
+  const bz = [...repo.keys()].filter((k) => k.startsWith("bozze/")).map((k) => de(repo.get(k))).filter((b) => b.profilo && b.profilo.vita === "pensione");
+  ok(r1.stato === 201 && bz.length > 0, "la domanda salvata porta la vita (la bozza di JJ la usa)"); }
+
 console.log("── Nova passa a JJ");
 aiRisposta = { risposta: "Per il prezzo ti risponde chi mi costruisce, qui.", servizio: "commissione", tipo: "Sito o pagina web", bozza: "Un sito", passa_a_jj: true };
 r = await parla("Quanto costa un sito?");

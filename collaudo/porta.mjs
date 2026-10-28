@@ -159,5 +159,15 @@ const q3 = (await (await post("/parla", { chi: "e1b2c3d4e5f60718", testo: "solo 
 await risponde(q3, "Risposta veloce.");
 ok(repo.has(`per-pagina/e1b2c3d4e5f60718/${q3}.json`), "senza mail, il testo di JJ parte subito come prima");
 
+console.log("── 28/10: la bozza di JJ sa la vita, non il mestiere");
+{ const prova = async (profilo) => {
+    const rv = await post("/parla", { chi: "a1b2c3d4e5f60718", da_dove: "chat", testo: "cosa puoi fare per me?", profilo });
+    const dv = await rv.json(); await tocco("bozza:" + dv.id);
+    return JSON.stringify(claudeVisti.at(-1) || {}); };
+  let v = await prova({ vita: "pensione", mestiere: "Operaio", tempo: "Visite e bollette" });
+  ok(v.includes("nella vita: in pensione") && v.includes("in cosa vorrebbe essere assistito: Visite e bollette") && !v.includes("mestiere:") && !v.includes("Operaio"), "pensione: «nella vita: in pensione», senza mestiere");
+  v = await prova({ vita: "lavoro", mestiere: "Artigiano", tempo: "Preventivi" });
+  ok(v.includes("mestiere: Artigiano") && v.includes("gli fa perdere tempo: Preventivi") && !v.includes("nella vita"), "lavoro: come prima"); }
+
 console.log(err ? `\nROSSO: ${err}` : "\nVERDE");
 process.exit(err ? 1 : 0);

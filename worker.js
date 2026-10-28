@@ -42,6 +42,10 @@ const testo = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 // qualunque altro valore si butta.
 const VITE = ["lavoro", "pensione", "studio", "casa"];
 const vitaValida = (v) => (VITE.includes(v) ? v : "");
+// 28/10: come primoCore, anche nelle chat dopo la prima: chi è in pensione o sta a casa non ha «un lavoro» (niente mestiere:
+// la riga è la vita, e «tempo» è in cosa vorrebbe essere assistito). Per lavoro, studio o vita vuota resta tutto com'era.
+const vitaSenzaLavoro = (v) => v === "pensione" || v === "casa";
+const dettoVita = (v) => (v === "pensione" ? "in pensione" : "sta a casa");
 
 function pulisci(d) {
   const r = {
@@ -384,8 +388,9 @@ export async function novaSubito(env, rec, fetchFn = fetch) {
   const chiSono = CHI_SONO.replace("rispondi per mail a chi ti ha scritto dalla tua pagina pubblica",
     "rispondi in chat a chi ti scrive dalla tua pagina pubblica");
   // il nome no: come per le bozze, l'IA vede il messaggio e il mestiere, mai chi e'
-  const lui = [rec.mestiere && `Lavoro: ${rec.mestiere}.`,
-    rec.profilo && rec.profilo.tempo && `Il tempo glielo mangia: ${rec.profilo.tempo}.`].filter(Boolean).join(" ");
+  const vita = vitaValida(rec.profilo && rec.profilo.vita), senzaLavoro = vitaSenzaLavoro(vita);
+  const lui = [senzaLavoro ? `Nella vita: ${dettoVita(vita)}.` : rec.mestiere && `Lavoro: ${rec.mestiere}.`,
+    rec.profilo && rec.profilo.tempo && `${senzaLavoro ? "In cosa vorrebbe essere assistito" : "Il tempo glielo mangia"}: ${rec.profilo.tempo}.`].filter(Boolean).join(" ");
   const corpo = { messages: [
       { role: "system", content: chiSono + NOVA_REGOLE + (rec.nome_assistente ? `\nTi ha chiamato ${rec.nome_assistente}.` : "") },
       { role: "user", content: `${lui ? lui + "\n" : ""}Messaggio: «${rec.domanda}»` }],
@@ -491,8 +496,10 @@ async function bozza(env, rec, pagina) {
   const p = rec.profilo || {};
   const conosciute = p.conosciute ? Object.entries(p.conosciute).map(([k, v]) => `${k}: ${v}`).join("; ") : "";
   // Niente nome: la pagina promette che l'IA non vede mai nome e mail.
-  const sa = [(rec.mestiere || p.mestiere) && `mestiere: ${rec.mestiere || p.mestiere}`,
-              p.tempo && `gli fa perdere tempo: ${p.tempo}`, conosciute && `ti ha detto: ${conosciute}`].filter(Boolean).join(". ");
+  const vita = vitaValida(p.vita), senzaLavoro = vitaSenzaLavoro(vita);
+  const sa = [senzaLavoro && `nella vita: ${dettoVita(vita)}`,
+              !senzaLavoro && (rec.mestiere || p.mestiere) && `mestiere: ${rec.mestiere || p.mestiere}`,
+              p.tempo && `${senzaLavoro ? "in cosa vorrebbe essere assistito" : "gli fa perdere tempo"}: ${p.tempo}`, conosciute && `ti ha detto: ${conosciute}`].filter(Boolean).join(". ");
   const dove = (rec.a ? "La risposta gli arriva per mail." : "La risposta la leggera' sulla tua pagina, nella chat: tienila corta, al massimo 80 parole, niente firma.") +
     (PERCHE_SCRIVE[rec.da_dove] ? "\n" + PERCHE_SCRIVE[rec.da_dove] : "");
   return claude(env, {
@@ -611,7 +618,8 @@ async function copiaPerAltraIA(env, id, dove) {
                                       "rispondi a chi ti ha scritto dalla tua pagina pubblica")
     .replace("- Al massimo 120 parole. Firma come ti dice il messaggio qui sotto.",
              `- Al massimo 100 parole, niente firma.${dati.nome_assistente ? ` Per questa persona ti chiami ${dati.nome_assistente}.` : ""}`);
-  const coda = `${dati.mestiere ? `Il suo mestiere: ${dati.mestiere}.\n` : ""}Il suo messaggio:\n-----\n${dati.domanda}\n-----\nScrivi solo la risposta.`;
+  const vitaC = vitaValida(dati.profilo && dati.profilo.vita);
+  const coda = `${vitaSenzaLavoro(vitaC) ? `Nella vita: ${dettoVita(vitaC)}.\n` : dati.mestiere ? `Il suo mestiere: ${dati.mestiere}.\n` : ""}Il suo messaggio:\n-----\n${dati.domanda}\n-----\nScrivi solo la risposta.`;
   const testa = `📋 #${id} — tocca il testo per copiarlo, incollalo in ChatGPT o Gemini, poi rispondi al messaggio della domanda con quello che ti dà (correggilo se serve).`;
   // 26 settembre: col paragrafo delle commissioni le istruzioni sono 3.600
   // caratteri, e il vecchio taglio a 3.600 buttava via proprio la domanda,
@@ -1206,7 +1214,8 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
   const turni = filo ? filo.turni : (lettera ? [{ chi: "noi", testo: `[la lettera «${lettera.oggetto}»] ${String(lettera.testo || "").slice(0, 1500)}` }] : []);
   const impegni = filo ? filo.impegni : [];
   const contesto = `OGGI è ${giornoBello(oggi)} ${oggi.slice(0, 4)} (${oggi}), a Roma sono le ${ora.slice(11)}.\n` +
-    `Si chiama: ${rec.nome || (filo && filo.nome) || "(non lo so)"} (dal nome capisci se è un uomo o una donna).\n\n` +
+    `Si chiama: ${rec.nome || (filo && filo.nome) || "(non lo so)"} (dal nome capisci se è un uomo o una donna).\n` +
+    (rec.sa ? `Quello che sai di lei:\n${rec.sa}\n` : "") + "\n" +
     `I suoi documenti archiviati:\n${(rec.documenti || []).map((x) => `- [${x.id}] ${x.titolo}${x.data ? " · " + x.data : ""}`).join("\n") || "(nessuno)"}\n\n` +
     `Le scadenze da pagare già segnate:\n${(filo && filo.scadenze || []).filter((x) => !x.pagata).map((x) => `- [${x.id}] ${x.giorno}${x.importo ? " · " + x.importo : ""}: ${x.cosa}${x.ogni_mese ? " (ogni mese)" : ""}`).join("\n") || "(nessuna)"}\n\n` +
     `Cosa si porta sempre dietro quando esce: ${(filo && filo.da_portare || []).join(", ") || "(non me l'ha ancora detto)"}\n\n` +
@@ -1833,7 +1842,7 @@ async function parla(req, env, ctx, origine) {
   const domanda = testo(d.testo, 800);
   if (!domanda) return risposta({ errore: "scrivimi qualcosa" }, 400, origine);
   const p = d.profilo && typeof d.profilo === "object" ? d.profilo : {};
-  const profilo = { mestiere: testo(p.mestiere, 60), tempo: testo(p.tempo, 60), conosciute: {} };
+  const profilo = { vita: vitaValida(p.vita), mestiere: testo(p.mestiere, 60), tempo: testo(p.tempo, 60), conosciute: {} };
   if (p.conosciute && typeof p.conosciute === "object") {
     for (const [k, v] of Object.entries(p.conosciute).slice(0, 12)) profilo.conosciute[testo(k, 20)] = testo(v, 60);
   }
@@ -1865,6 +1874,8 @@ async function parla(req, env, ctx, origine) {
   const u = await aggiornaUtente(env, chi, { nome_assistente: rec.nome_assistente, tema: rec.tema, tuo: rec.nome,
     mestiere: profilo.mestiere, tempo: profilo.tempo, conosciute: profilo.conosciute,
     mail: rec.contatto && rec.contatto.mail ? String(rec.contatto.mail).trim().toLowerCase() : "" }, "messaggi");
+  // 28/10: la vita salvata in utenti/<chi>.json vale più di quella che manda la pagina (rec.profilo è lo stesso oggetto)
+  profilo.vita = vitaValida(u && u.vita) || profilo.vita;
   // Nova risponde subito solo nella chat; quello che passa a JJ resta in attesa.
   let subito = null;
   if (da_dove === "chat" && await novaAccesa(env)) {
@@ -3181,7 +3192,15 @@ async function assistenteDallaChat(env, req, origine) {
   const ass = String(d.nome_assistente || "").trim().slice(0, 24), tuo = String(d.tuo || "").trim().slice(0, 40);
   await atlasAggiorna(env, mail, (f) => { if (ass) f.assistente = ass; if (tuo && !f.nome) f.nome = tuo; return []; });
   const filo = (await atlasLeggi(env)).dati[mail];
-  const rec = { domanda: `[mi scrive dalla chat della pagina: la risposta compare in chat; i documenti che chiede li vede come link da scaricare]\n${testo}`, nome: filo.nome || tuo, quando: new Date().toISOString(),
+  // 28/10: la vita (pensione, casa) viaggia anche nelle chat dopo la prima, come in primoCore: da utenti/<chi>.json, e se manca da quello che manda la pagina
+  const p = d.profilo && typeof d.profilo === "object" ? d.profilo : {};
+  let chi = /^[0-9a-f]{8,32}$/.test(d.chi || "") ? d.chi : "", u = {};
+  if (chi) { try { u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {} }
+  if (u.mail && String(u.mail).trim().toLowerCase() !== mail) { u = {}; chi = ""; }   // il profilo di un altro non si legge
+  const vita = vitaValida(u.vita || p.vita || d.vita);
+  const sa = vitaSenzaLavoro(vita) ? [`- nella vita: ${dettoVita(vita)}`,
+    (u.tempo || p.tempo) && `- in cosa vorrebbe essere assistito: ${String(u.tempo || p.tempo).slice(0, 80)}`].filter(Boolean).join("\n") : "";
+  const rec = { domanda: `[mi scrive dalla chat della pagina: la risposta compare in chat; i documenti che chiede li vede come link da scaricare]\n${testo}`, nome: filo.nome || tuo, quando: new Date().toISOString(), sa,
     documenti: env.DOC_CHIAVE ? (await leggiIndice(env, mail)).elenco : [] };
   let esito; try { esito = await atlasRisponde(env, mail, rec, filo, null); await contaSpesa(env, ultimoUso); }
   catch (e) { return risposta({ risposta: "Adesso non riesco a risponderti: riprova tra poco." }, 200, origine); }
