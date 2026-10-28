@@ -46,6 +46,12 @@ const vitaValida = (v) => (VITE.includes(v) ? v : "");
 // la riga è la vita, e «tempo» è in cosa vorrebbe essere assistito). Per lavoro, studio o vita vuota resta tutto com'era.
 const vitaSenzaLavoro = (v) => v === "pensione" || v === "casa";
 const dettoVita = (v) => (v === "pensione" ? "in pensione" : "sta a casa");
+// 28/10, JJ: «anche se in pensione ha fatto la sua vita dedicandosi a un lavoro e a delle passioni, bisogna imparare anche quelle».
+// Le due voci del ritorno che lo dicono hanno 120 caratteri (le altre 60) e all'assistente arrivano con parole chiare,
+// non come «mestiere_di_una_vita: …».
+const VOCI_DI_VITA = [["mestiere_di_una_vita", "ha fatto nella vita"], ["passioni", "le sue passioni"]];
+const maxVoce = (k) => (VOCI_DI_VITA.some(([c]) => c === k) ? 120 : 60);
+const vociDiVita = (c) => VOCI_DI_VITA.map(([k, parole]) => c && typeof c[k] === "string" && c[k].trim() && `${parole}: ${c[k].trim().slice(0, 120)}`).filter(Boolean);
 
 function pulisci(d) {
   const r = {
@@ -494,12 +500,13 @@ const DA_DOVE = { chat: "dalla chat", sondaggio: "dal sondaggio", investitori: "
 async function bozza(env, rec, pagina) {
   if (!env.ANTHROPIC_API_KEY) throw new Error("manca ANTHROPIC_API_KEY");
   const p = rec.profilo || {};
-  const conosciute = p.conosciute ? Object.entries(p.conosciute).map(([k, v]) => `${k}: ${v}`).join("; ") : "";
+  const conosciute = p.conosciute ? Object.entries(p.conosciute).filter(([k]) => !VOCI_DI_VITA.some(([c]) => c === k)).map(([k, v]) => `${k}: ${v}`).join("; ") : "";
   // Niente nome: la pagina promette che l'IA non vede mai nome e mail.
   const vita = vitaValida(p.vita), senzaLavoro = vitaSenzaLavoro(vita);
   const sa = [senzaLavoro && `nella vita: ${dettoVita(vita)}`,
               !senzaLavoro && (rec.mestiere || p.mestiere) && `mestiere: ${rec.mestiere || p.mestiere}`,
-              p.tempo && `${senzaLavoro ? "in cosa vorrebbe essere assistito" : "gli fa perdere tempo"}: ${p.tempo}`, conosciute && `ti ha detto: ${conosciute}`].filter(Boolean).join(". ");
+              p.tempo && `${senzaLavoro ? "in cosa vorrebbe essere assistito" : "gli fa perdere tempo"}: ${p.tempo}`, ...vociDiVita(p.conosciute),
+              conosciute && `ti ha detto: ${conosciute}`].filter(Boolean).join(". ");
   const dove = (rec.a ? "La risposta gli arriva per mail." : "La risposta la leggera' sulla tua pagina, nella chat: tienila corta, al massimo 80 parole, niente firma.") +
     (PERCHE_SCRIVE[rec.da_dove] ? "\n" + PERCHE_SCRIVE[rec.da_dove] : "");
   return claude(env, {
@@ -1199,6 +1206,7 @@ quante mail riceve metti in "posta" il nuovo valore e confermale in una riga cos
 Le risposte a chi ti scrive nella CHAT della pagina restano nella chat; per mail rispondi solo a chi ti ha scritto per mail.
 
 Come rispondi:
+- Se sai le sue passioni o il lavoro che ha fatto, usale per proporre cose dedicate a lui (es. orto → meteo per seminare e mercatini; ex artigiano → bandi per la casa; gite → iniziative del Comune), senza ripeterle ogni volta.
 - Leggi TUTTA la conversazione: non chiedere mai una cosa che ti ha già detto. Se ti corregge, prendi la correzione e basta.
 - Elenca gli impegni che segni con giorno e ora, in breve, così può controllare.
 - Se un impegno non ha un giorno certo, chiedilo; se non ha un'ora va bene lo stesso (sta nel programma del mattino).
@@ -1792,6 +1800,7 @@ async function conoscenza(req, env, ctx, origine) {
     nome_assistente: testo(d.nome_assistente, 20),
     tema: ["tech", "calmo", "deciso", "naturale"].includes(d.tema) ? d.tema : "",
   };
+  if (VOCI_DI_VITA.some(([c]) => c === r.chiave)) r.risposta = r.risposta.slice(0, 120);
   if (!r.chiave || !r.risposta) return risposta({ errore: "manca la risposta" }, 400, origine);
   const percorso = `conoscenza/${r.quando.slice(0, 10)}/${r.quando.replace(/[:.]/g, "-")}-${(r.chi || "anonimo").slice(0, 8)}.json`;
   try {
@@ -1844,7 +1853,7 @@ async function parla(req, env, ctx, origine) {
   const p = d.profilo && typeof d.profilo === "object" ? d.profilo : {};
   const profilo = { vita: vitaValida(p.vita), mestiere: testo(p.mestiere, 60), tempo: testo(p.tempo, 60), conosciute: {} };
   if (p.conosciute && typeof p.conosciute === "object") {
-    for (const [k, v] of Object.entries(p.conosciute).slice(0, 12)) profilo.conosciute[testo(k, 20)] = testo(v, 60);
+    for (const [k, v] of Object.entries(p.conosciute).slice(0, 12)) profilo.conosciute[testo(k, 20)] = testo(v, maxVoce(testo(k, 20)));
   }
   // Investitori e commissioni lasciano nome e mail: viaggiano in «contatto»,
   // si tengono solo con la spunta, e NON entrano nella domanda — la domanda
@@ -3198,8 +3207,9 @@ async function assistenteDallaChat(env, req, origine) {
   if (chi) { try { u = deb64((await gh(env, "GET", `utenti/${chi}.json`)).content); } catch (_) {} }
   if (u.mail && String(u.mail).trim().toLowerCase() !== mail) { u = {}; chi = ""; }   // il profilo di un altro non si legge
   const vita = vitaValida(u.vita || p.vita || d.vita);
-  const sa = vitaSenzaLavoro(vita) ? [`- nella vita: ${dettoVita(vita)}`,
-    (u.tempo || p.tempo) && `- in cosa vorrebbe essere assistito: ${String(u.tempo || p.tempo).slice(0, 80)}`].filter(Boolean).join("\n") : "";
+  const sa = [...(vitaSenzaLavoro(vita) ? [`- nella vita: ${dettoVita(vita)}`,
+    (u.tempo || p.tempo) && `- in cosa vorrebbe essere assistito: ${String(u.tempo || p.tempo).slice(0, 80)}`] : []),
+    ...vociDiVita({ ...p.conosciute, ...u.conosciute }).map((x) => `- ${x}`)].filter(Boolean).join("\n");
   const rec = { domanda: `[mi scrive dalla chat della pagina: la risposta compare in chat; i documenti che chiede li vede come link da scaricare]\n${testo}`, nome: filo.nome || tuo, quando: new Date().toISOString(), sa,
     documenti: env.DOC_CHIAVE ? (await leggiIndice(env, mail)).elenco : [] };
   let esito; try { esito = await atlasRisponde(env, mail, rec, filo, null); await contaSpesa(env, ultimoUso); }
@@ -3535,6 +3545,7 @@ async function primoCore(env, mail, chi, u, d, perPagina, dallaPagina = false) {
   const rigaVita = senzaLavoro ? `- nella vita: ${vita === "pensione" ? "in pensione" : "sta a casa"}\n` : "";
   const sa = [!senzaLavoro && (u.mestiere || d.mestiere) && `- lavoro: ${u.mestiere || d.mestiere}`,
     (u.tempo || d.tempo) && `- ${senzaLavoro ? "in cosa vorrebbe essere assistito" : "cosa fa perdere tempo nel lavoro"}: ${u.tempo || d.tempo}`,
+    ...vociDiVita(u.conosciute).map((x) => `- ${x}`),
     bisogno && `- cosa vorrebbe da te, con parole sue: «${bisogno}»`,
     (u.voti || []).length && `- cosa ha votato da costruire: ${u.voti.join("; ")} (lo costruisce chi ti ha costruito, su commissione: di' che l'hai passato a lui, nessun prezzo)`]
     .filter(Boolean).join("\n") + await prodottoPer(env, mail, u.mestiere || d.mestiere);
