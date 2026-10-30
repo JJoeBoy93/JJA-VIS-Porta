@@ -12,7 +12,7 @@ const W = await import(join(dir, "worker.mjs"));
 let errori = 0; const ok = (c, m, d = "") => { console.log((c ? "  ✅ " : "  ❌ ") + m + (c ? "" : " " + JSON.stringify(d))); if (!c) errori++; };
 const repo = {};
 globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url)), h = o.headers || {};
-  if (u.host === "api.anthropic.com") return new Response(JSON.stringify({ content: [{ type: "text", text: '{"titolo":"Bolletta luce Enel ottobre 2026","data":"2026-10-12","scadenza":"2026-11-05","importo":"85,40 €","cosa":"bolletta della luce"}' }], usage: { input_tokens: 10, output_tokens: 10 } }));
+  if (u.host === "api.anthropic.com") return new Response(JSON.stringify({ content: [{ type: "text", text: globalThis.RISPOSTA_DOC || '{"titolo":"Bolletta luce Enel ottobre 2026","data":"2026-10-12","scadenza":"2026-11-05","importo":"85,40 €","cosa":"bolletta della luce"}' }], usage: { input_tokens: 10, output_tokens: 10 } }));
   if (u.host === "api.github.com") { const p = decodeURIComponent(u.pathname.split("/contents/")[1] || ""), m = o.method || "GET";
     if (m === "PUT") { repo[p] = JSON.parse(o.body).content; return new Response("{}"); }
     if (m === "DELETE") { delete repo[p]; return new Response("{}"); }
@@ -39,4 +39,17 @@ await W.documentiVia(env, "papa@prova.it", [I.elenco[0].id]);
 ok((await W.leggiIndice(env, "papa@prova.it")).elenco.length === 0 && Object.keys(repo).filter((k) => k.endsWith(".b64") && !k.endsWith("indice.b64")).length === 0, "si cancella davvero: file e voce nell'elenco");
 const dopoCambio = await W.archiviaAllegati(altra, "papa@prova.it", [{ nome: "b2.pdf", tipo: "application/pdf", dati: pdf }], "2026-10-20");
 ok(dopoCambio.archiviati.length === 1 && (await W.leggiIndice(altra, "papa@prova.it")).elenco.length === 1, "chiave cambiata: l'elenco vecchio non si apre, ma i documenti nuovi si archiviano lo stesso", dopoCambio);
+// 30/10: un orario (il caso di Giovanni, «Orario lezioni Bilotta») — le righe si tengono, nell'indice cifrato
+globalThis.RISPOSTA_DOC = JSON.stringify({ titolo: "Orario lezioni Bilotta", data: null, scadenza: null, importo: null, cosa: null,
+  orario: [{ giorno: "lun", dalle: "08:00", alle: "09:00", cosa: "1GSE", dove: "aula 12" }, { giorno: "Martedì", dalle: "10:00", alle: null, cosa: "2B", dove: null },
+    { giorno: "mer", dalle: "", alle: null, cosa: "3C", dove: null }, { giorno: "boh", dalle: "11:00", cosa: "x" }] });
+const conOrario = await W.archiviaAllegati(env, "gio@prova.it", [{ nome: "orario.pdf", tipo: "application/pdf", dati: pdf }], "2026-10-30");
+const vo = (await W.leggiIndice(env, "gio@prova.it")).elenco[0] || {};
+ok(Array.isArray(vo.orario) && vo.orario.length === 3, "un orario: le righe buone si tengono nell'indice (il giorno inventato no)", vo.orario);
+ok(vo.orario && vo.orario[0].giorno === "lun" && vo.orario[0].dalle === "08:00" && vo.orario[0].cosa === "1GSE" && !vo.orario[0].dubbio, "la riga del lunedì com'è: lun 08:00 1GSE");
+ok(vo.orario && vo.orario[1].giorno === "mar", "«Martedì» diventa mar");
+ok(vo.orario && vo.orario[2].dubbio === true && vo.orario[2].dalle === null, "un'ora che non si legge: la riga resta, segnata da controllare, senza ora inventata");
+ok(conOrario.scadenze.length === 0, "un orario non fa scadenze");
+ok(!JSON.stringify(Object.entries(repo).filter(([k]) => k.includes("indice")).map(([, v]) => v)).includes("1GSE"), "nell'archivio l'orario non si legge in chiaro: sta nell'indice cifrato");
+globalThis.RISPOSTA_DOC = "";
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde"); process.exit(errori ? 1 : 0);

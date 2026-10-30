@@ -1237,8 +1237,13 @@ ${P.invito}
   Non scrivere tu le date dei promemoria (le calcola il sistema): ${P.date}.
   Se una scadenza uguale (stessa cosa, stesso giorno) è già nell'elenco, anche fra le cose già FATTE, non segnarla di nuovo.
 - tieni i suoi DOCUMENTI (bollette, ricevute, contratti) che ti manda in allegato: li leggi, li archivi cifrati, e quando te li
-  chiede («mandami la bolletta della luce di ottobre») glieli rimandi in allegato: metti i loro id in "manda_documenti". Se ti
+  chiede («mandami la bolletta della luce di ottobre») glieli rimandi (in chat compaiono come link da scaricare, per mail in allegato): metti i loro id in "manda_documenti". Se ti
   chiede di cancellarli, metti gli id in "documenti_tolti". I documenti che hai sono nell'elenco qui sotto: non inventarne altri.
+  Se un documento ha un ORARIO letto (righe con giorno, ora, cosa, dove), usalo per rispondere: «lunedì che ora faccio» → le righe del lunedì
+  in ordine d'ora; «1GSE quando ho lezione» → tutte le righe con 1GSE. Una riga [da controllare] la dici come incerta, non come sicura.
+  Se ti chiede di un orario che ha mandato ma nell'elenco non ha righe lette, chiedigli di rimandarlo una volta: ora lo sai leggere.
+  Se ti chiede di metterlo nel calendario: segna in "nuovi" le lezioni dei prossimi 7 giorni (con la data vera e l'ora), e digli che
+  per ora le metti una settimana alla volta: quando vuole la settimana dopo, basta chiederlo.
 Cosa NON fai (non dirlo mai, non lasciarlo intendere): non entri nel suo calendario né nel suo telefono (gli inviti li aggiunge lei), non prendi appuntamenti, non
 telefoni, non compri, non scrivi ad altre persone. Se ti chiede una di queste cose, di' che oggi non la fai (senza tornare su risposte precedenti: vale la regola c).
 
@@ -1287,7 +1292,8 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
   const contesto = `OGGI è ${giornoBello(oggi)} ${oggi.slice(0, 4)} (${oggi}), a Roma sono le ${ora.slice(11)}.\n` +
     `Si chiama: ${rec.nome || (filo && filo.nome) || "(non lo so)"} (dal nome capisci se è un uomo o una donna).\n` +
     (rec.sa ? `Quello che sai di lei:\n${rec.sa}\n` : "") + "\n" +
-    `I suoi documenti archiviati:\n${(rec.documenti || []).map((x) => `- [${x.id}] ${x.titolo}${x.data ? " · " + x.data : ""}`).join("\n") || "(nessuno)"}\n\n` +
+    `I suoi documenti archiviati:\n${(rec.documenti || []).map((x) => `- [${x.id}] ${x.titolo}${x.data ? " · " + x.data : ""}` +
+      (Array.isArray(x.orario) && x.orario.length ? `\n  ORARIO letto dal documento (ogni settimana):\n` + x.orario.map((o) => `  · ${o.giorno} ${o.dalle || "?"}${o.alle ? "–" + o.alle : ""} ${o.cosa}${o.dove ? " (" + o.dove + ")" : ""}${o.dubbio ? " [da controllare]" : ""}`).join("\n") : "")).join("\n") || "(nessuno)"}\n\n` +
     `Le scadenze da pagare già segnate:\n${(filo && filo.scadenze || []).filter(scadenzaAperta).map((x) => `- [${x.id}] ${x.giorno}${x.importo ? " · " + x.importo : ""}: ${x.cosa}${x.ogni_mese ? " (ogni mese)" : ""}`).join("\n") || "(nessuna)"}\n\n` +
     `Cosa si porta sempre dietro quando esce: ${(filo && filo.da_portare || []).join(", ") || "(non me l'ha ancora detto)"}\n\n` +
     `Gli impegni già segnati${impegni.some((x) => x.giorno < oggi) ? " (quelli segnati PASSATO sono scaduti: se lei conferma che li ha fatti vanno in «fatti», se no vanno spostati)" : ""}:\n${impegni.length ? impegni.map((x) => `- [${x.id}] ${giornoBello(x.giorno)} (${x.giorno})${x.ora ? " alle " + x.ora : ""}: ${x.cosa}${x.giorno < oggi ? " ← PASSATO" : ""}`).join("\n") : "(nessuno)"}\n\n` +
@@ -3202,7 +3208,8 @@ async function scriviIndice(env, mail, elenco, sha) {
 async function leggiDocumento(env, a, oggi) {
   const blocco = a.tipo === "application/pdf" ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: a.dati } }
     : { type: "image", source: { type: "base64", media_type: a.tipo, data: a.dati } };
-  const t = await claude(env, { max_tokens: 600, system: `Leggi un documento personale (bolletta, ricevuta, contratto, altro). OGGI è ${oggi}. Rispondi SOLO con JSON: {"titolo": "breve, es. Bolletta luce Enel ottobre 2026", "data": "AAAA-MM-GG del documento o null", "scadenza": "AAAA-MM-GG se c'è una cosa da pagare con scadenza, altrimenti null", "importo": "es. 85,40 € o null", "cosa": "cosa si paga, es. bolletta della luce, o null"}`,
+  const t = await claude(env, { max_tokens: 2500, system: `Leggi un documento personale (bolletta, ricevuta, contratto, altro). OGGI è ${oggi}. Rispondi SOLO con JSON: {"titolo": "breve, es. Bolletta luce Enel ottobre 2026", "data": "AAAA-MM-GG del documento o null", "scadenza": "AAAA-MM-GG se c'è una cosa da pagare con scadenza, altrimenti null", "importo": "es. 85,40 € o null", "cosa": "cosa si paga, es. bolletta della luce, o null", "orario": null}
+Se il documento è un ORARIO che si ripete ogni settimana (orario scolastico, delle lezioni, dei turni di lavoro), "orario" è invece una lista di righe, una per ogni lezione o turno: {"giorno": "lun|mar|mer|gio|ven|sab|dom", "dalle": "HH:MM", "alle": "HH:MM o null", "cosa": "classe, materia o turno, es. 1GSE", "dove": "aula o sede, o null", "dubbio": true se quella riga non si legge con sicurezza}. Scrivi solo quello che leggi; se un'ora non si legge metti dubbio true, non inventarla. Le ore si ricavano anche dall'intestazione delle righe (es. 1ª ora = 8:00–9:00) se il documento la dà.`,
     messages: [{ role: "user", content: [blocco, { type: "text", text: "Il documento è qui sopra." }] }] }, ATLAS_MODELLI, "haiku").catch(() => null);
   try { return JSON.parse(String(t || "").replace(/^[^{]*/, "").replace(/[^}]*$/, "")); } catch (_) { return { titolo: a.nome || "Documento", data: null, scadenza: null }; }
 }
@@ -3216,6 +3223,11 @@ async function archiviaAllegati(env, mail, allegati, oggi) {
     const info = await leggiDocumento(env, a, oggi), id = "d" + nuovoId().slice(0, 6);
     await gh(env, "PUT", `${await cartellaDoc(mail)}/${id}.b64`, { message: "documenti: uno nuovo", content: btoa(b64byte(await cifra(env, byteDa64(a.dati)))) });
     const voce = { id, titolo: String(info.titolo || a.nome || "Documento").slice(0, 100), data: /^\d{4}-\d{2}-\d{2}$/.test(info.data || "") ? info.data : null, tipo: a.tipo, nome: String(a.nome || id).slice(0, 80) };
+    // 30/10: un orario (Giovanni, «Orario lezioni Bilotta») non è una bolletta: le sue righe si tengono, nell'indice cifrato
+    const GG = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"], ORA = /^\d{1,2}:\d{2}$/;
+    if (Array.isArray(info.orario)) voce.orario = info.orario.filter((x) => x && GG.includes(String(x.giorno).slice(0, 3).toLowerCase())).slice(0, 80)
+      .map((x) => ({ giorno: String(x.giorno).slice(0, 3).toLowerCase(), dalle: ORA.test(x.dalle || "") ? x.dalle : null, alle: ORA.test(x.alle || "") ? x.alle : null,
+        cosa: String(x.cosa || "").slice(0, 60), dove: x.dove ? String(x.dove).slice(0, 40) : null, dubbio: !!x.dubbio || !ORA.test(x.dalle || "") }));
     I.elenco.push(voce); archiviati.push(voce);
     if (/^\d{4}-\d{2}-\d{2}$/.test(info.scadenza || "")) scadenze.push({ cosa: String(info.cosa || voce.titolo).slice(0, 120), importo: info.importo || null, giorno: info.scadenza, ogni_mese: false, doc: id });
   }
