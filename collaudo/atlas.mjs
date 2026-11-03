@@ -83,5 +83,17 @@ console.log("── 7. le scadenze passate NON si danno per fatte (non c'entrano
 nuova("tutto", []); scheda().scadenze = [{ id: "s9", cosa: "il bollo", giorno: "2026-10-25", ogni_mese: false, pagata: false, avvisi: {} }];
 await giri("2026-11-01", "2026-11-01"); ok(!scheda().scadenze[0].fatto, "la scadenza del 25/10 resta aperta", scheda().scadenze);
 
+console.log("── 8. orari giusti (3/11, JJ: «se ti chiedo le 7 perché parte alle 7.07?»): giro ogni 5 minuti");
+// CONTROPROVA: col worker di prima (finestra di 65 minuti) il promemoria delle 10:15 parte alle 9:10, non alle 9:15
+const giri5 = async (g) => { for (let t = Date.parse(`${g}T00:00:00+01:00`); t <= Date.parse(`${g}T23:55:00+01:00`); t += 300e3) { giroDi = new Date(t).toISOString(); await W.atlasPromemoria(env, new Date(t)); } };
+const aRoma = (iso) => new Date(iso).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" });
+for (const modo of ["tutto", "essenziale"]) {
+  nuova(modo, [{ id: "a1", cosa: "dal dentista", giorno: "2026-11-05", ora: "08:30", ics: true }, { id: "a2", cosa: "dal meccanico", giorno: "2026-11-05", ora: "15:15", ics: true }]);
+  await giri5("2026-11-05");
+  const prog = posta.find((m) => /programma di oggi/.test(m.subject)), mecc = posta.find((m) => /⏰ Alle 15:15/.test(m.subject));
+  ok(prog && aRoma(prog.giro) === "07:00", `«${modo}»: il programma del mattino parte alle 7:00`, posta.map((m) => [aRoma(m.giro), m.subject]));
+  ok(mecc && aRoma(mecc.giro) === "14:15", `«${modo}»: il promemoria delle 15:15 parte alle 14:15, un'ora prima esatta`, posta.map((m) => [aRoma(m.giro), m.subject]));
+}
+
 console.log(errori ? `\n❌ ${errori} prove rosse` : "\n✅ tutto verde");
 process.exit(errori ? 1 : 0);

@@ -201,11 +201,20 @@ export default {
     env = conGruppo(env);
     if (evento.cron === "0 18 * * *") ctx.waitUntil(contoDellaSera(env).catch((e) => console.log("conto della sera", e))
       .then(() => imbutoDelLunedi(env, new Date(evento.scheduledTime || Date.now()))).catch((e) => console.log("la settimana", e)));
-    else { ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
-           ctx.waitUntil(spedisciUscita(env).catch((e) => console.log("posta in uscita", e)));
-           ctx.waitUntil(atlasPromemoria(env).catch((e) => console.log("promemoria di Atlas", e)));
-           ctx.waitUntil(giroReel(env).catch((e) => console.log("reel della città", e)));
-           ctx.waitUntil(giroPrimi(env).catch((e) => console.log("chi non ha ricevuto niente", e))); }
+    else {
+      // 3/11 (JJ: «se ti chiedo le 7 perché parte alle 7.07?»): il giro era uno solo, ogni ora alle :07, quindi il programma partiva alle 7:07
+      // e «un'ora prima» poteva arrivare anche 10 minuti prima (impegno alle 10:15 → giro delle 10:07). Ora Atlas gira ogni 5 minuti
+      // («*/5 * * * *»): il programma alle 7:00, l'ora prima fra 60 e 55 minuti prima. Gli altri lavori restano una volta all'ora, al giro
+      // dei minuti 0-4 (o col vecchio «7 * * * *»): stesso numero di cron di prima, nessun limite di Cloudflare toccato.
+      ctx.waitUntil(atlasPromemoria(env).catch((e) => console.log("promemoria di Atlas", e)));
+      const minuto = new Date(evento.scheduledTime || Date.now()).getUTCMinutes();
+      if (evento.cron === "7 * * * *" || minuto < 5) {
+        ctx.waitUntil(liberaScaduti(env).catch((e) => console.log("liberare i bloccati", e)));
+        ctx.waitUntil(spedisciUscita(env).catch((e) => console.log("posta in uscita", e)));
+        ctx.waitUntil(giroReel(env).catch((e) => console.log("reel della città", e)));
+        ctx.waitUntil(giroPrimi(env).catch((e) => console.log("chi non ha ricevuto niente", e)));
+      }
+    }
   },
   async fetch(req, env, ctx) {
     env = conGruppo(env);
@@ -1395,7 +1404,7 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   const senzaProgramma = f.riepilogo !== oggi && !diOggi.some(delMattino);   // nessun programma del mattino, oggi: le cose da portare vanno col primo promemoria
   const aperti = diOggi.filter((x) => !x.avvisato && (!x.ora || quando(x) > adesso.getTime()));
   const mattina = aperti.filter(delMattino);
-  const inFinestra = (x) => x.ora && adesso.getTime() >= quando(x) - 65 * 60000;   // l'ora prima (65 minuti: il giro è alle :07)
+  const inFinestra = (x) => x.ora && adesso.getTime() >= quando(x) - 60 * 60000;   // l'ora prima (3/11: il giro è ogni 5 minuti, si scrive fra 60 e 55 minuti prima)
   const programma = h >= 7 && h < 22 && f.riepilogo !== oggi && mattina.length > 0;   // solo nei giorni con un impegno da dire
   let dire = programma ? [...mattina, ...aperti.filter((x) => !delMattino(x) && inFinestra(x))] : aperti.filter(inFinestra);
   let haI = dire.length > 0 || programma, accorpato = false;
@@ -1455,7 +1464,7 @@ async function promemoriaEssenziale(f, { adesso, oggi, h, manda, nota }) {
   return cambiato;
 }
 
-// ogni ora: alle 7 (o al primo giro dopo) il programma del giorno; un'ora prima di un impegno con l'ora, il promemoria.
+// ogni 5 minuti (3/11, prima ogni ora alle :07): alle 7:00 il programma del giorno; un'ora prima di un impegno con l'ora, il promemoria.
 // È il servizio «tutto» (com'era); «essenziale» è promemoriaEssenziale, «niente» non manda niente (27/10)
 export async function atlasPromemoria(env, adesso = new Date()) {
   const A = await atlasLeggi(env); if (!A.sha) return;
@@ -1509,7 +1518,7 @@ export async function atlasPromemoria(env, adesso = new Date()) {
     for (const x of imp) {
       if (x.avvisato || !x.ora) continue;
       const quando = daRoma(x.giorno, x.ora).getTime();
-      if (adesso.getTime() >= quando - 65 * 60000 && adesso.getTime() < quando) {
+      if (adesso.getTime() >= quando - 60 * 60000 && adesso.getTime() < quando) {   // 3/11: fra 60 e 55 minuti prima (giro ogni 5 minuti)
         await manda(`⏰ Alle ${x.ora}: ${x.cosa}`, `Tra poco, alle ${x.ora}: ${x.cosa}.\n${nomeAss(f)}`);
         x.avvisato = true; cambiato = true; fatti.push([mail, `⏰ ${f.nome || mail}: ${x.ora} ${x.cosa}`]);
       }
