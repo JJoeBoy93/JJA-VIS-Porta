@@ -4,7 +4,7 @@
 // Controlla: il caso Gennaro (un impegno domani alle 8 + 3 cose da portare, giri orari da adesso a dopodomani sera) manda UNA mail, il
 // programma del mattino con l'invito allegato e le cose da portare; con «tutto» le stesse mail di prima; con «niente» zero; la scadenza
 // fra 5 giorni una sola mail, il giorno prima (pagata: zero); un giorno con 4 impegni e una scadenza al massimo 2 mail, e dentro c'è tutto;
-// «l'hai fatto?» per mail al massimo 2 volte per impegno (poi solo in chat); nei giorni senza programma del mattino le cose da portare vanno nel
+// gli impegni passati non si chiedono mai (3/11: «passato è fatto», collaudo/atlas.mjs); nei giorni senza programma del mattino le cose da portare vanno nel
 // promemoria del primo impegno; l'assistente dice quello che vale per la posta della persona e la cambia quando glielo chiede; la risposta alla
 // chat resta nella chat.
 // CONTROPROVA: con la regola vecchia (il programma parte anche solo per le cose da portare: `diOggi.length || porta.length`) la prova
@@ -66,28 +66,28 @@ console.log("── il caso Gennaro, «essenziale» (è il valore di chi non ha 
   ok(giorni().join() === "2027-01-12", "nei giorni senza impegni (11 e 13) nessuna mail", giorni());
   ok(scheda().mail_oggi && scheda().mail_oggi.data === "2027-01-12" && scheda().mail_oggi.quante === 1, "mail_oggi sulla scheda: data e quante", scheda().mail_oggi); }
 
-console.log("── …con un altro impegno il giorno dopo: «l'hai fatto?» è una riga del programma");
+console.log("── …con un altro impegno il giorno dopo: nessuna riga sugli impegni passati (3/11, «passato è fatto»)");
 { const m = await gennaro(W, {}, [{ id: "d2", cosa: "dal meccanico", giorno: "2027-01-13", ora: "09:30", avvisato: false }]);
   ok(m.length === 2 && giorni().join() === "2027-01-12,2027-01-13", "due mail in tutto: il programma del 12 e quello del 13", oggetti());
   const p13 = m[1] || {};
-  ok(/09:30 dal meccanico/.test(p13.textContent) && /Impegni passati: li hai fatti\?/.test(p13.textContent) && /08:00: dal dentista/.test(p13.textContent), "il programma del 13 ha la riga «l'hai fatto?» dell'impegno del 12", p13.textContent);
+  ok(/09:30 dal meccanico/.test(p13.textContent) && !/Impegni passati|hai fatt/i.test(p13.textContent), "il programma del 13 ha il meccanico e NON chiede del dentista del 12", p13.textContent);
   ok(PORTA.every((x) => (p13.textContent || "").includes("- " + x)) && p13.attachment && p13.attachment.length === 1, "…e le cose da portare, e l'invito del nuovo impegno", p13.attachment);
   ok(!oggetti().some((s) => /^❓/.test(s)), "nessuna mail «l'hai fatto?» a sé", oggetti());
+  ok(scheda().impegni.find((x) => x.id === "d1").fatto_da === "passato", "il dentista del 12 è dato per fatto", scheda().impegni);
   const n = posta.length; await giri(W, giro("2027-01-14", "07"), giro("2027-01-14", "21"));
-  ok(posta.length === n, "il giorno dopo, già chiesto: non lo richiede", oggetti().slice(n)); }
+  ok(posta.length === n, "il giorno dopo nessuna mail", oggetti().slice(n)); }
 
-console.log("── senza programma: una mail sola alla settimana con tutti quelli da confermare");
+console.log("── senza programma: nessuna mail sugli impegni passati, si danno per fatti");
 { nuova({ impegni: [{ id: "v1", cosa: "dal dentista", giorno: "2027-01-05", ora: "10:00", avvisato: true, ics: true }, { id: "v2", cosa: "la revisione", giorno: "2027-01-08", ora: null, avvisato: true, ics: true }], da_portare: PORTA });
   await giri(W, giro("2027-01-09", "07"), giro("2027-01-18", "21"));
-  ok(posta.length === 1 && /^❓ 2 impegni passati/.test(posta[0].subject) && posta[0].giro.startsWith("2027-01-12"), "una mail sola, il 12 (7 giorni dopo il primo), con tutti e due", oggetti());
-  ok(/dal dentista/.test(posta[0].textContent) && /la revisione/.test(posta[0].textContent), "dentro ci sono tutti quelli da confermare", posta[0].textContent);
-  ok(!oggetti().some((s) => /Prima di uscire/.test(s)), "e le cose da portare non partono da sole", oggetti()); }
+  ok(posta.length === 0, "nessuna mail in 10 giorni", oggetti());
+  ok(scheda().impegni.length === 2 && scheda().impegni.every((x) => x.fatto && x.fatto_da === "passato"), "tutti e due restano, dati per fatti", scheda().impegni); }
 
-console.log("── nessuna risposta per 4 settimane: per mail si chiede al massimo 2 volte");
-{ nuova({ impegni: [{ id: "v1", cosa: "dal dentista", giorno: "2027-01-05", ora: "10:00", avvisato: true, ics: true }] });
+console.log("── 4 settimane senza risposta: zero mail (prima erano 2)");
+{ nuova({ impegni: [{ id: "v1", cosa: "dal dentista", giorno: "2027-01-05", ora: "10:00", avvisato: true, ics: true, da_confermare: true, chiesto: "2027-01-06", chieste: 1 }] });
   await giri(W, giro("2027-01-06", "07"), giro("2027-02-05", "21"));
-  ok(posta.length === 2 && posta.every((m) => /^❓ L'hai fatto\? dal dentista/.test(m.subject)) && posta.map((m) => m.giro.slice(0, 10)).join() === "2027-01-12,2027-01-19", "impegno passato, niente risposta: 2 mail in tutto (il 12 e il 19), poi basta", posta.map((m) => [m.giro, m.subject]));
-  ok(scheda().impegni.length === 1 && scheda().impegni[0].da_confermare === true, "l'impegno resta, segnato «da confermare»", scheda().impegni); }
+  ok(posta.length === 0, "impegno passato, niente risposta: nessuna mail", posta.map((m) => [m.giro, m.subject]));
+  ok(scheda().impegni.length === 1 && scheda().impegni[0].fatto_da === "passato" && !("da_confermare" in scheda().impegni[0]) && !("chieste" in scheda().impegni[0]), "l'impegno resta, dato per fatto, senza i campi della vecchia domanda", scheda().impegni); }
 
 console.log("── giorno senza programma del mattino: le cose da portare vanno nel promemoria del primo impegno");
 { nuova({ impegni: [{ id: "p1", cosa: "dal commercialista", giorno: "2027-01-12", ora: "15:00", avvisato: false }], da_portare: PORTA });
@@ -107,7 +107,7 @@ console.log("── lo stesso caso con posta: «tutto»: le mail di oggi");
   ok(o.some((s) => /📋 Il tuo programma di oggi, martedì 12\/1/.test(s)), "il programma del mattino", o);
   ok(o.some((s) => /⏰ Alle 08:00: dal dentista/.test(s)), "un'ora prima", o);
   ok(o.some((s) => /📅 .*calendario/.test(s)) && m.find((x) => /calendario/.test(x.subject)).attachment.length === 1, "l'invito, in una mail a parte", o);
-  ok(o.some((s) => /❓ L'hai fatto\? dal dentista/.test(s)), "l'hai fatto", o);
+  ok(!o.some((s) => /❓|hai fatto/i.test(s)), "nessuna mail «l'hai fatto?» (3/11: passato è fatto)", o);
   ok(o.some((s) => /🎒 Prima di uscire/.test(s)), "e «Prima di uscire» ogni mattina, come prima", o);
   ok(m.length > 2, "senza tetto: più di 2 mail", m.length); }
 

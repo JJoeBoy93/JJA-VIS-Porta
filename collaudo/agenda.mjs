@@ -241,11 +241,16 @@ console.log("── CONTROPROVA: se \"fatti\" finisse in \"tolti\", la prova «l
 { passato(); await dillo({ fatti: ["x"] }, FattiInTolti);
   ok(!scheda().impegni.some((y) => y.id === "x"), "con «fatti» trattato come «tolti» la voce sparisce: la prova «resta con fatto» è rossa", scheda().impegni); }
 
-console.log("── dopo «fatto» non si chiede più «l'hai fatto?»");
-{ // controllo: senza il tocco, la mail partirebbe davvero (altrimenti la prova sotto non dimostra niente)
-  for (const modo of ["essenziale", "tutto"]) { nuova({ posta: modo, impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true }], scadenze: [] });
-    await giri(W); ok(chiedeFatto().length > 0, `controllo («${modo}»): senza il tocco la mail «l'hai fatto?» parte`, posta.map((m) => m.subject)); }
-  for (const modo of ["essenziale", "tutto"]) { const n = await prova(W, modo); ok(n === 0, `«${modo}»: toccato «fatto», in due settimane di giri nessuna mail «l'hai fatto?»`, posta.map((m) => m.subject)); } }
+console.log("── passato è fatto (3/11): nessuna mail «l'hai fatto?», toccato «fatto» o no");
+{ for (const modo of ["essenziale", "tutto"]) { nuova({ posta: modo, impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true }], scadenze: [] });
+    await giri(W); ok(chiedeFatto().length === 0 && scheda().impegni[0].fatto_da === "passato", `«${modo}»: senza il tocco nessuna mail, ed è dato per fatto`, { mail: posta.map((m) => m.subject), imp: scheda().impegni }); }
+  for (const modo of ["essenziale", "tutto"]) { const n = await prova(W, modo); ok(n === 0 && !scheda().impegni[0].fatto_da, `«${modo}»: toccato «fatto», nessuna mail ed è segnato da lei`, posta.map((m) => m.subject)); } }
+{ nuova({ posta: "tutto", impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true }], scadenze: [] });
+  await giri(W); await annulla("v1"); ok(!scheda().impegni[0].fatto && scheda().impegni[0].riaperto === true && !("fatto_da" in scheda().impegni[0]), "«Non ancora fatto» su uno dato per fatto: aperto, riaperto", scheda().impegni);
+  posta = []; await giri(W); ok(!scheda().impegni[0].fatto && chiedeFatto().length === 0, "…e i giri dopo non lo risegnano né lo chiedono", { imp: scheda().impegni, mail: posta.map((m) => m.subject) });
+  rispostaModello = '{"risposta":"Va bene.","nuovi":[]}'; nuova({ posta: "tutto", impegni: [{ id: "v1", cosa: "il dentista", giorno: IERI, ora: "10:00", avvisato: true, ics: true, fatto: "2026-10-21T06:07:00.000Z", fatto_da: "passato" }], scadenze: [] });
+  const t = await chiediAdAtlas(); ok(/- dato per fatto: il dentista/.test(t) && !/- fatto: il dentista/.test(t), "l'assistente lo legge «dato per fatto»", t.slice(-400));
+  richieste = []; await dillo({}); ok(/NON le chiedi MAI se l'ha fatto/.test(richieste.at(-1).system), "il prompt gli dice di non chiedere mai se l'ha fatto", ""); }
 
 // oggi (28/10 a Roma) un impegno aperto la mattina e uno «fatto»; fra 2 giorni una scadenza (aperta o fatta): il programma e i promemoria devono nominare solo le aperte
 const giornata = (fattoAdesso) => ({ impegni: [{ id: "m1", cosa: "la revisione", giorno: "2026-10-28", ora: "09:30", avvisato: false, ics: true },

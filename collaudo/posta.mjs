@@ -135,11 +135,11 @@ await atlasPromemoria(env, new Date("2026-10-14T05:07:00Z"));   // 07:07 a Roma
 const programma = mandate.find((m) => /programma di oggi, mercoledì 14\/10/.test(m.subject));
 ok(programma && /18:00 ricordare a Jacopo/.test(programma.textContent) && /giubbotto/.test(programma.textContent) && programma.sender.name === "Atlas · JJA-VIS",
    "alle 7 di Roma il programma del giorno, con e senza ora", mandate.map((m) => m.subject));
-// 23/10: l'impegno passato (a3, dell'1/10) NON si cancella più — Atlas chiede «l'hai fatto?»
-ok(repo["atlas.json"]["jessica@p.it"].impegni.some((x) => x.id === "a3"), "l'impegno passato non si cancella da solo (resta finché lei non risponde)", repo["atlas.json"]["jessica@p.it"].impegni.map((x) => x.id));
-ok(mandate.some((m) => /L'hai fatto/i.test(m.subject) && /vecchio/.test(m.textContent)), "Atlas chiede conferma dell'impegno passato", mandate.map((m) => m.subject));
+// 3/11: l'impegno passato (a3, dell'1/10) non si cancella e non si chiede: si dà per fatto («passato è fatto»)
+ok(repo["atlas.json"]["jessica@p.it"].impegni.some((x) => x.id === "a3" && x.fatto_da === "passato"), "l'impegno passato resta, dato per fatto", repo["atlas.json"]["jessica@p.it"].impegni);
+ok(!mandate.some((m) => /hai fatto|impegni passati/i.test(m.subject + " " + m.textContent)), "nessuna mail «l'hai fatto?»", mandate.map((m) => m.subject));
 const dopo7 = mandate.length;
-await atlasPromemoria(env, new Date("2026-10-14T06:07:00Z")); ok(mandate.length === dopo7, "programma e domanda partono una volta sola al giorno", mandate.length);
+await atlasPromemoria(env, new Date("2026-10-14T06:07:00Z")); ok(mandate.length === dopo7, "il programma parte una volta sola al giorno", mandate.length);
 await atlasPromemoria(env, new Date("2026-10-14T15:07:00Z"));   // 17:07 a Roma: un'ora prima delle 18
 ok(mandate.some((m) => /⏰ Alle 18:00: ricordare a Jacopo il parrucchiere/.test(m.subject)), "alle 17:07 di Roma il promemoria delle 18", mandate.map((m) => m.subject));
 const dopo17 = mandate.length;
