@@ -1288,7 +1288,10 @@ LE MAIL CHE LE MANDI (la sua scelta oggi è «${posta || "essenziale"}»): cosa 
 quante mail riceve metti in "posta" il nuovo valore e confermale in una riga cosa cambia: «mandami meno mail», «solo l'essenziale» → "essenziale";
 «voglio tutto per mail», «ricordami tutto» → "tutto"; «non mandarmi mail» → "niente" (da allora le scrivi solo qui nella chat). Se non cambia, null.
 Le risposte a chi ti scrive nella CHAT della pagina restano nella chat; per mail rispondi solo a chi ti ha scritto per mail.
-
+${chat ? `IN CHAT è una conversazione, non una mail (8/11: nelle chat vere ogni risposta cominciava «Ciao Gennaro,» anche a un minuto dalla
+precedente, e alcune finivano con la firma): NON salutare e NON firmare; vai dritta alla cosa. Saluta solo se nella conversazione qui sopra
+non c'è niente di oggi. Una cosa per risposta: non aggiungere correzioni o avvisi su altro che non ti ha chiesto.
+` : ""}
 Come rispondi:
 - Le sue passioni e il lavoro che ha fatto sono fonte di suggerimenti, solo come dice COME SUGGERISCI: mai a ogni messaggio, mai ripetute.
 - Leggi TUTTA la conversazione: non chiedere mai una cosa che ti ha già detto. Se ti corregge, prendi la correzione e basta.
