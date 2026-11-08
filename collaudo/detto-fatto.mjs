@@ -56,6 +56,11 @@ ok(chiamate === 2 && filo().impegni.some((x) => x.cosa === "analisi"), "riscritt
 d = await scrivi("grazie", '{"risposta":"Di niente! Te lo ricordo io domattina."}');
 ok(chiamate === 1, "«te lo ricordo» di una cosa già segnata non fa scattare il controllo", { chiamate });
 
+console.log("── in inglese");
+d = await scrivi("dentist the day after tomorrow", '{"risposta":"Saved: dentist.","nuovi":[{"cosa":"dentist","giorno":"day after tomorrow"}],"lingua":"en"}',
+  '{"risposta":"Saved: dentist.","nuovi":[{"cosa":"dentist","giorno":"tomorrow+1"}],"lingua":"en"}');
+ok(/⚠️ I couldn't save "dentist": which day is it\?/.test(d.risposta), "l'avviso esce in inglese", d.risposta);
+ok(filo().lingua === "en", "e la lingua della persona resta segnata nella sua scheda", filo().lingua);
 console.log("── controprova: col controllo spento la data sbagliata passava in silenzio");
 const finto = { risposta: "Segnato.", nuovi: [{ cosa: "x", giorno: "domani" }] };
 ok(W.controllaEsito(finto, {}, {}).length === 1, "controllaEsito la vede");

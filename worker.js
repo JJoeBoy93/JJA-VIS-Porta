@@ -1223,7 +1223,8 @@ d) La presentazione («Mi chiamo ${nome}, sono l'assistente…») solo se la per
    non a ogni conversazione nuova.
 e) ${chat ? `Nella chat della pagina NON firmi: sopra il messaggio c'è già il tuo nome, quindi niente «${nome}» in fondo.` : `Nelle mail firmi «${nome}» in fondo.`}`;
 const ATLAS_CHI = (nome, posta, chat = false) => { const P = ATLAS_POSTA[posta] || ATLAS_POSTA.essenziale; return `Sei ${nome}, l'assistente personale di JJA-VIS che ricorda impegni, scadenze e documenti a una persona, per mail. ${nome} è il nome che
-questa persona ti ha dato. Rispondi in italiano, del tu, breve e caldo ma senza entusiasmo finto, come una persona attenta.
+questa persona ti ha dato. Rispondi NELLA LINGUA IN CUI TI SCRIVE (inglese se scrive in inglese, italiano se in italiano; nel dubbio
+italiano), del tu, breve e caldo ma senza entusiasmo finto, come una persona attenta. I campi del JSON restano come sono descritti (date AAAA-MM-GG).
 UOMO O DONNA (22/10, JJ: «non adegua maschile e femminile?»): queste regole dicono «lei» per comodità, ma la persona può essere un uomo
 o una donna. Capiscilo dal suo nome e da come scrive (Paolo, Vincenzo, Joe → maschile; Giada, Mirna, Jessica → femminile) e accorda
 TUTTO di conseguenza: «pronto/pronta», «registrato/registrata», «caro/cara». Se non si capisce, usa frasi che vanno bene per tutti
@@ -1301,7 +1302,7 @@ Come rispondi:
 ${ATLAS_SUGGERIMENTI(nome, chat)}
 
 Rispondi SOLO con un oggetto JSON, senza niente prima o dopo:
-{"risposta": "la mail da mandarle", "nuovi": [{"cosa": "…", "giorno": "AAAA-MM-GG", "ora": "HH:MM" oppure null}], "fatti": ["id delle cose che dice di aver fatto o pagato: restano, segnate fatte"], "tolti": ["id degli impegni da togliere o spostare, solo se lo chiede: spariscono"], "scadenze_nuove": [{"cosa": "bolletta della luce", "importo": "85,40 €" oppure null, "giorno": "AAAA-MM-GG", "ogni_mese": false}], "pagate": ["id delle scadenze pagate"], "scadenze_tolte": ["id delle scadenze da togliere"], "manda_documenti": ["id"], "documenti_tolti": ["id"], "da_portare": null oppure ["chiavi", "…"], "posta": null oppure "essenziale" oppure "tutto" oppure "niente", "per_jj": null oppure "il motivo in poche parole"}`; };
+{"risposta": "la mail da mandarle", "nuovi": [{"cosa": "…", "giorno": "AAAA-MM-GG", "ora": "HH:MM" oppure null}], "fatti": ["id delle cose che dice di aver fatto o pagato: restano, segnate fatte"], "tolti": ["id degli impegni da togliere o spostare, solo se lo chiede: spariscono"], "scadenze_nuove": [{"cosa": "bolletta della luce", "importo": "85,40 €" oppure null, "giorno": "AAAA-MM-GG", "ogni_mese": false}], "pagate": ["id delle scadenze pagate"], "scadenze_tolte": ["id delle scadenze da togliere"], "manda_documenti": ["id"], "documenti_tolti": ["id"], "da_portare": null oppure ["chiavi", "…"], "posta": null oppure "essenziale" oppure "tutto" oppure "niente", "per_jj": null oppure "il motivo in poche parole", "lingua": "it" oppure "en" (la lingua in cui ti ha scritto)}`; };
 async function atlasRisponde(env, mail, rec, filo, lettera) {
   const ora = oraRoma(), oggi = ora.slice(0, 10);
   const turni = filo ? turniPerIlModello(filo) : (lettera ? [{ chi: "noi", testo: `[la lettera «${lettera.oggetto}»] ${String(lettera.testo || "").slice(0, 1500)}` }] : []);
@@ -1364,14 +1365,14 @@ function controllaEsito(d, filo, rec) {
     for (const x of lista(k)) {
       if (!x || !x.cosa) P.push({ campo: k, voce: x, perche: `in «${k}» c'è una voce senza «cosa»`, dire: null });
       else if (!giornoVero(String(x.giorno || ""))) P.push({ campo: k, voce: x, perche: `${cosa} «${x.cosa}» ha il giorno «${x.giorno}»: deve essere una data vera nella forma AAAA-MM-GG, se no non si segna`,
-        dire: `non sono riuscito a segnare «${String(x.cosa).slice(0, 80)}»: mi dici il giorno?` });
+        dire: `non sono riuscito a segnare «${String(x.cosa).slice(0, 80)}»: mi dici il giorno?`, say: `I couldn't save "${String(x.cosa).slice(0, 80)}": which day is it?` });
     }
   for (const [k, dove, nome] of [["fatti", null, "fra gli impegni e le scadenze"], ["tolti", imp, "fra gli impegni"], ["pagate", sca, "fra le scadenze"],
     ["scadenze_tolte", sca, "fra le scadenze"], ["manda_documenti", doc, "fra i documenti"], ["documenti_tolti", doc, "fra i documenti"]])
     for (const id of lista(k).map(String)) {
       const c = dove || new Set([...imp, ...sca]);
       if (!c.has(id)) P.push({ campo: k, voce: id, perche: `in «${k}» c'è l'id «${id}», che non esiste ${nome}: usa solo gli id fra parentesi quadre`,
-        dire: "una delle modifiche che ti ho detto non è andata a buon fine: controlla il calendario" });
+        dire: "una delle modifiche che ti ho detto non è andata a buon fine: controlla il calendario", say: "one of the changes I mentioned didn't go through: please check your calendar" });
     }
   const altro = Array.isArray(d.da_portare) || POSTA_MODI.includes(d.posta);   // anche queste sono cose che la risposta può dire «segnate»
   if (!altro && !ESITO_AZIONI.some((k) => lista(k).length) && DICE_FATTO.test(d.risposta))
@@ -1382,7 +1383,8 @@ function controllaEsito(d, filo, rec) {
 function ripulisciEsito(d, problemi) {
   const e = { ...d };
   for (const k of ESITO_AZIONI) if (Array.isArray(e[k])) e[k] = e[k].filter((x) => !problemi.some((p) => p.campo === k && (p.voce === x || p.voce === String(x))));
-  const dire = [...new Set(problemi.map((p) => p.dire).filter(Boolean))];
+  const en = d.lingua === "en";   // 8/11: l'avviso nella lingua della persona (Dubai: la demo è in inglese)
+  const dire = [...new Set(problemi.map((p) => (en ? p.say : p.dire)).filter(Boolean))];
   if (dire.length) e.risposta = `${String(e.risposta).trim()}\n\n⚠️ ${dire.map((x) => x[0].toUpperCase() + x.slice(1)).join(". ")}.`;
   if (problemi.some((p) => !p.campo)) console.log("detto=fatto: la risposta dice ancora di aver fatto qualcosa senza campi", e.risposta.slice(0, 200));
   return e;
@@ -3347,6 +3349,8 @@ function applicaEsito(f, esito) {
     // 28/10 (JJ: «fatto segna, non cancella»): «fatti» = ha detto di averle fatte (o pagate): come il tasto «Fatto», scrive `fatto` e la voce resta.
     // «tolti» = l'ha chiesto lei (togli, cancella, sposta): sparisce davvero. Un id in tutte e due: vince «tolti».
     f.scadenze = f.scadenze || [];
+    // 8/11: la lingua in cui scrive la persona, per i testi fissi (mail, avvisi) — oggi italiano o inglese
+    if (["it", "en"].includes(esito.lingua)) f.lingua = esito.lingua;
     const fatti = new Set((esito.fatti || []).map(String)), adesso = new Date();
     for (const x of f.impegni) if (fatti.has(String(x.id))) { if (!x.fatto) x.fatto = adesso.toISOString(); delete x.fatto_da; delete x.riaperto; }
     for (const x of [...f.scadenze]) if (fatti.has(String(x.id)) && scadenzaAperta(x)) scadenzaFatta(f, x, adesso);
