@@ -1327,10 +1327,67 @@ async function atlasRisponde(env, mail, rec, filo, lettera) {
   const t = await claude(env, { max_tokens: 8000, output_config: { effort: "medium" }, system: ATLAS_CHI(nomeAss(filo), modoPosta(filo), !!rec.chat), messages: [{ role: "user", content: contesto }],
     tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] }, ATLAS_MODELLI, "haiku");
   const j = t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1);
-  const d = JSON.parse(j);
+  let d = JSON.parse(j);
   if (typeof d.risposta !== "string") throw new Error("risposta senza testo");
+  // ══ DETTO = FATTO — 8 novembre 2026 ══ (Dubai: «se succede a Dubai porta alla sconfitta immediata», JJ 21/10)
+  // Il testo che legge la persona e le azioni (i campi) arrivano separati e nessuno li confrontava: una data scritta male veniva
+  // scartata in silenzio da applicaEsito mentre la risposta diceva «segnato». Adesso: se i campi non reggono quello che la risposta
+  // dice, il modello riceve il motivo e riscrive (UNA volta); se ancora non torna, si tolgono i campi rotti e la risposta lo dice.
+  let problemi = controllaEsito(d, filo, rec);
+  if (problemi.length) {
+    console.log("detto=fatto: riscrivo", JSON.stringify(problemi));
+    const primo = ultimoUso;
+    try {
+      const t2 = await claude(env, { max_tokens: 8000, output_config: { effort: "medium" }, system: ATLAS_CHI(nomeAss(filo), modoPosta(filo), !!rec.chat),
+        messages: [{ role: "user", content: contesto }, { role: "assistant", content: j },
+          { role: "user", content: `CONTROLLO AUTOMATICO, non è lei che scrive. Nel JSON qui sopra:\n${problemi.map((x) => "- " + x.perche).join("\n")}\n` +
+            `Riscrivi il JSON intero. La risposta deve dire SOLO quello che i campi fanno davvero: se una cosa non la puoi segnare (manca la data, non trovi la voce), dillo nella risposta e chiedi quello che manca.` }] },
+        ATLAS_MODELLI, "haiku");
+      const d2 = JSON.parse(t2.slice(t2.indexOf("{"), t2.lastIndexOf("}") + 1));
+      if (typeof d2.risposta === "string") { d = d2; problemi = controllaEsito(d, filo, rec); }
+    } catch (e) { console.log("detto=fatto: la riscrittura non è riuscita", String(e)); }
+    if (primo && ultimoUso && ultimoUso !== primo) ultimoUso = { ...ultimoUso, entrata: ultimoUso.entrata + primo.entrata, uscita: ultimoUso.uscita + primo.uscita };
+    if (problemi.length) d = ripulisciEsito(d, problemi);
+  }
   return d;
 }
+// Quello che i campi dell'esito promettono e non possono mantenere. Ogni problema: { perche (per il modello), dire (per la persona, o null) }.
+const ESITO_AZIONI = ["nuovi", "scadenze_nuove", "fatti", "tolti", "pagate", "scadenze_tolte", "manda_documenti", "documenti_tolti"];
+// «ho segnato / aggiunto / tolto…» detto come fatto adesso. Non «archiviato» (gli allegati della posta li archivia la porta prima del
+// modello) e non «te lo ricordo» (si dice anche di cose segnate in un'altra conversazione).
+const DICE_FATTO = /\b(ho|l'ho|li ho|le ho|te l'ho|ti ho)\s+(gi[aà]\s+)?(segnat|aggiunt|annotat|inserit|mess[oaie] in calendario|tolt|cancellat|spostat|eliminat|tolto)|\b(segnat[oaie]|aggiunt[oaie]|tolt[oaie]|cancellat[oaie]|spostat[oaie])\s*[:!.]|\bI(?:'ve| have)\s+(added|saved|scheduled|noted|removed|deleted|moved|marked)\b/i;
+function controllaEsito(d, filo, rec) {
+  const P = [], f = filo || {}, imp = new Set((f.impegni || []).map((x) => String(x.id))), sca = new Set((f.scadenze || []).map((x) => String(x.id)));
+  const doc = new Set(((rec && rec.documenti) || []).map((x) => String(x.id)));
+  const lista = (k) => (Array.isArray(d[k]) ? d[k] : []);
+  for (const [k, cosa] of [["nuovi", "l'impegno"], ["scadenze_nuove", "la scadenza"]])
+    for (const x of lista(k)) {
+      if (!x || !x.cosa) P.push({ campo: k, voce: x, perche: `in «${k}» c'è una voce senza «cosa»`, dire: null });
+      else if (!giornoVero(String(x.giorno || ""))) P.push({ campo: k, voce: x, perche: `${cosa} «${x.cosa}» ha il giorno «${x.giorno}»: deve essere una data vera nella forma AAAA-MM-GG, se no non si segna`,
+        dire: `non sono riuscito a segnare «${String(x.cosa).slice(0, 80)}»: mi dici il giorno?` });
+    }
+  for (const [k, dove, nome] of [["fatti", null, "fra gli impegni e le scadenze"], ["tolti", imp, "fra gli impegni"], ["pagate", sca, "fra le scadenze"],
+    ["scadenze_tolte", sca, "fra le scadenze"], ["manda_documenti", doc, "fra i documenti"], ["documenti_tolti", doc, "fra i documenti"]])
+    for (const id of lista(k).map(String)) {
+      const c = dove || new Set([...imp, ...sca]);
+      if (!c.has(id)) P.push({ campo: k, voce: id, perche: `in «${k}» c'è l'id «${id}», che non esiste ${nome}: usa solo gli id fra parentesi quadre`,
+        dire: "una delle modifiche che ti ho detto non è andata a buon fine: controlla il calendario" });
+    }
+  const altro = Array.isArray(d.da_portare) || POSTA_MODI.includes(d.posta);   // anche queste sono cose che la risposta può dire «segnate»
+  if (!altro && !ESITO_AZIONI.some((k) => lista(k).length) && DICE_FATTO.test(d.risposta))
+    P.push({ campo: null, perche: "la risposta dice di aver segnato, aggiunto, tolto o spostato qualcosa, ma tutti i campi delle azioni sono vuoti: o metti la voce nel campo giusto, o la risposta non deve dirlo", dire: null });
+  return P;
+}
+// Dopo la seconda volta: via le voci che non si possono eseguire, e la risposta dice cosa non è stato fatto (una riga per motivo).
+function ripulisciEsito(d, problemi) {
+  const e = { ...d };
+  for (const k of ESITO_AZIONI) if (Array.isArray(e[k])) e[k] = e[k].filter((x) => !problemi.some((p) => p.campo === k && (p.voce === x || p.voce === String(x))));
+  const dire = [...new Set(problemi.map((p) => p.dire).filter(Boolean))];
+  if (dire.length) e.risposta = `${String(e.risposta).trim()}\n\n⚠️ ${dire.map((x) => x[0].toUpperCase() + x.slice(1)).join(". ")}.`;
+  if (problemi.some((p) => !p.campo)) console.log("detto=fatto: la risposta dice ancora di aver fatto qualcosa senza campi", e.risposta.slice(0, 200));
+  return e;
+}
+export { controllaEsito, ripulisciEsito };
 // l'invito del calendario (.ics, RFC 5545): lo apre e finisce nel suo calendario (Google, Apple, Outlook). Con l'ora: 30 minuti
 // e un avviso un'ora prima; senza ora: tutto il giorno, avviso alle 20 della sera prima. Le ore si scrivono in UTC (Z)
 function icsImpegno(x) {
